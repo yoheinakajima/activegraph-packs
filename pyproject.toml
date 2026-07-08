@@ -37,6 +37,8 @@ communication = "packs.communication:pack"
 chat = "packs.chat:pack"
 email = "packs.email:pack"
 schedule = "packs.schedule:pack"
+telegram = "packs.telegram:pack"
+whatsapp = "packs.whatsapp:pack"
 
 research = "packs.research:pack"
 vc = "packs.vc:pack"

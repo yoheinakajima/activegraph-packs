@@ -9,7 +9,7 @@ style, and the open-source hygiene that keep a multi-pack assistant coherent. Th
 best packs that emerge here are candidates for upstreaming into the ActiveGraph
 package itself.
 
-ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 16 packs plus a bridge pack (17 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
+ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 18 packs plus a bridge pack (19 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
 
 > **New here? Read [docs/concepts.md](docs/concepts.md) first** — it explains the
 > event-sourced graph model and the central idea of this repo: the split between the
@@ -133,7 +133,9 @@ Full explanation, dependency graph, and the invariants that hold it together:
 | `entity` | Canonical extraction and deduplication for real-world entities (people, orgs, projects, products, repos) |
 | `communication` | Channel-neutral semantic layer: threads, messages, intents, response candidates |
 | `schedule` | Graph-native scheduling: schedules, ticks, heartbeats — proactive behavior with the clock at the edge |
-| `chat` | Chat adapter — translates interactive input into communication objects and manages LLM responses |
+| `chat` | Chat adapter — the conversation engine (sessions, memory, reply gating, agentic responses) every interactive channel reuses |
+| `telegram` | Telegram transport adapter — inbound updates → chat_input; outbound replies as policy-checked gateway sends |
+| `whatsapp` | WhatsApp Cloud API transport adapter — the structural mirror of telegram |
 | `email` | Email adapter — threading, deduplication, draft formatting, approval-gated outbound sends |
 | `research` | Knowledge tracking for academic and applied research: papers, claims, hypotheses |
 | `vc` | Venture capital deal flow: founder outreach, company profiling, memo drafting, followup tracking |
@@ -148,6 +150,7 @@ Plus `packs/bridges/` — a Diligence-Core bridge that maps the bundled ActiveGr
 | Bundle | Contents |
 |--------|----------|
 | `assistant` | core, tool_gateway, secrets, memory_gateway, agent_profile, identity_auth, communication, schedule, chat |
+| `messaging_assistant` | assistant bundle + telegram, whatsapp |
 | `email_assistant` | assistant bundle + email, entity |
 | `vc_bundle` | email_assistant bundle + diligence_core_bridge, vc, meeting |
 | `research_bundle` | core, tool_gateway, memory_gateway, research |

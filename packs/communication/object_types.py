@@ -325,6 +325,19 @@ RELATION_TYPES = [
         description="A CommResponseCandidate was dispatched to a channel via its thread.",
     ),
     RelationType(
+        name="delivers",
+        # Source open (empty = any): the delivering object is a
+        # capability_call, owned by the OPTIONAL Tool Gateway Pack. Channel
+        # adapters (telegram, whatsapp, ...) create instances when they hand
+        # an approved candidate to the gateway for external delivery.
+        source_types=(),
+        target_types=("comm_response_candidate",),
+        description=(
+            "A Tool Gateway capability_call delivers an approved response "
+            "candidate to its external channel."
+        ),
+    ),
+    RelationType(
         name="fulfills_intent",
         # Source left open (empty = any): the fulfilling object is a
         # capability_call, a type owned by the OPTIONAL Tool Gateway Pack —

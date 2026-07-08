@@ -111,6 +111,16 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
     frame_id = inp.get("frame_id")
     now = _now_iso()
 
+    # ── Channel resolution ────────────────────────────────────────────────
+    # chat_input is the entry point for EVERY interactive conversation, not
+    # just the web console: messenger adapters (telegram, whatsapp, ...) emit
+    # chat_input with metadata.channel set, reusing this pack's session,
+    # memory, gating, and responder machinery wholesale. The channel rides on
+    # the comm_message so outbound delivery routes correctly; adapter routing
+    # data (chat ids, phone numbers) travels under metadata.adapter.
+    input_meta = dict(inp.get("metadata") or {})
+    channel = input_meta.pop("channel", None) or "chat"
+
     # ── 1. Resolve or create ChatSession ──────────────────────────────────
     # Resolution order, graph-first so it is restart-safe:
     #   1. Explicit session_id → resume directly from the persisted ChatSession
@@ -177,7 +187,7 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
         source = graph.add_object("source", {
             "kind": "chat_message",
             "content": content,
-            "channel": "chat",
+            "channel": channel,
             "sender_ref": user_ref,
             "frame_id": frame_id,
             "metadata": {
@@ -192,7 +202,7 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
     # ── 3. Create CommMessage ──────────────────────────────────────────────
     try:
         comm_msg = graph.add_object("comm_message", {
-            "channel": "chat",
+            "channel": channel,
             "sender_ref": user_ref,
             "content": content,
             "direction": "inbound",
@@ -202,9 +212,14 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
             "metadata": {
                 "thread_id_hint": thread_id_hint,
                 "session_id": session_id,
+                # The adapter's declaration that this message wants an
+                # interactive reply — what the responders' `where` matches
+                # (channel-neutral; the channel field routes delivery).
+                "conversational": True,
                 "reply_gate": gate["gate"],
                 "reply_gate_reason": gate["reason"],
                 "sender_role": gate["role"],
+                "adapter": input_meta,
             },
         })
         comm_msg_id = comm_msg.id
@@ -761,8 +776,12 @@ def make_llm_responder(tools: Optional[list] = None, max_tool_turns: int = 4):
         # inbound chat messages — never for outbound/email/other comm traffic.
         where={
             "object.type": "comm_message",
-            "object.data.channel": "chat",
             "object.data.direction": "inbound",
+            # The adapter's conversational marker (stamped by chat_ingester
+            # for every interactive channel — web chat, telegram, whatsapp)
+            # replaces channel equality: this responder serves conversations,
+            # and the channel field routes the delivery.
+            "object.data.metadata.conversational": True,
             # The reply gate stamped by chat_ingester. Gated senders never
             # reach this behavior — and therefore never trigger the LLM call;
             # chat_deflection_responder serves them a bounded template.
@@ -814,6 +833,7 @@ def _chat_llm_respond(event, graph, ctx, out, *, settings: ChatSettings):
 
     thread_id = msg_data.get("thread_id")
     frame_id = msg_data.get("frame_id")
+    msg_meta = msg_data.get("metadata") or {}
 
     # The prior conversation reaches this LLM call via the ChatContext that
     # chat_context_assembler linked to this message: the depth-1 view below
@@ -831,11 +851,14 @@ def _chat_llm_respond(event, graph, ctx, out, *, settings: ChatSettings):
         candidate = graph.add_object("comm_response_candidate", {
             "message_id": msg_id,
             "thread_id": thread_id,
-            "channel": "chat",
+            "channel": msg_data.get("channel", "chat"),
             "content": response_content,
             "status": status,
             "created_by_behavior": "chat_llm_responder",
             "frame_id": frame_id,
+            # Adapter routing data (chat ids, phone numbers) rides along so a
+            # channel dispatcher can deliver without re-reading the message.
+            "metadata": {"adapter": msg_meta.get("adapter", {})},
         })
         graph.add_relation(candidate.id, msg_id, "response_to")
     except Exception:
@@ -852,8 +875,8 @@ chat_llm_responder = make_llm_responder()
     on=["object.created"],
     where={
         "object.type": "comm_message",
-        "object.data.channel": "chat",
         "object.data.direction": "inbound",
+        "object.data.metadata.conversational": True,
         "object.data.metadata.reply_gate": "deflect",
     },
     creates=["comm_response_candidate"],
@@ -880,7 +903,7 @@ def chat_deflection_responder(event, graph, ctx, *, settings: ChatSettings):
         candidate = graph.add_object("comm_response_candidate", {
             "message_id": msg_id,
             "thread_id": msg_data.get("thread_id"),
-            "channel": "chat",
+            "channel": msg_data.get("channel", "chat"),
             "content": settings.deflection_message,
             "status": "approved",
             "created_by_behavior": "chat_deflection_responder",
@@ -888,6 +911,7 @@ def chat_deflection_responder(event, graph, ctx, *, settings: ChatSettings):
             "metadata": {
                 "gated": True,
                 "reply_gate_reason": (msg_data.get("metadata") or {}).get("reply_gate_reason"),
+                "adapter": (msg_data.get("metadata") or {}).get("adapter", {}),
             },
         })
         # NOTE: add_relation signature is (source, target, type).
@@ -918,10 +942,11 @@ def chat_responder(event, graph, ctx, *, settings: ChatSettings):
     candidate_id = obj.get("id")
     data = obj.get("data", {})
 
-    if data.get("channel") != "chat":
-        return
     if data.get("status") != "approved":
         return
+    # Channel-neutral on purpose: any interactive channel's conversation is
+    # recorded on chat_turn objects. Candidates whose message doesn't map to
+    # a turn (e.g. email drafts) simply find no turn below and no-op.
 
     message_id = data.get("message_id")
     response_content = data.get("content") or ""

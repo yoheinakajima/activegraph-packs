@@ -162,10 +162,19 @@ def _register_demo_capabilities():
     via execution_context at execution time).
     """
     from packs.schedule.capabilities import register_reminder_capability
+    from packs.telegram.capabilities import register_send_capability as register_telegram_send
     from packs.tool_gateway.capabilities import register_web_fetch_capability
+    from packs.whatsapp.capabilities import register_send_capability as register_whatsapp_send
 
     register_web_fetch_capability()
     register_reminder_capability()
+    # Messenger delivery capabilities: registration is name-only (tokens are
+    # resolved by the Secrets Pack at execution time), so registering without
+    # credentials configured is harmless — sends just fail with the fix named.
+    register_telegram_send()
+    register_whatsapp_send(
+        phone_number_id=os.environ.get("WHATSAPP_PHONE_NUMBER_ID"),
+    )
 
 
 def _build_runtime():
@@ -180,7 +189,11 @@ def _build_runtime():
     being re-seeded from scratch.
     """
     from activegraph import Runtime
-    from bundles import build_assistant, load_assistant_packs, seed_owner_principals
+    from bundles import (
+        build_messaging_assistant,
+        load_messaging_packs,
+        seed_owner_principals,
+    )
     from packs.identity_auth import IdentitySettings
     from packs.identity_auth.behaviors import rebuild_principal_registry
     from packs.memory_gateway import MemoryGatewaySettings
@@ -226,7 +239,7 @@ def _build_runtime():
 
     if resuming:
         rt = Runtime.load(db, llm_provider=provider)
-        load_assistant_packs(
+        load_messaging_packs(
             rt,
             memory_gateway_settings=mem_settings,
             chat_settings=chat_settings,
@@ -253,7 +266,7 @@ def _build_runtime():
         print(f"[demo_server] Resumed run {rt.run_id} from {db} "
               f"({n} principals re-indexed)", flush=True)
     else:
-        rt = build_assistant(
+        rt = build_messaging_assistant(
             persist_to=db,
             memory_gateway_settings=mem_settings,
             chat_settings=chat_settings,
@@ -793,6 +806,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_approvals_get()
             elif path == "/sessions":
                 self._handle_sessions_get()
+            elif path == "/channels/whatsapp/webhook":
+                self._handle_whatsapp_verify(qs)
             elif path == "/health":
                 self._send_json({"status": "ok"})
             else:
@@ -830,6 +845,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_profile_instruction_delete(body)
             elif path == "/approvals":
                 self._handle_approvals_post(body)
+            elif path == "/channels/telegram/update":
+                self._handle_telegram_update(body)
+            elif path == "/channels/whatsapp/webhook":
+                self._handle_whatsapp_webhook(body)
             else:
                 self._send_error("Not found", 404)
         except Exception as e:
@@ -1091,6 +1110,48 @@ class Handler(BaseHTTPRequestHandler):
             "approval_id": outcome.get("approval_id"),
             "denial_id": outcome.get("denial_id"),
         })
+
+    # ── Channel webhooks ─────────────────────────────────────────────────────
+    #
+    # Thin edges: normalize the wire payload via the adapter pack's submit
+    # tool, settle the runtime, respond. Everything conversational is graph
+    # behavior. (The Telegram long-poller — python -m packs.telegram.poller —
+    # posts to /channels/telegram/update.)
+
+    def _handle_telegram_update(self, body: dict):
+        rt = _get_rt()
+        from packs.telegram.tools import submit_telegram_update_fn
+
+        with _runtime_lock:
+            created = submit_telegram_update_fn(rt.graph, body)
+            rt.run_until_idle()
+        self._send_json({"ok": True, "ingested": bool(created)})
+
+    def _handle_whatsapp_verify(self, qs: dict):
+        """Meta's webhook setup handshake: echo hub.challenge when the
+        verify token matches WHATSAPP_VERIFY_TOKEN."""
+        expected = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+        if expected and qs.get("hub.mode") == "subscribe" \
+                and qs.get("hub.verify_token") == expected:
+            challenge = (qs.get("hub.challenge") or "").encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(challenge)))
+            self.end_headers()
+            self.wfile.write(challenge)
+            return
+        self._send_error("verification failed", 403)
+
+    def _handle_whatsapp_webhook(self, body: dict):
+        rt = _get_rt()
+        from packs.whatsapp.tools import submit_whatsapp_webhook_fn
+
+        with _runtime_lock:
+            created = submit_whatsapp_webhook_fn(rt.graph, body)
+            rt.run_until_idle()
+        # Meta expects a fast 200; the reply (if any) goes out via the
+        # gateway send capability, not this response.
+        self._send_json({"ok": True, "ingested": len(created)})
 
     # ── GET /sessions ────────────────────────────────────────────────────────
 
