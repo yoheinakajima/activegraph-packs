@@ -25,14 +25,14 @@ from .settings import GreeterSettings
     name="greeter",
     on=["object.created"],
     where={{"object.type": "source"}},
-    creates=["greeting_log"],
+    creates=["{log_type}"],
 )
 def greeter(event, graph, ctx, *, settings: GreeterSettings):
     """Log a greeting for every source the assistant sees."""
     obj = event.payload.get("object", {{}})
     data = obj.get("data", {{}})
 {body}
-    graph.add_object("greeting_log", {{
+    graph.add_object("{log_type}", {{
         "note": f"greeted source {{obj.get('id', '')}}",
         "prefix": settings.prefix,
     }})
@@ -52,14 +52,14 @@ def config_toucher(event, graph, ctx, *, settings: GreeterSettings):
         seen = int((cfg.data or {{}}).get("seen", 0))
         graph.patch_object(cfg.id, {{"seen": seen + 1}})
         break
-    graph.add_object("greeting_log", {{"note": f"heard: {{content[:40]}}",
+    graph.add_object("{log_type}", {{"note": f"heard: {{content[:40]}}",
                                        "prefix": settings.prefix}})
 
 
 BEHAVIORS = [greeter, config_toucher]
 '''
 
-OBJECT_TYPES_SRC = '''"""Object types for the candidate pack."""
+OBJECT_TYPES_TEMPLATE = '''"""Object types for the candidate pack."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ class GreetingLog(BaseModel):
 
 
 OBJECT_TYPES = [
-    ObjectType(name="greeting_log", schema=GreetingLog,
+    ObjectType(name="{log_type}", schema=GreetingLog,
                description="A logged greeting."),
 ]
 RELATION_TYPES = []
@@ -137,7 +137,7 @@ def run_all() -> bool:
     rt.load_pack(pack)
     rt.graph.add_object("source", {{"kind": "note", "content": "hi"}})
     rt.run_until_idle()
-    logs = list(rt.graph.objects(type="greeting_log"))
+    logs = list(rt.graph.objects(type="{log_type}"))
     assert logs, "greeter must log a greeting for a source"
     print("ALL PASS")
     return True
@@ -175,7 +175,7 @@ python = ">=3.11"
 python-deps = []
 
 [surface]
-object_types = ["greeting_log"]
+object_types = ["{log_type}"]
 relation_types = []
 behaviors = {behaviors}
 tools = []
@@ -190,6 +190,7 @@ deterministic = true
 def author_pack(
     name: str = "greeter_pack",
     *,
+    log_type: str = "greeting_log",
     behavior_body: str = "    pass",
     trigger: str = "    pass",
     extra_behavior_src: str = "",
@@ -200,6 +201,7 @@ def author_pack(
     oversize: bool = False,
     break_content_hash: bool = False,
     hang_on_import: bool = False,
+    extra_module_src: str = "",
 ) -> dict[str, str]:
     """Produce the candidate's file dict; each flag twists one gate.
 
@@ -209,7 +211,7 @@ def author_pack(
     under the v1.5 sandbox the child gets killed at the wall clock and
     the parent records the rejection."""
     behaviors_src = BEHAVIOR_TEMPLATE.format(
-        name=name, body=behavior_body, trigger=trigger)
+        name=name, body=behavior_body, trigger=trigger, log_type=log_type)
     if banned_import:
         behaviors_src = "import os\n" + behaviors_src
     if banned_construct:
@@ -218,6 +220,10 @@ def author_pack(
         behaviors_src += extra_behavior_src
     if hang_on_import:
         behaviors_src += "\nwhile True:\n    pass\n"
+    if extra_module_src:
+        # Raw module-level source, no declaration changes (the soak
+        # harness's resource-hog candidates use this).
+        behaviors_src += extra_module_src
 
     declared_behaviors = '["greeter", "config_toucher"]'
     if extra_behavior_src and not undeclared_extra:
@@ -244,11 +250,11 @@ def author_pack(
 
     files = {
         "__init__.py": INIT_TEMPLATE.format(name=name),
-        "object_types.py": OBJECT_TYPES_SRC,
+        "object_types.py": OBJECT_TYPES_TEMPLATE.format(log_type=log_type),
         "behaviors.py": behaviors_src,
         "settings.py": settings_src,
         "tools.py": TOOLS_SRC,
-        "fixtures/run_fixtures.py": FIXTURES_TEMPLATE.format(name=name),
+        "fixtures/run_fixtures.py": FIXTURES_TEMPLATE.format(name=name, log_type=log_type),
         # The chassis driver, included verbatim (gate 0b verifies bytes).
         TRIAL_DRIVER_PATH: render_trial_driver(),
     }
@@ -271,6 +277,6 @@ def author_pack(
         content_hash = "sha256:" + "0" * 64
 
     files["manifest.toml"] = MANIFEST_TEMPLATE.format(
-        name=name, content_hash=content_hash,
+        name=name, content_hash=content_hash, log_type=log_type,
         behaviors=declared_behaviors, capabilities=capabilities_block)
     return files
