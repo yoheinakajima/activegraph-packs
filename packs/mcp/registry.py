@@ -129,6 +129,7 @@ def connect_and_register(
             ),
             risk_class=risk,
             credential_ref_name=credential_ref_name,
+            origin=f"mcp:{server_name}",
         )
         registered.append(spec.key)
 

@@ -1,5 +1,20 @@
 # Tool Gateway Pack Changelog
 
+## v0.5.0 — Capability catalog (2026-07-08)
+
+### Added
+- `catalog.py` — the queryable inventory of every registered capability:
+  key, provider, description, risk class, origin (native vs
+  `mcp:<server>`), LLM-exposability, `never_llm_callable`, and
+  `allowed_now` against a live allow-list. `catalog_entries()` for
+  humans/hosts; `register_catalog_capability()` registers
+  `catalog.search` (low risk, read-only) so the AGENT discovers
+  capabilities through a recorded, policy-checked call instead of
+  memorizing an allow-list. Never-LLM-callable capabilities appear in
+  the catalog (humans must see them) but are marked never-exposable.
+- `CapabilitySpec.origin` (default `"native"`) and the matching
+  `register_local_capability(origin=...)` parameter.
+
 ## v0.4.0 — Untrusted-content posture (2026-07-08)
 
 Prompt injection is the risk class that grows with tool breadth, so this

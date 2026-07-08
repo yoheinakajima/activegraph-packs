@@ -1,5 +1,18 @@
 # MCP Pack Changelog
 
+## v0.2.0 — Caller-scoped capability catalog (2026-07-08)
+
+### Added
+- Inbound `catalog_search` surface: an authenticated caller lists the
+  capabilities THEIR role can reach (chat, memory_search, exposed
+  tools), annotated with risk class, origin, and whether a call will be
+  held for owner approval. Deliberately scoped to the caller's own
+  reach: discovery for authorized callers, no reconnaissance surface
+  over the rest of the registry. Gated by its own exposure surface
+  ('catalog', default owner-only).
+- Outbound discovery now tags registered capabilities with
+  `origin="mcp:<server>"` for the tool_gateway catalog.
+
 ## v0.1.0 — Initial release (2026-07-08)
 
 The P0 breadth item from the July 2026 agent-readiness report, plus the

@@ -45,6 +45,11 @@ class CapabilitySpec:
     description: str = ""
     risk_class: str = "low"
     credential_ref_name: Optional[str] = None
+    # Where this capability came from: "native" for locally registered
+    # Python functions, "mcp:<server>" for tools discovered from an MCP
+    # server. The catalog (catalog.py) surfaces this so governance tooling
+    # can distinguish first-party skills from third-party breadth.
+    origin: str = "native"
 
     @property
     def key(self) -> str:
@@ -64,6 +69,7 @@ def register_local_capability(
     description: str = "",
     risk_class: str = "low",
     credential_ref_name: Optional[str] = None,
+    origin: str = "native",
 ) -> CapabilitySpec:
     """Register a local Python function as a capability.
 
@@ -93,6 +99,7 @@ def register_local_capability(
         description=description,
         risk_class=risk_class,
         credential_ref_name=credential_ref_name,
+        origin=origin,
     )
     _LOCAL_REGISTRY[spec.key] = spec
     return spec

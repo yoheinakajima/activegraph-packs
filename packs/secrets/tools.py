@@ -33,14 +33,45 @@ from .object_types import SecretUsageEvent
 # ------------------------------------------------------------------ raw functions (callable directly)
 
 
+def resolve_credential_with_source_fn(
+    credential_name: str,
+    env_prefix: str = "",
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve a credential and report WHICH source satisfied it.
+
+    Resolution order: environment first (existing behavior, always wins),
+    then each registered managed source (packs/secrets/managed.py) in
+    registration order. Returns (value, source_label): source_label is
+    'env', a managed source's label (e.g. 'oauth_token_store'), or None
+    when unresolved. The value must be used immediately, never persisted.
+    """
+    env_key = f"{env_prefix}{credential_name}".upper()
+    value = os.environ.get(env_key)
+    if value is not None:
+        return value, "env"
+
+    from .managed import registered_credential_sources
+
+    for source in registered_credential_sources():
+        try:
+            value = source.resolve(credential_name)
+        except Exception:
+            continue  # a broken source must not block the chain
+        if value is not None:
+            return value, source.label
+    return None, None
+
+
 def resolve_credential_fn(
     credential_name: str,
     env_prefix: str = "",
 ) -> Optional[str]:
-    """Resolve a credential name to its value from environment variables.
+    """Resolve a credential name to its value.
 
-    Pure function — no graph access. The returned value must be used
-    immediately and not persisted.
+    Environment variables first, then registered managed sources (OAuth
+    token store via packs/secrets/managed.py, ...). Pure function — no
+    graph access. The returned value must be used immediately and not
+    persisted.
 
     Args:
         credential_name: Name of the credential (used as env var key)
@@ -49,8 +80,8 @@ def resolve_credential_fn(
     Returns:
         The secret value string, or None if not found.
     """
-    env_key = f"{env_prefix}{credential_name}".upper()
-    return os.environ.get(env_key)
+    value, _ = resolve_credential_with_source_fn(credential_name, env_prefix)
+    return value
 
 
 def resolve_and_audit_fn(
@@ -85,7 +116,9 @@ def resolve_and_audit_fn(
     Returns:
         The secret value string, or None if not found.
     """
-    value = resolve_credential_fn(credential_name, env_prefix=env_prefix)
+    value, source_label = resolve_credential_with_source_fn(
+        credential_name, env_prefix=env_prefix
+    )
     resolved = value is not None
 
     now = datetime.now(timezone.utc).isoformat()
@@ -102,7 +135,8 @@ def resolve_and_audit_fn(
             timestamp=now,
             metadata={
                 "event_type": "resolved",
-                "found_in_env": resolved,
+                "found_in_env": source_label == "env",  # kept for compatibility
+                "source": source_label,
                 "credential_ref_id": credential_ref_id or "",
             },
         ).model_dump(),

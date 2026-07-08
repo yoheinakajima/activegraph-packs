@@ -151,7 +151,7 @@ def test_default_exposure_owner_full_others_nothing(env):
     rt, gateway, _ = env
     owner_tools = gateway.handle_jsonrpc(_rpc("tools/list"), "tok-owner")
     names = {t["name"] for t in owner_tools["result"]["tools"]}
-    assert names == {"chat", "memory_search", "util__echo"}
+    assert names == {"chat", "memory_search", "catalog_search", "util__echo"}
 
     agent_tools = gateway.handle_jsonrpc(_rpc("tools/list"), "tok-agent")
     assert agent_tools["result"]["tools"] == []

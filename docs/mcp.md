@@ -92,6 +92,7 @@ The surfaces:
 |------|--------------|
 | `chat` | Full chat pipeline with the caller's identity — reply gating, memory scoping, persona shaping, and the assistant's own governed tool use all apply. |
 | `memory_search` | Memory recall **subject-scoped to the caller** (plus global memories) — one caller never reads another user's memories. |
+| `catalog_search` | The capabilities **this caller's role can reach**, annotated with risk class, origin, and whether a call will be held for approval. Scoped on purpose: discovery for authorized callers, no reconnaissance over the rest of the registry. Own exposure surface (`catalog`, default owner-only). |
 | exposed capabilities | `ACTIVEGRAPH_MCP_EXPOSE` keys (default: the chat allow-list), run through the governed gateway path with `proposed_by="mcp:<caller>"`. |
 
 Every inbound call — grant or refusal — is an `mcp_access` audit object.

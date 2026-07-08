@@ -311,6 +311,24 @@ class MCPGateway:
                     "required": ["query"],
                 },
             })
+        if exposure_allows(graph, "catalog", role):
+            tools.append({
+                "name": "catalog_search",
+                "description": (
+                    "List the capabilities YOU can reach through this "
+                    "assistant, with risk class, origin (native vs "
+                    "MCP-derived), and whether a call will be held for "
+                    "owner approval. Scoped to your role: capabilities "
+                    "you cannot reach are not listed."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string",
+                                  "description": "Substring filter (optional)."},
+                    },
+                },
+            })
         from packs.tool_gateway.tools import get_capability_spec
         for key in self.settings.expose_capabilities:
             if not exposure_allows(graph, f"tool:{key}", role):
@@ -325,6 +343,49 @@ class MCPGateway:
                 "inputSchema": spec.input_schema.model_json_schema(),
             })
         return tools
+
+    def _caller_catalog(self, graph, caller: dict, query: str = "") -> list[dict]:
+        """The catalog as seen by one inbound caller: only surfaces and
+        capabilities their role can reach, annotated with governance
+        metadata. Deliberately NOT the full registry — an inbound caller
+        gets discovery over their own reach, never reconnaissance over
+        everyone else's."""
+        from packs.tool_gateway.gateway import decide_policy
+        from packs.tool_gateway.settings import ToolGatewaySettings
+        from packs.tool_gateway.tools import get_capability_spec
+
+        role = caller.get("role")
+        gw = self._gw_settings or ToolGatewaySettings()
+        entries: list[dict] = []
+        if exposure_allows(graph, "chat", role) and self._chat_fn is not None:
+            entries.append({"key": "chat", "kind": "surface", "risk_class": "low",
+                            "origin": "native", "held_on_call": False,
+                            "description": "Converse with the assistant."})
+        if exposure_allows(graph, "memory_search", role) and self._memory_fn is not None:
+            entries.append({"key": "memory_search", "kind": "surface",
+                            "risk_class": "low", "origin": "native",
+                            "held_on_call": False,
+                            "description": "Search your memories."})
+        for key in self.settings.expose_capabilities:
+            if not exposure_allows(graph, f"tool:{key}", role):
+                continue
+            spec = get_capability_spec(key)
+            if spec is None:
+                continue
+            entries.append({
+                "key": key,
+                "kind": "capability",
+                "risk_class": spec.risk_class,
+                "origin": spec.origin,
+                "held_on_call": decide_policy(spec.risk_class, gw) == "hold",
+                "description": spec.description,
+            })
+        if query:
+            q = query.lower()
+            entries = [e for e in entries
+                       if q in f"{e['key']} {e['description']}".lower()]
+        entries.sort(key=lambda e: e["key"])
+        return entries
 
     # -- governed capability call ----------------------------------------------
 
@@ -467,6 +528,18 @@ class MCPGateway:
             )
             import json as _json
             return self._tool_text(msg_id, _json.dumps({"results": results}))
+
+        if name == "catalog_search":
+            if not exposure_allows(graph, "catalog", role):
+                self._record_access(graph, "tools/call", "catalog", caller, False,
+                                    "catalog not exposed to role")
+                return self._error(msg_id, _FORBIDDEN, "catalog is not exposed to you")
+            self._record_access(graph, "tools/call", "catalog", caller, True, "ok")
+            entries = self._caller_catalog(graph, caller,
+                                           str(arguments.get("query", "")))
+            import json as _json
+            return self._tool_text(msg_id, _json.dumps(
+                {"count": len(entries), "capabilities": entries}))
 
         # Exposed gateway capability (tool name uses __ for the dot).
         key = name.replace("__", ".")

@@ -169,7 +169,7 @@ def run_inbound_auth_exposure_fixture() -> dict:
     # Owner sees the surfaces; a token whose identifier is no principal is
     # refused outright; anonymous sees nothing.
     owner_tools = rpc("tools/list", token="tok-owner")["result"]["tools"]
-    assert {t["name"] for t in owner_tools} == {"chat", "memory_search"}
+    assert {t["name"] for t in owner_tools} == {"chat", "memory_search", "catalog_search"}
     stranger = rpc("tools/call", {"name": "chat", "arguments": {"message": "hi"}},
                    token="tok-x")
     assert "error" in stranger

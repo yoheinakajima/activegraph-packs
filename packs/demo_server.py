@@ -143,6 +143,12 @@ def _memory_db_path() -> str:
 _mcp_settings_cache = None
 _mcp_discovered: dict = {}
 _mcp_gateway = None
+_chat_allow_list: list = []
+
+
+def _current_allow_list() -> list:
+    """The live chat tool allow-list (set by _build_runtime)."""
+    return list(_chat_allow_list)
 
 
 def _get_mcp_settings():
@@ -191,6 +197,58 @@ def _get_mcp_settings():
         memory_backend_url=_memory_db_path(),
     )
     return _mcp_settings_cache
+
+
+def _token_db_path() -> str:
+    """Path to the SQLite file holding managed OAuth tokens.
+
+    Deliberately separate from the event log and memory stores: those may
+    be exported or inspected; this file holds secret VALUES and must never
+    be. Override with ACTIVEGRAPH_TOKEN_DB."""
+    override = os.environ.get("ACTIVEGRAPH_TOKEN_DB")
+    if override:
+        return override
+    data_dir = os.path.join(_workspace, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "activegraph_tokens.sqlite")
+
+
+_oauth_source = None
+_oauth_pending: dict = {}  # credential_name -> {"flow": ..., "device_code": ...}
+
+
+def _get_oauth_source():
+    """The managed OAuth credential source, registered once behind the
+    Secrets Pack resolution chain (env still wins)."""
+    global _oauth_source
+    if _oauth_source is None:
+        from packs.secrets.managed import (
+            OAuthCredentialSource,
+            OAuthDeviceFlow,
+            OAuthTokenStore,
+            register_credential_source,
+        )
+        store = OAuthTokenStore(_token_db_path())
+        _oauth_source = OAuthCredentialSource(store)
+        # Rebuild refresh flows for tokens stored in earlier sessions: the
+        # provider column carries the flow config (endpoints + client id)
+        # as JSON, so refresh keeps working across restarts.
+        for name in store.names():
+            record = store.get(name) or {}
+            try:
+                config = json.loads(record.get("provider") or "")
+                _oauth_source.add_flow(name, OAuthDeviceFlow(
+                    provider=config["provider"],
+                    client_id=config["client_id"],
+                    client_secret=config.get("client_secret", ""),
+                    device_authorization_endpoint=config["device_authorization_endpoint"],
+                    token_endpoint=config["token_endpoint"],
+                    scope=config.get("scope", ""),
+                ))
+            except Exception:
+                pass  # env-style or legacy row: resolvable until expiry, no refresh
+        register_credential_source(_oauth_source)
+    return _oauth_source
 
 
 def _store_has_run(path: str) -> bool:
@@ -341,11 +399,20 @@ def _build_runtime():
     chat_settings = ChatSettings(
         memory_backend_url=_memory_db_path(),
         tool_allow_list=(
-            ["web.fetch_url", "schedule.create_reminder", "mcp.set_exposure"]
+            ["web.fetch_url", "schedule.create_reminder", "mcp.set_exposure",
+             "catalog.search"]
             + mcp_tool_keys
         ),
         reply_policy=os.environ.get("ACTIVEGRAPH_REPLY_POLICY", "open"),
     )
+    # The capability catalog: the agent queries what exists (and what its
+    # allow-list grants) through a governed low-risk call instead of
+    # memorizing tool names. The module-level allow-list keeps allowed_now
+    # live for both the agent's catalog.search and GET /capabilities.
+    global _chat_allow_list
+    _chat_allow_list = list(chat_settings.tool_allow_list)
+    from packs.tool_gateway.catalog import register_catalog_capability
+    register_catalog_capability(_current_allow_list)
     resuming = _store_has_run(db)
 
     # Resolve the chat LLM provider from the environment (live if a provider
@@ -443,6 +510,11 @@ def _build_runtime():
     # Represent any env / Replit-Secret provider keys as name-only
     # credential_refs in the graph (values are never read here).
     _ensure_provider_credential_refs(rt.graph)
+
+    # Managed auth: register the OAuth token store behind the Secrets Pack
+    # resolution chain (env still wins) so previously connected accounts
+    # resolve, with refresh, from the first request after a restart.
+    _get_oauth_source()
 
     # ── MCP (bidirectional) ─────────────────────────────────────────────────
     # Load the pack (object types for exposure rules + audit records), seed
@@ -1047,6 +1119,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sessions_get()
             elif path == "/channels/whatsapp/webhook":
                 self._handle_whatsapp_verify(qs)
+            elif path == "/capabilities":
+                self._handle_capabilities_get()
             elif path == "/health":
                 self._send_json({"status": "ok"})
             else:
@@ -1094,8 +1168,108 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_whatsapp_webhook(body)
             elif path == "/mcp":
                 self._handle_mcp(body)
+            elif path == "/secrets/oauth/start":
+                self._handle_oauth_start(body)
+            elif path == "/secrets/oauth/poll":
+                self._handle_oauth_poll(body)
             else:
                 self._send_error("Not found", 404)
+
+    # ── POST /secrets/oauth/start + /secrets/oauth/poll ─────────────────────
+    #
+    # OAuth 2.0 Device Authorization Grant (RFC 8628), the managed-auth path
+    # behind the Secrets Pack's resolve_credential_fn. start begins the flow
+    # and returns the verification URL + user code for the OWNER to visit;
+    # poll exchanges the device code once the owner approved, and stores the
+    # token in the token DB (never the graph). After that, any capability
+    # whose credential_ref_name matches resolves through the managed source,
+    # with the same SecretUsageEvent audit trail as env credentials.
+
+    def _handle_oauth_start(self, body: dict):
+        from packs.secrets.managed import OAuthDeviceFlow
+
+        required = ["credential_name", "client_id",
+                    "device_authorization_endpoint", "token_endpoint"]
+        missing = [k for k in required if not body.get(k)]
+        if missing:
+            self._send_error(f"missing fields: {', '.join(missing)}", 400)
+            return
+        flow = OAuthDeviceFlow(
+            provider=body.get("provider", body["credential_name"]),
+            client_id=body["client_id"],
+            client_secret=body.get("client_secret", ""),
+            device_authorization_endpoint=body["device_authorization_endpoint"],
+            token_endpoint=body["token_endpoint"],
+            scope=body.get("scope", ""),
+        )
+        started = flow.start()
+        name = body["credential_name"]
+        _oauth_pending[name] = {"flow": flow, "device_code": started["device_code"]}
+        self._send_json({
+            "credential_name": name,
+            "verification_uri": started.get("verification_uri")
+            or started.get("verification_url", ""),
+            "user_code": started.get("user_code", ""),
+            "interval": started.get("interval", 5),
+            "expires_in": started.get("expires_in"),
+            "next": "POST /secrets/oauth/poll {\"credential_name\": ...} after approving",
+        })
+
+    def _handle_oauth_poll(self, body: dict):
+        name = (body.get("credential_name") or "").strip()
+        pending = _oauth_pending.get(name)
+        if not pending:
+            self._send_error(f"no pending OAuth flow for {name!r}", 404)
+            return
+        flow = pending["flow"]
+        outcome = flow.poll(pending["device_code"])
+        if outcome["status"] == "pending":
+            self._send_json({"status": "pending", "error": outcome.get("error")})
+            return
+        if outcome["status"] == "error":
+            _oauth_pending.pop(name, None)
+            self._send_json({"status": "error", "error": outcome.get("error")})
+            return
+        token = outcome["token"]
+        source = _get_oauth_source()
+        # provider holds the flow config as JSON (endpoints + client id, no
+        # token material) so refresh still works after a server restart.
+        flow_config = json.dumps({
+            "provider": flow.provider,
+            "client_id": flow.client_id,
+            "client_secret": flow.client_secret,
+            "device_authorization_endpoint": flow.device_authorization_endpoint,
+            "token_endpoint": flow.token_endpoint,
+            "scope": flow.scope,
+        })
+        source.store.put(
+            name,
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            expires_in=token.get("expires_in"),
+            token_type=token.get("token_type", "Bearer"),
+            scope=token.get("scope", ""),
+            provider=flow_config,
+        )
+        source.add_flow(name, flow)
+        _oauth_pending.pop(name, None)
+        # The value stays in the token store; the response confirms only
+        # that resolution now works.
+        self._send_json({"status": "connected", "credential_name": name,
+                         "expires_in": token.get("expires_in")})
+
+    # ── GET /capabilities ────────────────────────────────────────────────────
+    #
+    # The capability catalog for humans and the Inspector: every registered
+    # capability with risk class, origin (native vs MCP-derived), and
+    # whether the chat allow-list currently grants it.
+
+    def _handle_capabilities_get(self):
+        _get_rt()  # ensure registrations have happened
+        from packs.tool_gateway.catalog import catalog_entries
+
+        entries = catalog_entries(allow_list=_current_allow_list())
+        self._send_json({"count": len(entries), "capabilities": entries})
 
     # ── POST /mcp ────────────────────────────────────────────────────────────
     #

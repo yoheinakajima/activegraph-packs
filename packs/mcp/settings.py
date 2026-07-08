@@ -74,6 +74,7 @@ class MCPSettings(BaseModel):
             "chat": ["owner"],
             "memory_search": ["owner"],
             "tools": ["owner"],
+            "catalog": ["owner"],
         },
         description=(
             "Default per-surface exposure: surface → roles allowed. Seeded "

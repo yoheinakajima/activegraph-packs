@@ -6,6 +6,30 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Capability catalog** (tool_gateway v0.5.0, mcp v0.2.0): every
+  registered capability queryable with risk class, origin (native vs
+  MCP-derived), LLM-exposability, and live allow-list status. The agent
+  discovers via the governed `catalog.search` capability instead of
+  memorizing an allow-list; the Inspector reads GET /capabilities;
+  inbound MCP callers get `catalog_search` scoped to what their role
+  can reach (default owner-only exposure).
+- **Managed auth** (secrets v0.2.0): OAuth 2.0 device flow behind the
+  existing `resolve_credential_fn` seam. Env still wins; tokens live in
+  a dedicated SQLite store (never the graph); auto-refresh ahead of
+  expiry; the audit trail records WHICH source resolved each credential.
+  Demo server: POST /secrets/oauth/start + /secrets/oauth/poll, with
+  refresh flows surviving restarts.
+- **Design docs**: `docs/evolution-design.md` (the full agent-authored
+  pack lifecycle: gates, fork trials, governed adoption via promote,
+  threat model, acceptance fixtures) and `docs/manifest-spec.md` (DRAFT
+  pack manifest contract for the runtime loader, CI, the evolution
+  pack, multi-repo loading, and pack-sources configs). Both
+  adversarially reviewed; the manifest stays DRAFT until the vc
+  extraction and the evolution pack consume it.
+- **README reframe**: this repo is the official ActiveGraph pack
+  library (general capability layer + conventions + reference chassis);
+  loud security warning on the `ACTIVEGRAPH_REPLY_POLICY=open` default.
+- `packs/_template` gains the mandatory fixtures skeleton.
 - **MCP, both directions** (new `mcp` pack v0.1.0): outbound, any MCP
   server's tools become Tool Gateway capabilities — approval-required by
   default, promoted per tool, recorded/sanitized/scanned like every
