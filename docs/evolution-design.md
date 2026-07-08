@@ -543,8 +543,15 @@ shipped default.
    scoping consequence, stated plainly: the child loads ONLY the
    candidate pack, so replay exercises the candidate against recorded
    inputs in isolation from other packs' behaviors. The v1 comparator
-   was candidate-only failures anyway; cross-pack interaction trials
-   are future work alongside §7.4.
+   was candidate-only failures anyway, and candidate-only isolation
+   stays the canonical default. Cross-pack interaction trials are now
+   available should we want them: the runtime added
+   `run_forked_trial(..., extra_packs=(PackSource(...),))` in v1.7,
+   each extra pack through the identical pin chain as the candidate.
+   The pack does not use it yet (no floor bump past >=1.5), and the
+   pinned-driver plus marker-sweep patterns this pack uses are the
+   documented recommendation in the runtime's trial-isolation-design
+   §2b, with the CONTRACT #4d residue linkage made explicit there.
 3. **RESOLVED in v0.2: trial replay residue.** Promote's three-way
    diff treats every fork-only create as adoptable state, so the
    replayed input copies (and everything the candidate derived from
@@ -574,6 +581,22 @@ shipped default.
    in-flight forks are kept by proposal status, and promoted-from
    forks are refused by the runtime itself, which fixture 18 asserts.
    The pin set dominates any policy here, unconditionally.
+
+   Concurrency ruling (CONTRACT v1.5 #2 addendum 2b): the offline
+   requirement is per-RUN, so retiring fork runs is sanctioned while a
+   live runtime is attached to OTHER runs in the same store (the
+   runtime pins the shape with
+   test_retire_fork_per_run_while_parent_runtime_is_live). Two
+   conditions the pack keeps: never race a pin-creating operation
+   against retirement of the same run (retire only after decisions are
+   final, which the terminal-status kept set guarantees; a lost race
+   degrades an audit walk but destroys nothing, since archived rows
+   stay readable via `iter_archived`), and never compact or retire a
+   run under a runtime attached to that same run (the snapshot-event
+   id collision, the one real hazard). The demo server's pre-boot
+   placement honors the second condition by construction; fixture 18
+   proves the first-condition-safe per-run case with the parent
+   runtime live throughout.
 6. **Re-homing.** Full undo by forking pre-promote exists structurally;
    making that fork the primary run is unowned. Out of scope v1.
 7. **Concurrent authorship.** One proposal in flight per pack name at
@@ -650,7 +673,10 @@ scripted generator, never a live LLM:
 18. **Retention pins**: after a full adopt, retiring the promoted-from
     fork raises `RetentionPinnedError` with the promoted-from reason; a
     rejected candidate's forks retire clean; the boot housekeeping
-    helper makes the same calls and reports every decision.
+    helper makes the same calls and reports every decision. Also proves
+    the sanctioned per-run concurrency (addendum 2b): the parent
+    runtime stays live on the store throughout while the retention
+    calls operate on the fork runs.
 19. **Soak rotation** (gate 5's harness, docs/soak-runbook.md): one
     full rotation reaches every expected terminal state on a fresh
     keyless store (happy, conflict-park, disable-restart, all three

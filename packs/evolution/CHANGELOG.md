@@ -1,5 +1,29 @@
 # Evolution Pack Changelog
 
+## v0.4.1 — Retention concurrency verdict folded (2026-07-08)
+
+The runtime ruled the retention offline requirement per-RUN (CONTRACT
+v1.5 #2 addendum 2b): retiring a fork run is sanctioned while a live
+runtime is attached to OTHER runs in the same store, pinned by the
+runtime's test_retire_fork_per_run_while_parent_runtime_is_live.
+
+### Changed
+- `boot.retire_unpinned_trial_forks` docs now state the per-run
+  concurrency ruling and the two conditions the pack keeps: never race
+  a pin-creating op against retirement of the same run (satisfied by
+  retiring only terminal-status forks; a lost race degrades an audit
+  walk but destroys nothing, archived rows stay readable via
+  iter_archived), and never compact/retire a run under a live runtime
+  attached to that same run (the snapshot-event id collision, the one
+  real hazard). No code change: fixture 18 was already correct, and the
+  demo server's pre-boot placement already honors the strict caveat.
+- Fixture 18 documents and asserts the sanctioned pattern explicitly:
+  the parent runtime stays live on the store throughout while
+  pins()/retire() and the housekeeping helper operate on the fork runs.
+- Design §7.2 notes v1.7 `extra_packs` exists for cross-pack trials
+  (candidate-only isolation stays canonical; no floor bump), and §7.5
+  records the concurrency ruling.
+
 ## v0.4.0 — Soak harness + drafting records (2026-07-08)
 
 Gate 5's clock starts; gate 3 becomes a wiring step.

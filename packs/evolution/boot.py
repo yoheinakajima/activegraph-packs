@@ -14,9 +14,31 @@ fork runs in the store, and the ones that never got promoted are
 disposable. Retirement goes THROUGH the runtime's retention API, whose
 pin set dominates unconditionally: a promoted-from fork raises
 RetentionPinnedError and stays, because it is provenance for adopted
-state, never garbage. Offline operation per the runtime's contract:
-call it before the runtime is constructed (the demo server does),
-against a store no live dispatcher is attached to.
+state, never garbage.
+
+Concurrency (CONTRACT v1.5 #2 addendum 2b, ruled per-RUN): "no runtime
+attached" scopes to the RUN the operation touches, not the whole file.
+Retiring a fork run is safe while a live runtime is attached to OTHER
+runs in the same SQLite store (the parent, say); the runtime pins that
+pattern with test_retire_fork_per_run_while_parent_runtime_is_live.
+WAL, run_id-scoped statements, and one short BEGIN IMMEDIATE archive
+transaction make contention resolve as wait-then-succeed or a clean
+OperationalError, never corruption. Two conditions this pack keeps:
+
+  1. Never race a pin-creating operation against retirement of the SAME
+     run: don't retire a fork with a promote from it in flight. Retire
+     only after decisions are final. This pack satisfies it structurally
+     by retiring only forks whose proposals are in terminal or
+     no-longer-adoptable states (see _FORK_RETAINING_STATUSES, the kept
+     set). A lost race degrades an audit walk, never destroys data:
+     archiving is a move, and archived rows stay readable via
+     iter_archived.
+  2. The whole-file caveat still binds the run being operated on ITSELF:
+     compact/retire under a runtime attached to that same run is the
+     real hazard (snapshot-event id collision, empirically verified).
+     This pack never retires a run it holds a live runtime on: the demo
+     server runs housekeeping pre-boot, and the reader below loads each
+     root run only to inspect it, never to retire it.
 """
 
 from __future__ import annotations
