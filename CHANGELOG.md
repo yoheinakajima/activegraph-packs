@@ -6,6 +6,37 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.2.0: the adoption decision surface** (scare-list
+  #3, the launch blocker). `packs/evolution/review.py` renders one
+  proposal as one readable page from graph state alone: author banner
+  first, injection flags loud, the gap, the declared surface including
+  `consumes`, every gate verdict, trial numbers with the fork run id,
+  and the FULL per-file source diff. Demo server: `/approvals/review`,
+  plus content negotiation on `/approvals` (browsers get the review
+  index, API clients keep the JSON). Approving code you have not read
+  defeats the threat model; now the owner's easiest path is reading it.
+- **Trial replay residue policy, resolved** (scare-list #4, design
+  §7.3): a passing fork sweeps everything it created during replay
+  before adoption sees it, so promote carries zero replay scaffolding
+  into the parent. Shared-state patches still promote (the conflict
+  check's whole subject). Sweep counts recorded on the trial.
+- **Retry-capped chassis** (scare-list #5): `sweep_evolution` retries a
+  conflicted adoption at most `max_conflict_retries` times (re-gate,
+  re-trial at parent-now, requeue under the same approved call), then
+  parks the proposal at the new terminal `needs_owner` status that
+  nothing automatic touches again. The demo server tick driver uses it.
+- **LLM author design, design only** (scare-list #2):
+  `docs/llm-author-design.md` specifies how a drafting context is
+  assembled so tool-derived and memory-derived text stays out of the
+  author frame. The author stays UNBUILT and the pipeline stays
+  scripted-author-only until the runtime ships subprocess trial
+  isolation and the design survives review.
+- Evolution fixtures 14, 15, 16 (decision surface end to end, zero
+  residue after adoption, retry cap parks at needs_owner); fifteen
+  scenarios total, still scripted-author, no keys, no network.
+
+## v0.4.0 — Self-modification era: evolution pack, manifests, activegraph 1.4 (2026-07-08)
+
 - **Evolution pack v0.1.0** (task #3, the reason everything else
   exists): agent-authored packs under governance. Static gates (nine,
   including both hash pins and the two-way surface check via the

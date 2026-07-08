@@ -41,7 +41,8 @@ class ModProposal(BaseModel):
     status: str = Field(
         default="drafted",
         description=("drafted | gated | rejected | trialed | pending_approval | "
-                     "adopting | promoted | conflict | suspended | denied | disabled"),
+                     "adopting | promoted | conflict | suspended | denied | "
+                     "disabled | needs_owner"),
     )
     status_note: str = Field(default="")
     frame_id: Optional[str] = Field(default=None)

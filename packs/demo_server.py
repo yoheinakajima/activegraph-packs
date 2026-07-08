@@ -1095,6 +1095,17 @@ class Handler(BaseHTTPRequestHandler):
     def _send_error(self, msg: str, status: int = 500):
         self._send_json({"error": msg}, status)
 
+    def _send_html(self, text: str, status: int = 200):
+        body = text.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _wants_html(self) -> bool:
+        return "text/html" in (self.headers.get("Accept") or "")
+
     def _parse_qs(self) -> dict:
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
@@ -1142,6 +1153,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_profile_get()
             elif path == "/approvals":
                 self._handle_approvals_get()
+            elif path == "/approvals/review":
+                self._handle_approvals_review_get(qs)
             elif path == "/sessions":
                 self._handle_sessions_get()
             elif path == "/channels/whatsapp/webhook":
@@ -1497,10 +1510,22 @@ class Handler(BaseHTTPRequestHandler):
     # capability_call at status='policy_checking'; decisions are
     # capability_approval / capability_denial objects. These endpoints are
     # thin views over the Tool Gateway tools — no server-side bookkeeping.
+    #
+    # Browsers (Accept: text/html) get the review surface instead of raw
+    # JSON: the index lists held calls, and evolution adoptions link to
+    # /approvals/review — the one-page render of the proposal, its full
+    # source diff, gates, trial, and flags (packs/evolution/review.py).
+    # "The owner approved it" must mean "the owner read it"; a JSON blob
+    # is not a diff-review surface. API clients still get JSON.
 
     def _handle_approvals_get(self):
         rt = _get_rt()
         from packs.tool_gateway.tools import pending_approvals_fn
+
+        if self._wants_html():
+            from packs.evolution.review import render_approvals_index_html
+            self._send_html(render_approvals_index_html(rt.graph))
+            return
 
         def _decision_rows(obj_type: str, ts_key: str) -> list[dict]:
             rows = []
@@ -1526,6 +1551,30 @@ class Handler(BaseHTTPRequestHandler):
             "recent_approvals": _decision_rows("capability_approval", "approved_at"),
             "recent_denials": _decision_rows("capability_denial", "denied_at"),
         })
+
+    def _handle_approvals_review_get(self, qs: dict):
+        rt = _get_rt()
+        from packs.evolution.review import build_review, render_review_html
+
+        proposal_id = (qs.get("proposal_id") or "").strip()
+        call_id = (qs.get("call_id") or "").strip()
+        if call_id and not proposal_id:
+            call = rt.graph.get_object(call_id)
+            if call is not None:
+                proposal_id = str((call.data.get("input_data") or {})
+                                  .get("proposal_id", ""))
+        if not proposal_id:
+            self._send_error("proposal_id (or call_id) is required", 400)
+            return
+        try:
+            review = build_review(rt.graph, proposal_id)
+        except KeyError as exc:
+            self._send_error(str(exc), 404)
+            return
+        if self._wants_html():
+            self._send_html(render_review_html(review))
+        else:
+            self._send_json(review)
 
     def _handle_approvals_post(self, body: dict):
         rt = _get_rt()
@@ -2009,11 +2058,13 @@ def _tick_driver_loop(period_seconds: float):
         # Evolution phase two (when enabled): adoption/disable tickets are
         # applied here, BETWEEN frames, on the single runtime-executor
         # thread — exactly the out-of-frame guarantee the design requires.
+        # sweep_evolution wraps ticket processing with the CAPPED conflict
+        # retry: repeated promote conflicts park the proposal at
+        # needs_owner instead of looping forever.
         if _evolution_enabled():
-            from packs.evolution.adopt import process_adoption_tickets
+            from packs.evolution.chassis import sweep_evolution
             from packs.evolution.settings import EvolutionSettings
-            outcomes = process_adoption_tickets(
-                rt, EvolutionSettings(enabled=True))
+            outcomes = sweep_evolution(rt, EvolutionSettings(enabled=True))
             for outcome in outcomes:
                 print(f"[demo_server] evolution: {outcome}", flush=True)
         return len(ticks)
