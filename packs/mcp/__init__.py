@@ -34,6 +34,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from activegraph.packs import Pack, load_prompts_from_dir
+from activegraph.packs.manifest import CapabilityDecl
 
 from .object_types import OBJECT_TYPES, RELATION_TYPES
 from .settings import MCPSettings
@@ -44,7 +45,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # integrates_with=["identity_auth", "chat", "memory_gateway", "secrets"]
 pack = Pack(
     name="mcp",
-    version="0.2.0",
+    version="0.2.1",
     description=(
         "Bidirectional MCP: outbound servers' tools become governed Tool "
         "Gateway capabilities (approval-required by default); inbound, the "
@@ -58,6 +59,13 @@ pack = Pack(
     tools=(),
     policies=(),
     prompts=load_prompts_from_dir(_PROMPTS_DIR) if _PROMPTS_DIR.exists() else (),
+    # Declarative capability surface (Q8 mechanism chain, step 1):
+    # mirrors this pack's register_local_capability host wiring so the
+    # loader's two-way surface check covers capabilities too. CI's AST
+    # check (tests/test_manifests.py) keeps this honest against the code.
+    capabilities=(
+        CapabilityDecl(provider='mcp', capability='set_exposure', risk_class='high', credential_ref=''),
+    ),
     settings_schema=MCPSettings,
 )
 

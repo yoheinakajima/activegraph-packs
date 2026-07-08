@@ -55,6 +55,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from activegraph.packs import Pack, load_prompts_from_dir
+from activegraph.packs.manifest import CapabilityDecl
 
 from .behaviors import BEHAVIORS
 from .object_types import OBJECT_TYPES, RELATION_TYPES
@@ -66,7 +67,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["communication", "tool_gateway"]
 pack = Pack(
     name="schedule",
-    version="0.1.1",
+    version="0.1.2",
     description=(
         "Graph-native scheduling: schedules declare when to fire and what to "
         "emit; ticks are event-first records of due moments; a host driver "
@@ -79,6 +80,13 @@ pack = Pack(
     tools=TOOLS,
     policies=(),
     prompts=load_prompts_from_dir(_PROMPTS_DIR) if _PROMPTS_DIR.exists() else (),
+    # Declarative capability surface (Q8 mechanism chain, step 1):
+    # mirrors this pack's register_local_capability host wiring so the
+    # loader's two-way surface check covers capabilities too. CI's AST
+    # check (tests/test_manifests.py) keeps this honest against the code.
+    capabilities=(
+        CapabilityDecl(provider='schedule', capability='create_reminder', risk_class='low', credential_ref=''),
+    ),
     settings_schema=ScheduleSettings,
 )
 

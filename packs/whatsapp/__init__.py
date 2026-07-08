@@ -38,6 +38,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from activegraph.packs import Pack, load_prompts_from_dir
+from activegraph.packs.manifest import CapabilityDecl
 
 from .behaviors import BEHAVIORS
 from .object_types import OBJECT_TYPES, RELATION_TYPES
@@ -50,7 +51,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # integrates_with=["tool_gateway", "secrets", "identity_auth"]
 pack = Pack(
     name="whatsapp",
-    version="0.1.0",
+    version="0.1.1",
     description=(
         "WhatsApp Cloud API transport adapter: inbound messages become "
         "chat_input (reusing the Chat Pack's conversation machinery); approved "
@@ -63,6 +64,13 @@ pack = Pack(
     tools=TOOLS,
     policies=(),
     prompts=load_prompts_from_dir(_PROMPTS_DIR) if _PROMPTS_DIR.exists() else (),
+    # Declarative capability surface (Q8 mechanism chain, step 1):
+    # mirrors this pack's register_local_capability host wiring so the
+    # loader's two-way surface check covers capabilities too. CI's AST
+    # check (tests/test_manifests.py) keeps this honest against the code.
+    capabilities=(
+        CapabilityDecl(provider='whatsapp', capability='send_message', risk_class='low', credential_ref='WHATSAPP_ACCESS_TOKEN'),
+    ),
     settings_schema=WhatsAppSettings,
 )
 

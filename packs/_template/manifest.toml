@@ -1,0 +1,39 @@
+# Manifest skeleton: fill in and regenerate the hash with
+#   python scripts/generate_manifests.py <your_pack>
+# (the generator introspects your Pack object, so most fields fill
+# themselves). Spec: docs/manifest-spec.md.
+
+[pack]
+name = "your_pack"
+version = "0.1.0"
+description = "One sentence: what this pack does."
+license = "Apache-2.0"
+
+[pack.provenance]
+authors = ["Your Name <you@example.com>"]
+authored_by = "human"
+generator = ""
+source_url = ""
+created_at = "2026-01-01T00:00:00Z"
+
+[pack.integrity]
+content_hash = "sha256:REGENERATE-ME"
+
+[dependencies]
+activegraph = ">=1.4,<2.0"
+python = ">=3.11"
+python-deps = []
+
+[dependencies.packs]
+core = ">=0.1"
+
+[surface]
+object_types = ["example_object"]
+relation_types = []
+behaviors = ["example_behavior"]
+tools = ["example_tool"]
+settings_schema = "TemplateSettings"
+
+[fixtures]
+entrypoint = "fixtures/run_fixtures.py"
+deterministic = true

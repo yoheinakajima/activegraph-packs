@@ -44,7 +44,7 @@ Consumption pattern for adoption, in order, inside one governed
 executor. This is the single canonical order; §3 stage 5 restates it
 with rationale:
 
-1. Recompute gates against the proposal's pinned content hash.
+1. Recompute gates against the proposal's pinned bundle hash.
 2. `parent_rt.promote(fork_rt, dry_run=True)`. A conflict here aborts
    the adoption BEFORE anything irreversible happens (there is no
    unload), and the proposal moves to `conflict` with the runtime's
@@ -67,19 +67,24 @@ New object types (all with full schemas at implementation time):
 | Type | Purpose | Key fields |
 |---|---|---|
 | `capability_gap` | Something the assistant could not do | `kind` (tool_failure, unhandled_intent, reflection, owner_request), `description`, `evidence_refs`, `status` |
-| `mod_proposal` | One candidate pack version | `gap_id`, `pack_name`, `pack_version`, `manifest` (per manifest-spec), `source_artifact_ids`, `content_hash`, `rationale`, `authored_by`, `status` |
+| `mod_proposal` | One candidate pack version | `gap_id`, `pack_name`, `pack_version`, `manifest` (per manifest-spec), `source_artifact_ids`, `bundle_hash`, `rationale`, `authored_by`, `status` |
 | `gate_result` | One gate's verdict on one proposal | `proposal_id`, `gate` (static, fixtures, in_sample, held_out), `verdict`, `details` |
 | `mod_trial` | One fork trial of one proposal | `proposal_id`, `fork_run_id`, `forked_at_event`, `eval_summary`, `diff_summary`, `failures`, `verdict` |
 | `mod_promotion` | A completed adoption | `proposal_id`, `trial_id`, `promote_marker_event_id`, `from_run`, `applied_counts`, `status` (active, disabled) |
 | `mod_rollback` | A disable/rollback action | `promotion_id`, `method`, `reason`, `at` |
 
 Proposal source files are stored as Core `artifact` objects, one per
-file, hashed individually; `mod_proposal.content_hash` is the manifest's
-content hash over the same file set MINUS `manifest.toml`, computed
-exactly per manifest-spec §4 (the canonicalization there is normative
-for all three places this hash gets recomputed). The hash is the pin:
-what the owner approved is byte-identical to what the executor loads,
-or the executor refuses.
+file, hashed individually; `mod_proposal.bundle_hash` is the BUNDLE
+hash: the manifest-spec §4 walk WITHOUT the manifest exclusion, so it
+covers every byte including `manifest.toml` itself. The manifest is the
+exact document the owner's decision surface renders (risk classes,
+`consumes`, `authored_by`), so a pin that excluded it would leave
+approve-then-swap of the manifest open. Computed by
+`activegraph.packs.manifest.compute_bundle_hash`, imported, never
+reimplemented; recomputed at gate time, at adoption time, and at every
+boot re-materialization. The hash is the pin: what the owner approved
+is byte-identical to what the executor loads, or the executor
+refuses.
 
 Proposal status machine:
 
@@ -143,8 +148,9 @@ Run in order, first failure stops the pipeline, every verdict is a
 
 1. **Manifest validity**: parses, schema-valid per manifest-spec,
    version sane, declared runtime range includes the pinned runtime.
-2. **Hash integrity**: manifest content hash matches the stored
-   artifacts.
+2. **Hash integrity**: the manifest's internal content hash matches
+   the stored source artifacts (manifest-spec §4), and the proposal's
+   BUNDLE hash matches the full artifact set including the manifest.
 3. **Declared-vs-actual**: AST walk of the source; every behavior,
    tool, object type, and capability registration found in code must be
    declared in the manifest, and vice versa.
@@ -256,9 +262,10 @@ counts, the fork run id, and any flags. Approval is
 The `evolution.adopt_proposal` executor, running only after approval,
 in the §1 canonical order:
 
-1. Recompute the content hash of the stored artifacts and compare to
-   the approved proposal's hash. Mismatch aborts loudly. This closes
-   the approve-then-swap window: what loads is what was reviewed.
+1. Recompute the BUNDLE hash of the stored artifacts (manifest
+   included, per §2) and compare to the approved proposal's pin.
+   Mismatch aborts loudly. This closes the approve-then-swap window
+   for code and manifest alike: what loads is what was reviewed.
 2. Re-run the static gates (cheap, deterministic; the world may have
    changed, e.g. gateway settings now auto-approve critical).
 3. `parent_rt.promote(fork_rt, dry_run=True)`. A conflict aborts NOW,
@@ -376,9 +383,14 @@ approver verification is also T2's backstop, and it holds only because
 stage 4 refuses to register adoption in unverified-identity mode. That
 refusal is load-bearing for both threats and gets its own fixtures.
 
-**T4: approve-then-swap.** Source mutates between owner approval and
-executor load. Containment: content hash pinned on the proposal,
-recomputed at adoption and at every boot re-materialization.
+**T4: approve-then-swap.** Source OR MANIFEST mutates between owner
+approval and executor load. The manifest is an attack surface in its
+own right: swapping only `manifest.toml` relabels risk classes, empties
+`consumes`, or flips `authored_by` while the reviewed code stays
+untouched. Containment: the proposal pins the BUNDLE hash (§2), which
+covers every byte including the manifest, recomputed at gate time, at
+adoption, and at every boot re-materialization via the runtime's
+`compute_bundle_hash`.
 
 **T5: the trial itself as attack surface.** Candidate code runs inside
 the fork during stage 3, before any approval. This is the sharpest
@@ -444,7 +456,8 @@ scripted generator, never a live LLM:
    `approve_capability` fails the reserved-namespace gate; forcing it
    into the registry anyway is refused by `as_llm_tool`.
 8. **Hash pin**: artifact bytes mutate after approval; the adoption
-   executor aborts; nothing loads.
+   executor aborts; nothing loads. Second case: ONLY `manifest.toml`
+   mutates (a relabeled risk class); the bundle-hash pin still aborts.
 9. **Restart persistence**: adopted pack reloads at boot from
    `mod_promotion`; a disabled one stays down; a hash-mismatched one is
    disabled loudly.

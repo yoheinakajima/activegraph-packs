@@ -73,8 +73,8 @@ content_hash = "sha256:9f8a..."  # see §4
 [dependencies]
 activegraph = ">=1.3,<2.0"       # PEP 440 range
 python = ">=3.11"
-# PEP 508 strings; empty for most packs. The loader checks importability,
-# it does not install (see Q4). NOTE: this key must appear BEFORE the
+# PEP 508 strings; empty for most packs. The loader checks distribution
+# presence (importlib.metadata), never installs (Q4). NOTE: this key must appear BEFORE the
 # sub-tables below; in TOML, a bare key after a table header would belong
 # to that sub-table.
 python-deps = []
@@ -136,9 +136,10 @@ the host that generated the pack, not by the manifest itself.
 ### `[pack.integrity]` (required)
 
 `content_hash` pins the bytes. See §4. `signature` is a reserved key so
-the schema does not break when signing lands; validators MUST ignore an
-empty value and MUST reject an unknown algorithm prefix rather than
-skipping verification silently (see Q6).
+the schema does not break when signing lands; validators MUST reject
+ANY non-empty signature value today, because no algorithm is
+implemented and "recognized prefix but unverifiable" must not become a
+pass-through (Q6, sharpened by the runtime review).
 
 ### `[dependencies]` (required, sub-tables optional)
 
@@ -147,8 +148,11 @@ skipping verification silently (see Q6).
 - `packs` (hard deps) and `optional-packs` (the existing
   `integrates_with` convention, checked lazily at runtime with graceful
   degradation, matching current pack behavior).
-- `python-deps`: PEP 508. The loader verifies importability of the
-  distribution names and reports what is missing; it does not install.
+- `python-deps`: PEP 508. The loader verifies DISTRIBUTION PRESENCE via
+  `importlib.metadata.version(dist_name)` and reports what is missing;
+  it does not install, and it does not test importability (PEP 508
+  names are distribution names, not import names: `pillow` installs,
+  `PIL` imports).
   Agent-authored packs get an empty list enforced by the evolution
   pack's static gates (imports outside the allow-list already fail
   there).
@@ -225,13 +229,35 @@ normalization: the bytes are the contract; publish from one platform),
 order-independent of filesystem enumeration, resistant to
 file-boundary confusion (length prefix).
 
-Consumers: the runtime loader verifies at load (policy per Q2); the
-evolution pack verifies at gate time, at adoption time, and at every
-boot re-materialization; multi-repo installers verify after fetch. The
-exclusion list above is normative for every consumer: in particular,
-`manifest.toml` is NEVER part of the hashed byte stream, and any
-consumer phrase like "hash over the pack's file set" means the file set
-as defined here.
+Edge rules, each normative (folded from the runtime's Q5 review):
+directory symlinks are rejected exactly like file symlinks (a symlinked
+subdir would smuggle unhashed content through a naive walk); paths that
+do not encode as UTF-8 are rejected loudly; paths must be NFC-normalized
+(macOS normalizes filenames and Linux does not, so an NFD `café.py`
+would hash differently per platform); non-regular files (sockets, fifos)
+are silently skipped like directories; empty directories are invisible
+to the hash.
+
+**Two hashes, two jobs.** The `content_hash` above excludes
+`manifest.toml` because a hash cannot cover itself; it proves the
+manifest matches the source files it ships with. That self-exclusion
+makes it USELESS as an external pin: an attacker who swaps only the
+manifest (risk classes relabeled, `consumes` emptied, `authored_by`
+flipped, the exact document a reviewer reads) leaves `content_hash`
+valid. External pins therefore use the **bundle hash**: the same walk
+WITHOUT the manifest exclusion, covering every byte including
+`manifest.toml`. `[load.pins]` values (§5) and the evolution pack's
+proposal pins are bundle hashes. Reference implementations:
+`activegraph.packs.manifest.compute_content_hash` and
+`compute_bundle_hash` (runtime-owned; consumers import, never
+reimplement).
+
+Consumers: the runtime loader verifies `content_hash` at load (policy
+per Q2); the evolution pack verifies the BUNDLE hash at gate time, at
+adoption time, and at every boot re-materialization; multi-repo
+installers verify the bundle hash after fetch. The exclusion list above
+is normative for every consumer: any consumer phrase like "hash over
+the pack's file set" means the file set as defined here.
 
 ## 5. Multi-repo loading (the shape, not the tool)
 
@@ -257,7 +283,7 @@ subdir = "packs"                 # default "packs"; "." for repo-root packs
 [load]
 packs = ["core", "tool_gateway", "chat", "research"]
 
-[load.pins]                      # optional per-pack expected hashes
+[load.pins]                      # optional per-pack expected BUNDLE hashes (§4)
 research = "sha256:ab12..."
 ```
 
@@ -279,10 +305,13 @@ Resolution rules, in order, all before anything imports:
 4. **Hash verification, honestly scoped**: the post-fetch check against
    the manifest's own `content_hash` proves internal consistency
    (integrity in transit), never authenticity, because the manifest
-   arrives with the pack. Authenticity requires an EXTERNAL pin: a
-   `[load.pins]` entry, or a git `ref` that is a commit SHA. A git
-   source pinned by tag or branch without a `[load.pins]` hash is a
-   validation error, since tags move and the check would prove nothing.
+   arrives with the pack and excludes itself from its own hash.
+   Authenticity requires an EXTERNAL pin covering every byte INCLUDING
+   the manifest: a `[load.pins]` entry, which is a **bundle hash**
+   (§4), or a git `ref` that is a commit SHA (git already pins the
+   manifest). A git source pinned by tag or branch without a
+   `[load.pins]` bundle hash is a validation error, since tags move
+   and the check would prove nothing.
 
 ## 6. Consumer pressure-test
 
@@ -319,35 +348,44 @@ manifest on every push, which keeps declared-vs-actual honest from day
 one. Docstring conventions (`requires=`, `integrates_with=`) stay as
 prose but stop being the source of truth.
 
-## 9. Open questions for the runtime session
+## 9. Q1-Q8: answered (runtime review, folded 2026-07-08)
 
-- **Q1 (errors)**: manifest violations should be structured errors in
-  the house taxonomy. One `PackManifestError` with a `violations` list,
-  or per-category errors? Preference here: single error, full list,
-  computed before any mutation, matching `load_pack` atomicity.
-- **Q2 (grandfathering)**: is a missing manifest a warning or a pass in
-  v1.3? Preference: silent pass in the runtime, warning in this repo's
-  CI, flip to loader warning one minor version later.
-- **Q3 (strictness)**: two-way surface check as hard error or warning
-  in v1? Preference: hard error when a manifest exists (a pack that
-  opts in, opts all the way in), since grandfathering already gives a
-  soft path.
-- **Q4 (python-deps)**: confirm check-only (importability), no
-  install. Anything stronger belongs to host tooling.
-- **Q5 (hash edges)**: confirm the §4 exclusion list and symlink
-  rejection; flag anything the loader's file walking would disagree
-  with (e.g. prompts directories, non-UTF-8 filenames).
-- **Q6 (unknown signature algorithms)**: confirm reject-not-skip so
-  the reserved seam cannot be used for downgrade.
-- **Q7 (ownership)**: does the manifest schema live in the runtime
-  (importable by this repo) or here (vendored by the runtime)?
-  Preference: runtime owns schema and validation; this repo owns the
-  spec document and the migration tooling until it stabilizes, then
-  the doc moves too.
-- **Q8 (capability visibility)**: gateway capability registration is
-  imperative host wiring, invisible to the loader (see §3), so
-  capability declarations are verified statically for now. Should
-  `Pack(...)` grow a declarative `capabilities` field the loader can
-  introspect, moving that check loader-side? Preference: yes,
-  additively, in a later runtime minor; the static check ships first
-  and stays as CI defense-in-depth either way.
+The reference implementation is `activegraph.packs.manifest` (v1.4).
+This repo's CI and the evolution pack's gates IMPORT it; nothing here
+reimplements validation or hashing.
+
+- **Q1 (errors)): ANSWERED.** single `PackManifestError` carrying every
+  violation at once, computed before anything else, matching
+  `load_pack`'s pre-mutation atomicity.
+- **Q2 (grandfathering)): ANSWERED, locked in CONTRACT v1.4 #1.** the
+  runtime enforces nothing at `load_pack` this cycle; validation is
+  opt-in via `activegraph.packs.manifest`. This repo's CI warns
+  (validates every manifest on every push); loader warning arrives one
+  minor after DRAFT exits; hard loader errors are 2.0 territory.
+- **Q3 (strictness)): ANSWERED.** hard error when a manifest exists. A
+  pack that opts in, opts all the way in; grandfathering is the soft
+  path.
+- **Q4 (python-deps)): ANSWERED, precision fix folded into §3.**
+  check distribution presence via `importlib.metadata`, never
+  importability, never install.
+- **Q5 (hash edges)): ANSWERED, folded into §4.** directory symlinks
+  rejected, non-UTF-8 paths rejected, NFC required, non-regular files
+  silently skipped, empty directories invisible. The runtime also fixed
+  its prompt loader (hidden files and symlinks skipped) so nothing the
+  loader reads can escape the hash.
+- **Q6 (signatures)): ANSWERED, sharpened.** ANY non-empty signature
+  value is rejected today, not just unknown prefixes; no implemented
+  algorithm means no pass-through.
+- **Q7 (ownership)): ANSWERED.** the runtime owns schema and validation
+  (`activegraph.packs.manifest`); this repo owns the spec document and
+  the migration tooling until DRAFT exits.
+- **Q8 (capability visibility)): ANSWERED; the mechanism chain, recorded.** (1) `Pack.capabilities: tuple[CapabilityDecl, ...]`
+  shipped runtime-side in v1.4, giving the loader the same two-way
+  check for capabilities as for behaviors/tools; (2) the loader records
+  the declaration in the `pack.loaded` event payload, making it
+  graph-readable; (3) gateway-side enforcement (tool_gateway checks at
+  `register_local_capability` time that the registering pack declared
+  the capability) is this repo's follow-up item once hosts pass pack
+  identity at registration, and it retires the AST check's load-bearing
+  role; the AST check stays as CI defense-in-depth against exactly the
+  cases static analysis can see.
