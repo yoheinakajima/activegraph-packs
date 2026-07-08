@@ -68,6 +68,35 @@ That's the whole seam — no monkey-patching, no Chat Pack changes.
 
 ---
 
+## 1b. Curation: what deserves to be memory (v0.2)
+
+The plumbing decides *how* memories flow; curation decides *what* gets in.
+Three guards, all on by default:
+
+- **Questions are not memory.** Both write paths skip interrogatives —
+  "What's my favorite color?" is classified as a question and dropped, while
+  "My favorite color is green" is stored. (Core checks `?` before keyword
+  categories; chat also catches bare interrogatives without punctuation.)
+- **Provenance admission — documents don't give orders.** The evaluator
+  (the lifecycle's governance point) admits conversational sources freely
+  (the reply gate already governs who converses, and the memory is
+  subject-scoped to the speaker), but guidance categories
+  (instruction/preference/decision) extracted from non-conversational
+  content (emails, documents, tool results) are rejected — with a written
+  rationale on the evaluation object — unless the sender resolves to a
+  trusted principal (owner/admin/collaborator). Enforced only when the
+  Identity/Auth Pack has registered principals; without identity, behavior
+  is unchanged. Knobs: `MemoryGatewaySettings.provenance_admission`
+  ('trusted_senders' | 'off').
+- **Frame-scoped recall.** Items record the frame they were born in, and
+  chat recall excludes the asking frame (`exclude_frame_id`), so a memory
+  created by the current turn can never answer it — a designed invariant,
+  not a cascade-ordering accident.
+
+Category priority is also real now: candidates in
+`auto_accept_categories` accept at `auto_accept_min_confidence` (default
+0.5) instead of the full `acceptance_threshold` (default 0.6).
+
 ## 2. Using memory (recall) and the backend
 
 `chat_memory_context` (in `packs/chat/behaviors.py`) runs **before** the LLM

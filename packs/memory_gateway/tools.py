@@ -28,6 +28,7 @@ def retrieve_memories_fn(
     subject_ref: Optional[str] = None,
     subject_scoped: bool = False,
     include_global: bool = True,
+    exclude_frame_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """Query the memory backend and return ranked results.
 
@@ -62,6 +63,7 @@ def retrieve_memories_fn(
         subject_ref=subject_ref,
         subject_scoped=subject_scoped,
         include_global=include_global,
+        exclude_frame_id=exclude_frame_id,
     )
 
     # Update retrieval stats for returned items

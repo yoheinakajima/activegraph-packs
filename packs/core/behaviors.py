@@ -72,6 +72,14 @@ def _infer_category(text: str) -> Optional[str]:
     """
     text_lower = text.lower()
 
+    # Question — checked FIRST, before any keyword category. A question is
+    # not a weaker candidate for guidance; it is not a candidate at all
+    # ("Should I always use dark mode?" must not become an instruction, and
+    # "What's my favorite color?" must not become a preference). Questions
+    # are classified as such and dropped by the proposer's allow-list.
+    if "?" in text:
+        return "question"
+
     # Preference — explicit "prefer", "rather", "instead of"
     if any(w in text_lower for w in ("prefer", "rather", "instead of", "favourite", "favorite")):
         return "preference"
@@ -95,10 +103,6 @@ def _infer_category(text: str) -> Optional[str]:
     # Fact — reported statements
     if any(w in text_lower for w in ("says", "said", "mentioned", "noted", "stated", "reported", "according")):
         return "fact"
-
-    # Question
-    if "?" in text:
-        return "question"
 
     # Generic intent (wants/needs)
     if any(w in text_lower for w in ("want", "need", "ask", "request")):

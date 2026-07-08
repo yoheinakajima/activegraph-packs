@@ -550,9 +550,28 @@ _CHAT_MEMORY_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+_INTERROGATIVE_STARTS = (
+    "what", "who", "whom", "whose", "where", "when", "why", "how", "which",
+    "can ", "could ", "do ", "does ", "did ", "is ", "are ", "was ", "were ",
+    "will ", "would ", "should ", "shall ", "have ", "has ",
+)
+
+
+def _is_question(text: str) -> bool:
+    """A question is not a memory candidate. Catches both punctuated
+    ("What's my favorite color?") and bare ("what's my favorite color")
+    interrogatives — the cue matcher would otherwise see "my favorite" and
+    memorize the QUESTION as a preference."""
+    stripped = text.strip().lower()
+    return stripped.endswith("?") or stripped.startswith(_INTERROGATIVE_STARTS)
+
+
 def _classify_chat_memory(text: str) -> Optional[str]:
     """Return a memory category for *text* if it states something durable, else
-    None. Small, ordered keyword heuristic — see _CHAT_MEMORY_CUES."""
+    None. Small, ordered keyword heuristic — see _CHAT_MEMORY_CUES. Questions
+    never classify (see _is_question)."""
+    if _is_question(text):
+        return None
     low = text.lower()
     for category, cues in _CHAT_MEMORY_CUES:
         if any(cue in low for cue in cues):
@@ -710,6 +729,8 @@ def chat_memory_context(event, graph, ctx, *, settings: ChatSettings):
             subject_ref=sender_ref,
             subject_scoped=settings.memory_subject_scoped,
             include_global=settings.memory_include_global,
+            # Never recall a memory born in the frame that is asking.
+            exclude_frame_id=frame_id,
         )
     except Exception:
         return  # Recall must never break the response.

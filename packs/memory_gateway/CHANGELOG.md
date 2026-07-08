@@ -1,5 +1,33 @@
 # Memory Gateway Pack Changelog
 
+## v0.2.0 — Curation: the judgment layer (2026-07-08)
+
+### Added
+- **Provenance admission** (`provenance_admission`, default 'trusted_senders'):
+  the evaluator — the lifecycle's governance point — now decides WHOSE words
+  become memory. Conversations build memory (chat_message sources; the reply
+  gate already governs who converses and the memory is subject-scoped to the
+  speaker), but guidance categories (instruction/preference/decision)
+  extracted from non-conversational content (emails, documents, tool
+  results) are rejected unless the sender resolves to a trusted principal.
+  Documents don't give orders. Rejections carry a written rationale;
+  enforced only when identity verification is possible (same graceful
+  degradation as the gateway's approver check).
+- **Frame-scoped recall guard**: memory items record the frame they were
+  born in; `retrieve_by_query(..., exclude_frame_id=...)` (plumbed through
+  `retrieve_memories_fn` and used by chat_memory_context) guarantees recall
+  never returns a memory created by the very turn that is asking — what
+  used to be a timing accident is now a designed invariant.
+- `auto_accept_min_confidence` (default 0.5).
+
+### Fixed
+- **`auto_accept_categories` now does something.** It was documented as
+  category-based auto-accept but only decorated the rationale string.
+  Priority categories now accept at the relieved
+  `auto_accept_min_confidence` bar instead of the full
+  `acceptance_threshold` — priority relieves the threshold, it does not
+  suspend judgment.
+
 ## v0.1.1 — Relation integrity fix (2026-07-08)
 
 ### Fixed

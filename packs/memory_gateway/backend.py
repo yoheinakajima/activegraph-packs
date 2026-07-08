@@ -322,6 +322,7 @@ class SqliteMemoryBackend:
         subject_ref: Optional[str] = None,
         subject_scoped: bool = False,
         include_global: bool = True,
+        exclude_frame_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """Retrieve MemoryItems ranked by similarity to *query*.
 
@@ -362,7 +363,7 @@ class SqliteMemoryBackend:
                 # Strict isolation: only the caller's own (non-NULL) memories.
                 where.append("subject_ref = ?")
                 params.append(subject_ref)
-        sql = "SELECT item_id, text, category, confidence, embedding FROM memory_items"
+        sql = "SELECT item_id, text, category, confidence, embedding, metadata FROM memory_items"
         if where:
             sql += " WHERE " + " AND ".join(where)
         cursor = self._conn.execute(sql, tuple(params))
@@ -376,7 +377,18 @@ class SqliteMemoryBackend:
 
         scored = []
         for row in rows:
-            item_id, text, cat, conf, embedding_json = row
+            item_id, text, cat, conf, embedding_json, metadata_json = row
+            # Same-frame exclusion: a memory born in the frame that is asking
+            # must not answer it. This turns what used to be a timing accident
+            # (writes land in a later cascade than reads) into a designed
+            # guarantee that survives any future behavior reordering.
+            if exclude_frame_id:
+                try:
+                    if (json.loads(metadata_json or "{}").get("frame_id")
+                            == exclude_frame_id):
+                        continue
+                except Exception:
+                    pass
             score = None
             if query_vec is not None and embedding_json:
                 try:

@@ -82,6 +82,13 @@ def rebuild_principal_registry(graph) -> int:
     return count
 
 
+def principals_registered() -> bool:
+    """True when any principals are known to the in-process registry —
+    the 'is verification possible?' check used by admission/approval logic
+    (call rebuild_principal_registry after a resume, as the bundles do)."""
+    return bool(_PRINCIPAL_REGISTRY)
+
+
 def resolve_known_principal(graph, sender_ref: str) -> Optional[dict]:
     """Behavior-safe principal lookup by sender_ref.
 

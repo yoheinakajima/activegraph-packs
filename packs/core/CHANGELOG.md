@@ -1,5 +1,14 @@
 # Core Pack Changelog
 
+## v0.1.2 — Questions are not memory (2026-07-08)
+
+### Fixed
+- `_infer_category` checks for questions FIRST, before any keyword
+  category. Keyword priority used to classify keyword-bearing questions as
+  guidance ("Should I always use dark mode?" → instruction), which the
+  memory pipeline then stored as standing guidance. A question is not a
+  weaker candidate — it is not a candidate at all.
+
 ## v0.1.1 — Relation integrity fix (2026-07-08)
 
 ### Fixed

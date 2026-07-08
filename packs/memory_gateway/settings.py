@@ -57,7 +57,37 @@ class MemoryGatewaySettings(BaseModel):
     auto_accept_categories: list[str] = Field(
         default=["preference", "instruction", "decision"],
         description=(
-            "Memory categories that are auto-accepted regardless of confidence "
-            "if confidence >= acceptance_threshold."
+            "Priority memory categories: candidates in these categories are "
+            "accepted at auto_accept_min_confidence instead of the full "
+            "acceptance_threshold — durable guidance is worth keeping even "
+            "from a lower-confidence extraction. (Before v0.2 this setting "
+            "was documented but had no effect.)"
+        ),
+    )
+
+    auto_accept_min_confidence: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "The reduced acceptance bar applied to auto_accept_categories. "
+            "Kept above zero on purpose: category priority relieves the "
+            "threshold, it does not suspend judgment."
+        ),
+    )
+
+    provenance_admission: str = Field(
+        default="trusted_senders",
+        description=(
+            "Admission policy for WHOSE words become memory: "
+            "'trusted_senders' (default) — conversations build memory (the "
+            "speaker is talking to the assistant and the memory is scoped to "
+            "them), but guidance categories (instruction/preference/decision) "
+            "extracted from NON-conversational content (emails, documents, "
+            "tool results) are rejected unless the sender resolves to a "
+            "trusted principal (owner/admin/collaborator). Documents don't "
+            "give orders. 'off' — admit everything (pre-v0.2 behavior). "
+            "Enforced only when the Identity/Auth Pack has registered "
+            "principals — verification happens when verification is possible."
         ),
     )

@@ -84,6 +84,81 @@ def _derive_subject_ref(graph, source_ids) -> Optional[str]:
 # ------------------------------------------------------------------ behaviors
 
 
+# Guidance categories: memories that steer the assistant's future behavior.
+# These carry more authority than knowledge, so their provenance bar is higher.
+_GUIDANCE_CATEGORIES = ("instruction", "preference", "decision")
+
+# Trusted roles whose non-conversational statements may become guidance.
+_TRUSTED_ROLES = ("owner", "admin", "collaborator")
+
+
+def _provenance_verdict(graph, candidate_data: dict, settings) -> tuple[bool, str]:
+    """Decide whether this candidate's ORIGIN permits memorization.
+
+    The principle: conversations build memory; documents don't give orders.
+    A chat_message source means the speaker is talking TO the assistant (and
+    the reply gate already governs who converses; the memory is
+    subject-scoped to them) — admit. Content extracted from anything else
+    (emails, documents, tool results) may become knowledge, but GUIDANCE
+    (instruction/preference/decision) requires the sender to resolve to a
+    trusted principal — a third party's "please review the attached" must
+    not become standing guidance.
+
+    Enforced only when identity verification is possible (Identity/Auth
+    loaded and principals registered); without it, behavior is unchanged —
+    the same graceful-degradation rule the gateway's approver check uses.
+
+    Returns (admit, reason). The reason lands in the evaluation rationale
+    either way, so admissions are as auditable as rejections.
+    """
+    if settings.provenance_admission == "off":
+        return True, "admission policy off"
+
+    # Where did this text come from?
+    sender_ref = None
+    kind = None
+    for sid in candidate_data.get("source_ids") or []:
+        try:
+            src = graph.get_object(sid)
+        except Exception:
+            src = None
+        if src is None:
+            continue
+        sdata = src.data or {}
+        kind = sdata.get("kind")
+        if sdata.get("sender_ref"):
+            sender_ref = sdata["sender_ref"]
+            break
+
+    if kind == "chat_message":
+        return True, "conversational source (speaker addresses the assistant)"
+    if not sender_ref:
+        return True, "no sender provenance (internal/system content)"
+    if candidate_data.get("category") not in _GUIDANCE_CATEGORIES:
+        return True, f"knowledge category from {sender_ref!r} (subject-scoped)"
+
+    # Guidance from a non-conversational source: verify the sender if we can.
+    try:
+        from packs.identity_auth.behaviors import (
+            principals_registered,
+            resolve_known_principal,
+        )
+    except Exception:
+        return True, "identity_auth not installed — provenance unverifiable"
+    if not principals_registered():
+        return True, "no principals registered — provenance unverifiable"
+
+    principal = resolve_known_principal(graph, sender_ref)
+    role = principal.get("role") if principal else None
+    if role in _TRUSTED_ROLES:
+        return True, f"guidance from trusted principal {sender_ref!r} ({role})"
+    return False, (
+        f"guidance category {candidate_data.get('category')!r} from "
+        f"non-conversational source by untrusted sender {sender_ref!r} "
+        f"(role={role!r}) — documents don't give orders"
+    )
+
+
 @behavior(
     name="candidate_evaluator",
     on=["object.created"],
@@ -116,14 +191,29 @@ def candidate_evaluator(event, graph, ctx, *, settings: MemoryGatewaySettings):
     if not text or not candidate_id:
         return
 
-    threshold = settings.acceptance_threshold
-    is_priority_category = category in settings.auto_accept_categories
+    # ── Provenance admission: whose words become memory ────────────────────
+    # The evaluator is the governance point, so admission decisions live
+    # HERE, not scattered across proposers. Rejections carry a written
+    # rationale — auditable, never silent.
+    admit, prov_reason = _provenance_verdict(graph, candidate_data, settings)
 
-    if confidence >= threshold:
+    # ── Threshold: category priority relieves the bar, never suspends it ───
+    is_priority_category = category in settings.auto_accept_categories
+    threshold = (
+        settings.auto_accept_min_confidence if is_priority_category
+        else settings.acceptance_threshold
+    )
+
+    if not admit:
+        judgment = "rejected"
+        rationale = f"Provenance: {prov_reason}"
+        accepted = False
+    elif confidence >= threshold:
         judgment = "accepted"
         rationale = (
-            f"Confidence {confidence:.2f} >= threshold {threshold:.2f}."
-            + (f" Category '{category}' is in auto_accept_categories." if is_priority_category else "")
+            f"Confidence {confidence:.2f} >= threshold {threshold:.2f}"
+            + (f" (relieved for priority category '{category}')." if is_priority_category else ".")
+            + f" Provenance: {prov_reason}"
         )
         accepted = True
     else:
@@ -264,7 +354,12 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
         text=candidate_data.get("text", ""),
         category=candidate_data.get("category"),
         confidence=candidate_data.get("confidence", 0.7),
-        metadata={"candidate_id": subject_id, "created_at": now},
+        # frame_id records the frame the memory was BORN in, which is what
+        # lets retrieval exclude same-frame items (see retrieve_by_query's
+        # exclude_frame_id): recall must never return a memory created by
+        # the very turn that is asking.
+        metadata={"candidate_id": subject_id, "created_at": now,
+                  "frame_id": candidate_data.get("frame_id")},
         subject_ref=subject_ref,
     )
 

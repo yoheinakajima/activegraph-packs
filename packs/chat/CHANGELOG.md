@@ -37,7 +37,12 @@
   `audience_role="owner"` for every requester — the sender's resolved role
   (stamped at ingestion) shapes the profile view, so strangers get the
   external-shaped view (mission suppressed) instead of the owner-framed one.
-- Tests: `tests/test_reply_gating.py`.
+- Tests: `tests/test_reply_gating.py`, `tests/test_memory_curation.py`.
+- **Memory write-path curation**: `chat_memory_proposer` skips
+  interrogatives (punctuated or bare — "what's my favorite color" must not
+  be memorized as a preference), and `chat_memory_context` passes the
+  asking frame to recall so a memory born in the current turn can never
+  answer it.
 
 ### Changed
 - `FallbackChatProvider` now names the actual underlying error in its
