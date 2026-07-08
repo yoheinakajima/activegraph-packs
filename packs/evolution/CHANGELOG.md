@@ -1,5 +1,34 @@
 # Evolution Pack Changelog
 
+## v0.4.0 — Soak harness + drafting records (2026-07-08)
+
+Gate 5's clock starts; gate 3 becomes a wiring step.
+
+### Added
+- The soak harness (soak.py + docs/soak-runbook.md): the full loop
+  unattended on a keyless machine. Each rotation boots a fresh runtime
+  against the persistent store (boot housekeeping, principal re-index,
+  adopted-pack reload every time) and walks seven paths with the
+  scripted author: happy end to end with a watch window and governed
+  disposal of the previous rotation's pack, conflict-park at
+  needs_owner, disable-restart staying down, one candidate per runtime
+  budget net (event flood, wall-clock hang, memory hog), and a tainted
+  proposal sitting suspended. Anomalies are recorded with tracebacks,
+  never swallowed; the daily digest (markdown, zero setup) carries
+  status, cumulative path counts, graph counts, and the stop-condition
+  readout. Fixture 19 runs one full rotation in CI.
+- Drafting records (llm-author-design §4, ahead of the author): the
+  drafting_context object type, submit_proposal_fn inheriting the
+  record's injection_flags deterministically, and the review page
+  rendering "What the author read" (origin sections, charter hash,
+  taint union) beside the diff. Fixture 20: a tainted record suspends
+  with a loud banner and no approve button; a referenced-but-absent
+  record renders as a refusal.
+- Scripted-author candidates now parameterize their object-type name
+  (log_type), because the runtime enforces type ownership and soak
+  rotations adopt many packs side by side.
+
+
 ## v0.3.0 — Subprocess trials + retention pins (2026-07-08)
 
 Consumes activegraph v1.5.0; both remaining runtime blockers close.

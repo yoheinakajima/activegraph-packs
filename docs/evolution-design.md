@@ -651,6 +651,16 @@ scripted generator, never a live LLM:
     fork raises `RetentionPinnedError` with the promoted-from reason; a
     rejected candidate's forks retire clean; the boot housekeeping
     helper makes the same calls and reports every decision.
+19. **Soak rotation** (gate 5's harness, docs/soak-runbook.md): one
+    full rotation reaches every expected terminal state on a fresh
+    keyless store (happy, conflict-park, disable-restart, all three
+    budget nets, tainted-suspended), the digest reads GREEN, and the
+    state file counts every path.
+20. **Drafting record** (gate 3 pulled forward): the drafting_context
+    record renders as its own review section; a nonzero taint union
+    suspends the proposal deterministically at submission, shows the
+    loud banner, and offers no approve button; a referenced-but-absent
+    record renders as a refusal.
 
 ## 9. Dependencies and sequencing
 

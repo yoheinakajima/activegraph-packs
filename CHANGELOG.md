@@ -6,6 +6,23 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.4.0: the soak harness** (LLM-author gate 5's
+  clock starts). `python -m packs.evolution.soak` runs the complete
+  loop unattended on a keyless machine: seven paths per rotation
+  (happy with watch window, conflict-park, disable-restart, all three
+  budget nets, tainted-suspended), a fresh boot per rotation, daily
+  markdown digest, anomalies recorded with tracebacks. Runbook at
+  docs/soak-runbook.md (healthy output, red flags, stop conditions).
+  Fixture 19 proves one full rotation in CI.
+- **Drafting records rendered** (gate 3 pulled forward): the
+  drafting_context schema from docs/llm-author-design.md is registered,
+  submission inherits its taint union deterministically, and the review
+  page shows what the author READ beside what it wrote. Fixture 20:
+  tainted record suspends, loud banner, no approve button. When the
+  author lands, gate 3 is a wiring step.
+
+## v0.6.0 — v1.5 consumption: subprocess trials, retention pins, enforcement (2026-07-08)
+
 - **Runtime floor raised to activegraph >=1.5,<2.0** (honest: this
   cycle imports `activegraph.sandbox.run_forked_trial` and the
   `activegraph.store.retention` API). The 1.5 compat pass was quiet:

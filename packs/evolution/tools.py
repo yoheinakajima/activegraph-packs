@@ -27,13 +27,26 @@ def submit_proposal_fn(
     pack_version: str = "0.1.0",
     rationale: str = "",
     authored_by: str = "agent",
+    drafting_context_id: str = "",
 ):
     """Store a candidate pack as artifacts + a mod_proposal.
 
     The bundle hash is pinned HERE, at submission, over the exact bytes
     submitted (manifest included); every later stage recomputes against
     this pin. The proposal_gatekeeper behavior fires on creation and
-    runs the static gates (or suspends on tainted lineage)."""
+    runs the static gates (or suspends on tainted lineage).
+
+    With `drafting_context_id`, the proposal inherits the record's
+    injection_flags DETERMINISTICALLY (llm-author-design §4): a tainted
+    drafting context yields a suspended proposal even when the authored
+    output looks pristine, and no author choice can launder it away."""
+    inherited_flags: list[str] = []
+    if drafting_context_id:
+        record = graph.get_object(drafting_context_id)
+        if record is not None:
+            inherited_flags = sorted(
+                set((record.data or {}).get("injection_flags") or []))
+
     artifact_ids = []
     for path, text in sorted(files.items()):
         artifact = graph.add_object("artifact", {
@@ -48,12 +61,14 @@ def submit_proposal_fn(
 
     proposal = graph.add_object("mod_proposal", {
         "gap_id": gap_id,
+        "drafting_context_id": drafting_context_id,
         "pack_name": pack_name,
         "pack_version": pack_version,
         "source_artifact_ids": artifact_ids,
         "bundle_hash": bundle_hash_of(files),
         "rationale": rationale,
         "authored_by": authored_by,
+        "injection_flags": inherited_flags,
         "status": "drafted",
     })
     if gap_id and graph.get_object(gap_id) is not None:

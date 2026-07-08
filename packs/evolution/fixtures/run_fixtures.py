@@ -733,6 +733,113 @@ def fx_18_retention_pins(tmp) -> dict:
             "total_retired": retired}
 
 
+def fx_19_soak_rotation(tmp) -> dict:
+    """The soak harness (gate 5) proves one full rotation end to end:
+    all seven paths reach their expected terminal states on a fresh
+    keyless store, the digest reads GREEN, and the state file counts
+    every path once. What runs for days is exactly this, on a clock."""
+    from packs.evolution.soak import SCENARIO_PATHS, SoakHarness
+
+    harness = SoakHarness(
+        os.path.join(tmp, "soak"),
+        settings=EvolutionSettings(
+            enabled=True,
+            trial_fixture_timeout_seconds=4.0,
+            trial_wall_clock_seconds=25.0,
+        ),
+    )
+    outcome = harness.run_rotation()
+    bad = [r for r in outcome["results"] if not r["ok"]]
+    assert not bad, bad
+    assert {r["path"] for r in outcome["results"]} == set(SCENARIO_PATHS)
+
+    state = harness.state
+    assert all(state["paths"][p]["ok"] == 1 for p in SCENARIO_PATHS), state
+    assert state["anomaly_log"] == []
+
+    digest = Path(outcome["digest"]).read_text()
+    for needle in ["status: **GREEN**", "| happy | 1 | 0 |",
+                   "| conflict_park | 1 | 0 |", "needs_owner",
+                   "budget hits", "soak target: not yet"]:
+        assert needle in digest, f"digest must contain {needle!r}"
+    return {"paths_ok": len(outcome["results"]),
+            "digest": os.path.basename(outcome["digest"])}
+
+
+def fx_20_drafting_record_render(tmp) -> dict:
+    """Gate 3 pulled forward: the drafting_context record
+    (llm-author-design §4) renders as its own review section, and a
+    record with a nonzero taint union suspends the proposal, shows the
+    loud banner, and offers no approve button. When the author lands,
+    gate 3 is a wiring step."""
+    from packs.evolution.review import build_review, render_review_html
+
+    rt = _build_parent(tmp, "drafting")
+    graph = rt.graph
+    charter = "sha256:" + "ab" * 32
+
+    clean = graph.add_object("drafting_context", {
+        "charter_hash": charter,
+        "structured_fields": ["capability_call#12:exception_type",
+                              "capability_call#12:capability_name"],
+        "surface_sources": ["packs/telegram/manifest.toml",
+                            "object_types:greeting_log"],
+        "owner_input_ids": ["chat_input#3"],
+        "injection_flags": [],
+        "model": "scripted",
+        "at": "2026-07-08T00:00:00Z",
+    })
+    proposal = submit_proposal_fn(graph, pack_name="greeter_pack",
+                                  files=author_pack(),
+                                  drafting_context_id=str(clean.id))
+    rt.run_until_idle()
+    assert graph.get_object(proposal.id).data["status"] == "gated"
+
+    review = build_review(graph, str(proposal.id))
+    assert review["drafting"]["charter_hash"] == charter
+    page = render_review_html(review)
+    for needle in ["What the author read", charter,
+                   "capability_call#12:exception_type",
+                   "owner inputs admitted", "chat_input#3",
+                   "No injection flags"]:
+        assert needle in page, f"clean render must contain {needle!r}"
+
+    # A tainted record: the union suspends the proposal deterministically,
+    # the banner is loud, and there is nothing to approve.
+    tainted = graph.add_object("drafting_context", {
+        "charter_hash": charter,
+        "structured_fields": [],
+        "surface_sources": [],
+        "owner_input_ids": ["chat_input#9"],
+        "injection_flags": ["role_hijack"],
+        "model": "llm:mock-author",
+        "at": "2026-07-08T00:00:00Z",
+    })
+    proposal2 = submit_proposal_fn(graph, pack_name="greeter_pack",
+                                   files=author_pack(),
+                                   drafting_context_id=str(tainted.id))
+    rt.run_until_idle()
+    data2 = graph.get_object(proposal2.id).data
+    assert data2["status"] == "suspended", data2
+    assert data2["injection_flags"] == ["role_hijack"]
+    gates_run = [g for g in graph.objects(type="gate_result")
+                 if g.data["proposal_id"] == str(proposal2.id)]
+    assert not gates_run, "a taint-suspended proposal is never gated"
+
+    review2 = build_review(graph, str(proposal2.id))
+    assert review2["injection_flags"] == ["role_hijack"]
+    page2 = render_review_html(review2)
+    assert "INJECTION FLAGS ON THIS LINEAGE" in page2
+    assert "llm:mock-author" in page2
+    assert "Approve adoption" not in page2
+    # A referenced-but-absent record renders as a refusal, never blank.
+    graph.patch_object(proposal.id, {"drafting_context_id": "nope#404"})
+    page3 = render_review_html(build_review(graph, str(proposal.id)))
+    assert "cannot be inspected" in page3
+    return {"clean": "gated + rendered", "tainted": "suspended, no button",
+            "missing_record": "loud refusal"}
+
+
 SCENARIOS = [
     ("01 happy path: gap -> gates -> trial -> approval -> promote -> live",
      fx_01_happy_path),
@@ -768,6 +875,10 @@ SCENARIOS = [
      fx_17_subprocess_isolation),
     ("18 retention pins: promoted-from forks refuse retirement, rejects retire",
      fx_18_retention_pins),
+    ("19 soak rotation: all seven paths terminal, digest GREEN, state counted",
+     fx_19_soak_rotation),
+    ("20 drafting record: renders beside the diff; taint union suspends",
+     fx_20_drafting_record_render),
 ]
 
 
