@@ -9,7 +9,7 @@ style, and the open-source hygiene that keep a multi-pack assistant coherent. Th
 best packs that emerge here are candidates for upstreaming into the ActiveGraph
 package itself.
 
-ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 18 packs plus a bridge pack (19 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
+ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 19 packs plus a bridge pack (20 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
 
 > **New here? Read [docs/concepts.md](docs/concepts.md) first** — it explains the
 > event-sourced graph model and the central idea of this repo: the split between the
@@ -95,11 +95,17 @@ environment:
 | `SCHEDULE_TICK_SECONDS` | Schedule sweep period (default 10; `<=0` disables) |
 | `TELEGRAM_BOT_TOKEN` | Registered via `POST /secrets` or env; enables Telegram delivery. Run `python -m packs.telegram.poller` |
 | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN` | WhatsApp Cloud API delivery + webhook verification |
+| `ACTIVEGRAPH_MCP_TOKENS` | Inbound MCP auth: `token:identifier` pairs — other agents can chat, search memory, or call exposed skills over `POST /mcp` (see [docs/mcp.md](docs/mcp.md)) |
+| `ACTIVEGRAPH_MCP_SERVERS` | Outbound MCP servers (JSON) — their tools become governed capabilities, approval-required by default |
+| `ACTIVEGRAPH_MCP_EXPOSE` | Capability keys offered to inbound MCP callers (default: the chat allow-list) |
 
 Chat is agentic out of the box (`web.fetch_url` +
-`schedule.create_reminder` on the tool allow-list): every model-initiated
+`schedule.create_reminder` on the tool allow-list, plus any tools
+discovered from configured MCP servers): every model-initiated
 action flows through the Tool Gateway — recorded before it runs,
-policy-checked, credentials injected at execution time, output sanitized —
+policy-checked, credentials injected at execution time, output sanitized,
+scanned for prompt-injection patterns, and fenced as untrusted external
+content before the model reads it ([docs/security.md](docs/security.md)) —
 and high-risk actions wait in `GET /approvals` for an explicit, verified
 approve/deny. Everything above is reconstructible from `GET /trace`.
 
@@ -157,6 +163,7 @@ Full explanation, dependency graph, and the invariants that hold it together:
 | `chat` | Chat adapter — the conversation engine (sessions, memory, reply gating, agentic responses) every interactive channel reuses |
 | `telegram` | Telegram transport adapter — inbound updates → chat_input; outbound replies as policy-checked gateway sends |
 | `whatsapp` | WhatsApp Cloud API transport adapter — the structural mirror of telegram |
+| `mcp` | Bidirectional MCP: outbound servers' tools become governed capabilities; inbound, the assistant is an MCP server other agents can use (token auth, role-scoped exposure, full audit) |
 | `email` | Email adapter — threading, deduplication, draft formatting, approval-gated outbound sends |
 | `research` | Knowledge tracking for academic and applied research: papers, claims, hypotheses |
 | `vc` | Venture capital deal flow: founder outreach, company profiling, memo drafting, followup tracking |

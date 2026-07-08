@@ -71,6 +71,27 @@ class ToolGatewaySettings(BaseModel):
         ),
     )
 
+    injection_scan: bool = Field(
+        default=True,
+        description=(
+            "If True (default), capability output is scanned for known "
+            "prompt-injection patterns after sanitization. Matches never "
+            "block the result — they are recorded on the capability_result, "
+            "as injection_flag audit objects, and as a visible warning in "
+            "the LLM-facing untrusted-content envelope."
+        ),
+    )
+
+    envelope_llm_output: bool = Field(
+        default=True,
+        description=(
+            "If True (default), tool output returned to a model through the "
+            "LLM proxies is fenced in the EXTERNAL CONTENT envelope "
+            "(data-not-instructions markers, plus the injection warning when "
+            "flagged). Disable only for fixtures that assert raw output."
+        ),
+    )
+
     inject_credentials: bool = Field(
         default=True,
         description=(

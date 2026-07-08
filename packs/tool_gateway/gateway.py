@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from .sanitizer import sanitize_output
 from .settings import ToolGatewaySettings
+from .untrusted import scan_for_injection
 
 
 def decide_policy(
@@ -117,6 +118,15 @@ def execute_approved_call(
     if settings.sanitize_output and raw_output:
         raw_output, was_sanitized = sanitize_output(raw_output)
 
+    # ------------------------------------------------------------------ injection scan
+    # Tool output is external content; scan it for known injection shapes.
+    # A match never blocks the result (heuristics are tripwires, not
+    # oracles) — it is recorded on the result and as an injection_flag
+    # audit object below, and the LLM-facing envelope carries the warning.
+    injection_flags: list[str] = []
+    if settings.injection_scan and raw_output:
+        injection_flags = scan_for_injection(raw_output)
+
     stored_output = raw_output if settings.record_output_data else ""
 
     result = graph.add_object("capability_result", {
@@ -128,8 +138,28 @@ def execute_approved_call(
         "success": result_data.get("success", True),
         "executed_at": result_data.get("executed_at"),
         "sanitized": was_sanitized,
+        "untrusted": True,  # every capability result is external content
+        "injection_flags": injection_flags,
         "frame_id": frame_id,
     })
+
+    if injection_flags:
+        from datetime import datetime, timezone
+        flag = graph.add_object("injection_flag", {
+            "call_id": call_id,
+            "result_id": result.id,
+            "provider_name": provider_name,
+            "capability_name": capability_name,
+            "patterns": injection_flags,
+            "excerpt": raw_output[:300],
+            "flagged_at": datetime.now(timezone.utc).isoformat(),
+            "frame_id": frame_id,
+        })
+        # NOTE: add_relation signature is (source, target, type).
+        try:
+            graph.add_relation(flag.id, result.id, "flags")
+        except Exception:
+            pass
 
     new_status = "done" if result_data.get("success") else "failed"
     try:
@@ -147,6 +177,7 @@ def execute_approved_call(
         **result_data,
         "output_data": stored_output,
         "sanitized": was_sanitized,
+        "injection_flags": injection_flags,
         "result_id": result.id,
         "status": new_status,
     }

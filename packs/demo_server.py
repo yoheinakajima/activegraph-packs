@@ -140,6 +140,59 @@ def _memory_db_path() -> str:
     return os.path.join(data_dir, "activegraph_memory.sqlite")
 
 
+_mcp_settings_cache = None
+_mcp_discovered: dict = {}
+_mcp_gateway = None
+
+
+def _get_mcp_settings():
+    """Build MCPSettings from the environment (cached).
+
+    ACTIVEGRAPH_MCP_TOKENS  — inbound bearer tokens: 'tok1:you@x.com,tok2:agent:foo'
+                              (token:identifier pairs; identifier may contain colons).
+    ACTIVEGRAPH_MCP_SERVERS — outbound servers as a JSON list (see MCPSettings.servers).
+    ACTIVEGRAPH_MCP_EXPOSE  — comma-separated gateway capability keys offered inbound
+                              (default: the chat tool allow-list).
+    """
+    global _mcp_settings_cache
+    if _mcp_settings_cache is not None:
+        return _mcp_settings_cache
+    from packs.mcp import MCPSettings
+
+    tokens = {}
+    for pair in os.environ.get("ACTIVEGRAPH_MCP_TOKENS", "").split(","):
+        pair = pair.strip()
+        if not pair or ":" not in pair:
+            continue
+        token, identifier = pair.split(":", 1)
+        if token.strip() and identifier.strip():
+            tokens[token.strip()] = identifier.strip()
+
+    servers = []
+    raw_servers = os.environ.get("ACTIVEGRAPH_MCP_SERVERS", "").strip()
+    if raw_servers:
+        try:
+            parsed = json.loads(raw_servers)
+            if isinstance(parsed, list):
+                servers = parsed
+        except json.JSONDecodeError:
+            print("[demo_server] ACTIVEGRAPH_MCP_SERVERS is not valid JSON — "
+                  "no outbound MCP servers connected", flush=True)
+
+    expose_env = os.environ.get("ACTIVEGRAPH_MCP_EXPOSE", "").strip()
+    expose = ([k.strip() for k in expose_env.split(",") if k.strip()]
+              if expose_env
+              else ["web.fetch_url", "schedule.create_reminder"])
+
+    _mcp_settings_cache = MCPSettings(
+        tokens=tokens,
+        servers=servers,
+        expose_capabilities=expose,
+        memory_backend_url=_memory_db_path(),
+    )
+    return _mcp_settings_cache
+
+
 def _store_has_run(path: str) -> bool:
     """True if `path` is an existing SQLite store with at least one run."""
     if not os.path.exists(path):
@@ -218,6 +271,22 @@ def _register_demo_capabilities():
     register_whatsapp_send(
         phone_number_id=os.environ.get("WHATSAPP_PHONE_NUMBER_ID"),
     )
+    # MCP: the governed exposure-editing capability (high risk → owner
+    # approval) and any outbound MCP servers configured in the environment.
+    # Outbound registration happens HERE (before chat settings are built) so
+    # discovered mcp_<server>.<tool> keys can join the chat allow-list.
+    from packs.mcp.server import register_set_exposure_capability
+    register_set_exposure_capability()
+
+    global _mcp_discovered
+    mcp_settings = _get_mcp_settings()
+    if mcp_settings.servers:
+        from packs.mcp.registry import register_configured_servers
+        _mcp_discovered = register_configured_servers(mcp_settings, graph=None)
+        for server_name, keys in _mcp_discovered.items():
+            print(f"[demo_server] MCP outbound '{server_name}': "
+                  f"{len(keys)} tools registered"
+                  f"{' (UNREACHABLE)' if not keys else ''}", flush=True)
 
 
 def _build_runtime():
@@ -263,9 +332,18 @@ def _build_runtime():
     # from the first message. Default policy stays 'open' for the demo.
     owner_refs = [s.strip() for s in os.environ.get("ACTIVEGRAPH_OWNER", "").split(",") if s.strip()]
     identity_settings = IdentitySettings(owner_identifiers=owner_refs)
+    # Chat tool allow-list: the base capabilities, the governed MCP-exposure
+    # editor (so the assistant can PROPOSE changes to its own MCP surface —
+    # high risk, always held for owner approval), and every tool discovered
+    # from configured outbound MCP servers (high-risk ones are held on call;
+    # that is the designed UX for untrusted breadth).
+    mcp_tool_keys = [k for keys in _mcp_discovered.values() for k in keys]
     chat_settings = ChatSettings(
         memory_backend_url=_memory_db_path(),
-        tool_allow_list=["web.fetch_url", "schedule.create_reminder"],
+        tool_allow_list=(
+            ["web.fetch_url", "schedule.create_reminder", "mcp.set_exposure"]
+            + mcp_tool_keys
+        ),
         reply_policy=os.environ.get("ACTIVEGRAPH_REPLY_POLICY", "open"),
     )
     resuming = _store_has_run(db)
@@ -366,8 +444,96 @@ def _build_runtime():
     # credential_refs in the graph (values are never read here).
     _ensure_provider_credential_refs(rt.graph)
 
+    # ── MCP (bidirectional) ─────────────────────────────────────────────────
+    # Load the pack (object types for exposure rules + audit records), seed
+    # the fail-closed default exposures (idempotent — operator edits win on
+    # resume), record any outbound discovery in the graph, and build the
+    # inbound gateway mounted at POST /mcp.
+    from packs.mcp import pack as mcp_pack
+    from packs.mcp.server import MCPGateway, ensure_default_exposures
+
+    mcp_settings = _get_mcp_settings()
+    rt.load_pack(mcp_pack, settings=mcp_settings)
+    ensure_default_exposures(rt.graph, mcp_settings)
+    for server_name, keys in _mcp_discovered.items():
+        try:
+            rt.graph.add_object("mcp_server", {
+                "name": server_name,
+                "direction": "outbound",
+                "capability_keys": keys,
+                "status": "connected" if keys else "unreachable",
+                "connected_at": _ts(),
+            })
+        except Exception:
+            pass
+
+    global _mcp_gateway
+    _mcp_gateway = MCPGateway(
+        lambda: _get_rt().graph,
+        mcp_settings,
+        chat_fn=_mcp_chat_fn,
+        memory_fn=_mcp_memory_fn,
+    )
+    if mcp_settings.tokens:
+        print(f"[demo_server] MCP inbound: {len(mcp_settings.tokens)} token(s) "
+              f"configured, POST /mcp is live", flush=True)
+    else:
+        print("[demo_server] MCP inbound: no tokens configured "
+              "(set ACTIVEGRAPH_MCP_TOKENS) — POST /mcp will refuse calls",
+              flush=True)
+
     rt.run_until_idle()
     return rt
+
+
+def _mcp_chat_fn(message: str, user_ref: str, session_id=None) -> dict:
+    """Drive one chat turn for an inbound MCP caller.
+
+    Mirrors POST /chat's pipeline (submit_chat_input → full cascade → read
+    the ChatTurn), with the caller's resolved identifier as user_ref so
+    identity, reply gating, memory scoping, and persona shaping treat the
+    MCP caller exactly like any other sender. Caller must hold
+    _runtime_lock (RLock — the /mcp handler does)."""
+    from packs.chat.tools import submit_chat_input_fn
+
+    rt = _get_rt()
+    frame_id = str(uuid.uuid4())
+    submit_chat_input_fn(
+        rt.graph,
+        user_ref=user_ref,
+        content=message,
+        session_id=session_id,
+        frame_id=frame_id,
+        metadata={"via": "mcp"},
+    )
+    rt.run_until_idle()
+
+    turns = [
+        o for o in rt.graph.all_objects()
+        if o.type == "chat_turn" and (o.data or {}).get("frame_id") == frame_id
+    ]
+    turns.sort(key=lambda t: (t.data or {}).get("turn_number", 0))
+    turn = turns[-1] if turns else None
+    reply = ((turn.data.get("assistant_message") if turn else None) or "").strip()
+    return {
+        "content": reply or "No assistant reply was produced for this message.",
+        "session_id": (turn.data or {}).get("session_id") if turn else session_id,
+    }
+
+
+def _mcp_memory_fn(query: str, subject_ref: str, top_k: int = 5) -> list:
+    """Subject-scoped memory search for an inbound MCP caller."""
+    from packs.memory_gateway.tools import retrieve_memories_fn
+
+    return retrieve_memories_fn(
+        query,
+        top_k=top_k,
+        min_score=0.1,
+        backend_url=_memory_db_path(),
+        subject_ref=subject_ref,
+        subject_scoped=True,
+        include_global=True,
+    )
 
 
 def _get_rt():
@@ -926,8 +1092,34 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_telegram_update(body)
             elif path == "/channels/whatsapp/webhook":
                 self._handle_whatsapp_webhook(body)
+            elif path == "/mcp":
+                self._handle_mcp(body)
             else:
                 self._send_error("Not found", 404)
+
+    # ── POST /mcp ────────────────────────────────────────────────────────────
+    #
+    # The assistant AS an MCP server (streamable-HTTP, plain-JSON responses):
+    # initialize / tools/list / tools/call over JSON-RPC 2.0. Auth is a
+    # bearer token from ACTIVEGRAPH_MCP_TOKENS; exposure is decided by the
+    # graph-native mcp_exposure rules; every call lands in the audit trail.
+
+    def _handle_mcp(self, body: dict):
+        _get_rt()  # ensure the runtime (and _mcp_gateway) exist
+        if _mcp_gateway is None:
+            self._send_error("MCP gateway not initialized", 503)
+            return
+        token = None
+        auth_header = self.headers.get("Authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+        with _runtime_lock:
+            response = _mcp_gateway.handle_jsonrpc(body, token)
+        if response is None:  # notification — accepted, no body
+            self.send_response(202)
+            self.end_headers()
+            return
+        self._send_json(response)
 
     # ── GET /trace ─────────────────────────────────────────────────────────
 

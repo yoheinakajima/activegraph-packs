@@ -46,11 +46,13 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["secrets", "identity_auth"]
 pack = Pack(
     name="tool_gateway",
-    version="0.3.0",
+    version="0.4.0",
     description=(
         "Capability execution gateway. All external calls (APIs, MCP, local tools) "
         "flow through here for policy checks, credential injection by reference, "
-        "recording, and result mapping to Core source objects."
+        "recording, output sanitization, injection scanning, and result mapping "
+        "to Core source objects. Tool output reaches models fenced as untrusted "
+        "external content."
     ),
     object_types=OBJECT_TYPES,
     relation_types=RELATION_TYPES,

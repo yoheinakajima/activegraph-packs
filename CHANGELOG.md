@@ -6,6 +6,23 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **MCP, both directions** (new `mcp` pack v0.1.0): outbound, any MCP
+  server's tools become Tool Gateway capabilities — approval-required by
+  default, promoted per tool, recorded/sanitized/scanned like every
+  capability (stdlib client, no SDK dependency). Inbound, the assistant
+  is itself an MCP server (`POST /mcp`): other agents can chat with it,
+  search its memory (subject-scoped to the caller), or invoke exposed
+  skills — bearer tokens resolve to Identity/Auth principals, graph-native
+  fail-closed exposure rules decide role access, and the assistant can
+  *propose* changes to its own exposure via the governed
+  `mcp.set_exposure` capability (owner approves). See `docs/mcp.md`.
+- **Untrusted-content posture** (tool_gateway v0.4.0): tool output reaches
+  models fenced in EXTERNAL CONTENT markers; a deterministic injection
+  detector records `injection_flag` audit objects (never blocks — a
+  tripwire, not an oracle); approval capabilities are hard-excluded from
+  LLM exposure (`NEVER_LLM_CALLABLE`). Threat model: `docs/security.md`.
+- **CI**: the pytest suite now runs in CI (it previously ran only
+  locally), plus fixture steps for schedule, telegram, whatsapp, and mcp.
 - **Memory retrieval quality + pluggable backends** (memory_gateway v0.3.0):
   hybrid recall scoring fixes the July 2026 readiness-report §5.1 failures
   (short/keyword queries and rephrased questions now recall; every verified
