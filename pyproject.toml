@@ -40,6 +40,7 @@ schedule = "packs.schedule:pack"
 telegram = "packs.telegram:pack"
 whatsapp = "packs.whatsapp:pack"
 mcp = "packs.mcp:pack"
+evolution = "packs.evolution:pack"
 
 research = "packs.research:pack"
 codebase = "packs.codebase:pack"

@@ -1,9 +1,12 @@
 # Evolution Pack: design
 
-**Status: DESIGN. Implementation is blocked by the pack manifest spec
-(docs/manifest-spec.md, task #4) and the activegraph v1.3.0 pin bump
-(task #10, which delivers `promote`). Nothing in this document is code
-yet. The goal of this document is to make the implementation boring.**
+**Status: IMPLEMENTED (packs/evolution, activegraph >=1.4). This
+document is the design of record; implementation-forced decisions were
+folded back in the same commits that made them (per the house rule that
+an uncovered decision is a doc bug). The v1.4 runtime deliveries this
+consumes: promote with apply-time delta validation (CONTRACT v1.3 #4
+addendum 4c), `disable_pack`, and the manifest reference
+implementation.**
 
 The evolution pack lets the assistant author new packs for itself, trial
 them in isolation against its own history, and adopt them only after the
@@ -59,6 +62,16 @@ with rationale:
    state.
 5. React to `promote.applied` (quiescent apply means nothing else
    fires) and record the `mod_promotion`.
+
+Apply-time delta validation (v1.4, CONTRACT v1.3 #4 addendum 4c) is
+why step 3 loads the candidate BEFORE the real promote: promote
+validates the full delta against the parent's REGISTERED schemas
+pre-mutation, so with the candidate loaded, a schema-violating delta
+raises `PackSchemaViolation` with nothing applied. Types no loaded pack
+declares keep v0.9 untyped semantics (validated-or-untyped, never
+silently unvalidated), so skipping the load does not fail, it just
+validates nothing. The order is what buys the validation. Acceptance
+fixture 13 proves both halves.
 
 ## 2. Graph vocabulary
 
@@ -119,8 +132,14 @@ Deterministic behaviors, no LLM required to notice a gap:
 
 ### Stage 1: drafting
 
-An `@llm_behavior` authors a candidate: a manifest (per manifest-spec)
-plus source files. Constraints on what may be authored:
+A candidate is a manifest (per manifest-spec) plus source files,
+submitted through `submit_proposal_fn`. The AUTHOR is pluggable behind
+that one entry point: the acceptance fixtures use a scripted generator,
+a chat tool can route an owner-drafted pack, and the LLM author (an
+`@llm_behavior` drafting from a `capability_gap`) is host wiring that
+arrives with the product chassis, because prompt design for code
+generation is a product concern, never gate machinery. Every author
+goes through the same gates. Constraints on what may be authored:
 
 - **Both manifest and source, always together.** The manifest declares
   the full capability surface; the static gate cross-checks source
@@ -257,10 +276,24 @@ verdicts, trial summary with failures and eval numbers, `rt.diff`
 counts, the fork run id, and any flags. Approval is
 `approve_capability` on the held call, nothing bespoke.
 
-### Stage 5: adoption (the governed executor)
+### Stage 5: adoption (the governed executor, two-phase)
 
-The `evolution.adopt_proposal` executor, running only after approval,
-in the §1 canonical order:
+Implementation-forced decision, folded back per the house rule: the
+gateway executes approved calls INSIDE a behavior frame
+(`call_executor`), and `promote` / `load_pack` / `disable_pack` mutate
+runtime registries and apply events, which must not happen mid-frame.
+So adoption is two-phase. Phase one is the governed part: the
+`evolution.adopt_proposal` executor (reachable only through an approved
+capability call) validates the proposal reference and writes an
+`adoption_ticket`. Phase two is the chassis part:
+`process_adoption_tickets(rt)`, called by the host between
+`run_until_idle` cycles (the demo server's runtime-executor loop, or a
+fixture), performs the canonical order below OUTSIDE any frame. The
+governance is unchanged: tickets are born only from approved calls,
+every phase-two step is graph state, and a crashed phase two leaves the
+ticket visible.
+
+Phase two, in the §1 canonical order:
 
 1. Recompute the BUNDLE hash of the stored artifacts (manifest
    included, per §2) and compare to the approved proposal's pin.
@@ -302,12 +335,14 @@ and that is sufficient by design.
   configurable window and raises a `capability_gap` of kind
   `reflection` if the failure rate is nonzero. Self-noticing, not
   self-healing: fixes are new proposals through the same loop.
-- **Disable (v1 rollback)**: `mod_promotion.status = disabled` via a
-  governed capability. The chassis is the enforcement point: adopted
-  packs load at boot from the graph's active `mod_promotion` records,
-  so a disabled pack stays down after restart. Live unload does not
-  exist in the runtime today; until it does, disable means "no new
-  loads plus restart to evict", stated plainly.
+- **Disable (v1 rollback, upgraded for v1.4)**: `mod_promotion.status
+  = disabled` via a governed capability, PLUS immediate deregistration:
+  `rt.disable_pack(name)` removes the pack's behaviors, tools, and
+  validators from the live registries, so nothing fires from the moment
+  of disable (code objects stay in memory, inert; true unload of
+  imported Python is not honestly achievable and the runtime does not
+  claim it). Boot-time exclusion via `mod_promotion` records remains
+  the durable half. Re-enable is a fresh adoption.
 - **State rollback**: promoted state is ordinary events; history is
   immutable. Full undo exists structurally (fork the parent at the
   event before the promote marker) but re-homing a fork as the new
@@ -410,9 +445,9 @@ shipped default.
 
 ## 7. Explicit open problems
 
-1. **No unload.** The runtime cannot evict a loaded pack. Disable is
-   boot-time enforcement plus restart. Runtime ask filed as a
-   fast-follow (`disable_pack` or behavior deregistration).
+1. **RESOLVED in v1.4: `disable_pack`.** Deregistration is live
+   (behaviors stop firing immediately); memory eviction still needs a
+   restart, which the runtime states plainly and this design accepts.
 2. **Trial process isolation.** Fork isolates state, not the process
    (T5). Runtime ask: optional subprocess execution for fork trials.
 3. **Replay conventions.** Per-channel input re-injection needs a

@@ -16,7 +16,7 @@ products built on this library ship their own. [CONTRIBUTING.md](CONTRIBUTING.md
 is the canonical pack-author guide — the same bar every pack in this
 library meets, human-authored or otherwise.
 
-ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 18 packs plus a bridge pack (19 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
+ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 19 packs plus a bridge pack (20 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
 
 > **New here? Read [docs/concepts.md](docs/concepts.md) first** — it explains the
 > event-sourced graph model and the central idea of this repo: the split between the
@@ -105,6 +105,7 @@ environment:
 | `ACTIVEGRAPH_MCP_TOKENS` | Inbound MCP auth: `token:identifier` pairs — other agents can chat, search memory, or call exposed skills over `POST /mcp` (see [docs/mcp.md](docs/mcp.md)) |
 | `ACTIVEGRAPH_MCP_SERVERS` | Outbound MCP servers (JSON) — their tools become governed capabilities, approval-required by default |
 | `ACTIVEGRAPH_MCP_EXPOSE` | Capability keys offered to inbound MCP callers (default: the chat allow-list) |
+| `ACTIVEGRAPH_EVOLUTION` | `1` enables the evolution pack (self-modification loop). Requires `ACTIVEGRAPH_OWNER`: adoption refuses to register without a verified approver |
 | `ACTIVEGRAPH_TOKEN_DB` | Managed OAuth token store (default `data/activegraph_tokens.sqlite`) — connect accounts via `POST /secrets/oauth/start` + `/poll`; tokens never enter the graph |
 
 Chat is agentic out of the box (`web.fetch_url` +
@@ -171,6 +172,7 @@ Full explanation, dependency graph, and the invariants that hold it together:
 | `chat` | Chat adapter — the conversation engine (sessions, memory, reply gating, agentic responses) every interactive channel reuses |
 | `telegram` | Telegram transport adapter — inbound updates → chat_input; outbound replies as policy-checked gateway sends |
 | `whatsapp` | WhatsApp Cloud API transport adapter — the structural mirror of telegram |
+| `evolution` | Self-modification with provenance: agent-authored packs behind static gates, fork trials, bundle-hash pins, verified owner approval, and quiescent promote adoption. Ships disabled |
 | `mcp` | Bidirectional MCP: outbound servers' tools become governed capabilities; inbound, the assistant is an MCP server other agents can use (token auth, role-scoped exposure, full audit) |
 | `email` | Email adapter — threading, deduplication, draft formatting, approval-gated outbound sends |
 | `research` | Knowledge tracking for academic and applied research: papers, claims, hypotheses |

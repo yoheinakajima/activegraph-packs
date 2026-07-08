@@ -80,6 +80,9 @@ jobs:
       - name: mcp fixtures
         run: python packs/mcp/fixtures/run_fixtures.py
 
+      - name: evolution fixtures
+        run: python packs/evolution/fixtures/run_fixtures.py
+
       # ── Cross-pack integration suites ───────────────────────────────────────
 
       - name: Cross-pack integration (Tool Gateway → Core → Memory Gateway)

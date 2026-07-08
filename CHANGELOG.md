@@ -6,6 +6,25 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.1.0** (task #3, the reason everything else
+  exists): agent-authored packs under governance. Static gates (nine,
+  including both hash pins and the two-way surface check via the
+  runtime validator), fork trials with regimes-style in-sample/held-out
+  discipline and subprocess fixture gates, two-phase governed adoption
+  (critical capability whose REGISTRATION refuses auto-approvable
+  policies and unverified identity; the chassis applies tickets between
+  frames: bundle pin, gates re-run, dry run, load + loading-state
+  record, quiescent promote), immediate disable via `rt.disable_pack`
+  plus boot exclusion, and boot-time re-materialization with loud
+  corruption handling. Twelve deterministic acceptance fixtures,
+  scripted author only. Ships DISABLED; demo server opts in via
+  `ACTIVEGRAPH_EVOLUTION=1`. Design doc updated in the same commits for
+  every implementation-forced decision (two-phase adoption; the honest
+  apply-time-validation semantics of fixture 13; the pluggable author).
+- **Manifest spec FROZEN** (except §5, provisional): the freeze
+  condition was met when the evolution gates started validating real
+  manifests through `activegraph.packs.manifest` inside passing
+  fixtures.
 - **Pack manifests, implemented** (task #4; activegraph floor raised to
   >=1.4,<2.0 because CI imports the runtime's validator — claiming 1.3
   compat would be dishonest). Every pack ships a `manifest.toml`

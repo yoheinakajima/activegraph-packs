@@ -251,6 +251,11 @@ def _get_oauth_source():
     return _oauth_source
 
 
+def _evolution_enabled() -> bool:
+    """Self-modification is opt-in: ACTIVEGRAPH_EVOLUTION=1."""
+    return os.environ.get("ACTIVEGRAPH_EVOLUTION", "").strip() == "1"
+
+
 def _store_has_run(path: str) -> bool:
     """True if `path` is an existing SQLite store with at least one run."""
     if not os.path.exists(path):
@@ -515,6 +520,28 @@ def _build_runtime():
     # resolution chain (env still wins) so previously connected accounts
     # resolve, with refresh, from the first request after a restart.
     _get_oauth_source()
+
+    # ── Evolution (opt-in: ACTIVEGRAPH_EVOLUTION=1) ─────────────────────────
+    # Self-modification is never ambient. When enabled: load the pack,
+    # register the governed adoption capabilities (registration REFUSES
+    # without a verified approver, so ACTIVEGRAPH_OWNER must be set), and
+    # re-load previously adopted packs from the graph (bundle-hash checked).
+    if _evolution_enabled():
+        from packs.evolution import pack as evolution_pack, EvolutionSettings
+        from packs.evolution.adopt import register_adoption_capabilities
+        from packs.evolution.boot import reload_adopted_packs
+        from packs.tool_gateway import ToolGatewaySettings
+
+        rt.load_pack(evolution_pack, settings=EvolutionSettings(enabled=True))
+        try:
+            register_adoption_capabilities(
+                gateway_settings=ToolGatewaySettings(), graph=rt.graph)
+            reloaded = reload_adopted_packs(rt)
+            print(f"[demo_server] Evolution: ON, adopted packs: "
+                  f"{reloaded or 'none'}", flush=True)
+        except ValueError as exc:
+            print(f"[demo_server] Evolution: adoption registration refused "
+                  f"({exc})", flush=True)
 
     # ── MCP (bidirectional) ─────────────────────────────────────────────────
     # Load the pack (object types for exposure rules + audit records), seed
@@ -1979,6 +2006,16 @@ def _tick_driver_loop(period_seconds: float):
         ticks = emit_due_ticks_fn(rt.graph, datetime.now(timezone.utc))
         if ticks:
             rt.run_until_idle()
+        # Evolution phase two (when enabled): adoption/disable tickets are
+        # applied here, BETWEEN frames, on the single runtime-executor
+        # thread — exactly the out-of-frame guarantee the design requires.
+        if _evolution_enabled():
+            from packs.evolution.adopt import process_adoption_tickets
+            from packs.evolution.settings import EvolutionSettings
+            outcomes = process_adoption_tickets(
+                rt, EvolutionSettings(enabled=True))
+            for outcome in outcomes:
+                print(f"[demo_server] evolution: {outcome}", flush=True)
         return len(ticks)
 
     while True:

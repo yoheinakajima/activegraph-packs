@@ -1,13 +1,15 @@
 # Pack Manifest Specification
 
-**Status: DRAFT. The freeze condition: the runtime's Q1-Q8 answers
-folded in, plus the evolution pack consuming this spec in its static
-gates. §5 (sources, resolution, pins) is PROVISIONAL beyond that freeze:
-its planned first consumer (the vc pack extraction) was cancelled when
-the vc pack was deleted, so §5 stays provisional until a real multi-repo
-consumer (a host pack-sources config) builds against it. Loader-side
-validation belongs to the activegraph runtime (`packs/loader.py`); this
-document is written so that team can build against it.**
+**Status: FROZEN (2026-07-08), except §5. The freeze condition was
+met: the runtime's Q1-Q8 answers are folded in (§9), and the evolution
+pack consumes this spec in its static gates (manifest validity, both
+hashes, and the two-way surface check run through
+`activegraph.packs.manifest` inside passing acceptance fixtures).
+Changes from here are spec amendments with changelog entries, agreed
+with the runtime, never silent edits. §5 (sources, resolution, pins)
+stays PROVISIONAL: its planned first consumer (the vc pack extraction)
+was cancelled, so §5 holds the designed shape until a real multi-repo
+consumer (a host pack-sources config) builds against it.**
 
 ## 1. Why a manifest
 

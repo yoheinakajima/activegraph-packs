@@ -76,6 +76,15 @@ def extract_capability_registrations(pack_dir: str | Path) -> list[dict]:
     declarations: list[dict] = []
     for path in _iter_pack_sources(Path(pack_dir)):
         tree = ast.parse(path.read_text())
+        # Module-level string constants (NAME = "literal"), the second
+        # resolution source for pass-through keyword values.
+        module_constants: dict[str, str] = {}
+        for node in tree.body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)):
+                value = _literal(node.value)
+                if value is not None:
+                    module_constants[node.targets[0].id] = value
         # Map every Call node to its enclosing function for default lookup.
         enclosing: dict[int, ast.FunctionDef] = {}
         for func in ast.walk(tree):
@@ -102,7 +111,11 @@ def extract_capability_registrations(pack_dir: str | Path) -> list[dict]:
                 if direct is not None:
                     return direct
                 if isinstance(kw_value, ast.Name):
-                    return _param_default(enclosing.get(id(node)), kw_value.id)
+                    from_param = _param_default(enclosing.get(id(node)),
+                                                kw_value.id)
+                    if from_param is not None:
+                        return from_param
+                    return module_constants.get(kw_value.id)
                 return None
 
             risk = _RISK_DEFAULT

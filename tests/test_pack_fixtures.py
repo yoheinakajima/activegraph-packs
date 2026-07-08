@@ -26,6 +26,7 @@ PACKS = [
     "core",
     "email",
     "entity",
+    "evolution",
     "identity_auth",
     "mcp",
     "meeting",

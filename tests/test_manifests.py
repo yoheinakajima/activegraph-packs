@@ -47,7 +47,7 @@ PACKS = [
     "core", "tool_gateway", "secrets", "memory_gateway", "identity_auth",
     "agent_profile", "entity", "communication", "chat", "email", "schedule",
     "telegram", "whatsapp", "mcp", "research", "codebase", "team_ops",
-    "meeting", "bridges",
+    "meeting", "bridges", "evolution",
 ]
 
 
