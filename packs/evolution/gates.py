@@ -52,6 +52,15 @@ def run_static_gates(graph, proposal, settings: EvolutionSettings) -> bool:
         })
         return False
 
+    # Gate -1: reserved paths (charter integrity, §3a/§8). Runs FIRST,
+    # before the file-set allow-list, so an attempt to author the
+    # charter (or any human-PR-only path) is refused with a
+    # charter-specific verdict rather than a generic "unknown file".
+    violations = analysis.check_reserved_paths(files, settings.reserved_paths)
+    if violations:
+        return fail("static:reserved_paths", violations)
+    _record(graph, proposal_id, "static:reserved_paths", "pass", "")
+
     # Gate 0: file set (implicit in the design's stage-1 constraints),
     # including the trial-child entrypoint contract on the fixture file.
     violations = (analysis.check_file_set(files, settings.allowed_files)

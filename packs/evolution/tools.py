@@ -36,16 +36,34 @@ def submit_proposal_fn(
     this pin. The proposal_gatekeeper behavior fires on creation and
     runs the static gates (or suspends on tainted lineage).
 
-    With `drafting_context_id`, the proposal inherits the record's
-    injection_flags DETERMINISTICALLY (llm-author-design §4): a tainted
-    drafting context yields a suspended proposal even when the authored
-    output looks pristine, and no author choice can launder it away."""
+    With `drafting_context_id` (llm-author-design §4): the drafting
+    record is sealed before the model call and immutable after, and this
+    function does two things that do not trust it blindly. It RECOMPUTES
+    the injection-flag union from the objects the record admitted, read
+    fresh from the graph by id, never from the record's stored
+    injection_flags field, so a record-corruption bug cannot launder
+    taint (the §4 analog of gap-lineage's no-model-choice-launders
+    rule). And it charset-validates the admitted structured fields,
+    REFUSING submission (ValueError) when a field carries prose-shaped
+    text rather than an identifier, so "structured" means structured."""
     inherited_flags: list[str] = []
     if drafting_context_id:
+        from .author_frame import (
+            recompute_drafting_taint,
+            validate_structured_fields,
+        )
         record = graph.get_object(drafting_context_id)
         if record is not None:
-            inherited_flags = sorted(
-                set((record.data or {}).get("injection_flags") or []))
+            record_data = record.data or {}
+            field_violations = validate_structured_fields(
+                graph, record_data.get("structured_fields") or [])
+            if field_violations:
+                raise ValueError(
+                    "drafting record admits non-identifier structured "
+                    "fields; refusing to submit: "
+                    + "; ".join(field_violations))
+            # Recompute from admitted object ids, NOT the stored field.
+            inherited_flags = recompute_drafting_taint(graph, record_data)
 
     artifact_ids = []
     for path, text in sorted(files.items()):
