@@ -39,27 +39,24 @@ is tested daily.
 
 The soak runs the full loop, and the loop runs candidate code in the
 runtime's subprocess trial child. That child spawns with a deliberately
-minimal environment whitelist (a security control: no ambient parent
-env leaks into a process running candidate code), so the box has to be
-one where `sys.executable` can `import activegraph` in a subprocess
-under that whitelist. A standard `pip install` into the system Python
-or a venv satisfies this. Some managed environments do NOT: Replit, for
-example, makes packages importable through a non-standard
-`REPLIT_PYTHONPATH` var read by a Nix `sitecustomize.py` at startup, and
-that var is stripped by the whitelist, so the child cannot find
-`activegraph` and dies before it starts. Making such an environment
-work is a runtime concern (the sandbox needs package discoverability as
-an explicit input), not something the soak papers over by forwarding
-platform env.
+closed environment allow-list (a security control: no ambient parent
+env, no secrets, leaks into a process running candidate code). As of
+activegraph 1.7.0 the parent computes the child's import path from its
+own resolved `sys.path`, so the child imports `activegraph` wherever
+the parent can (editable, venv, or a Nix/Replit install) while the
+allow-list stays closed. Earlier runtimes (1.6.0 and before) stripped
+package-discovery too aggressively and the child could not import
+`activegraph` on any non-CI install (a stock macOS venv failed the same
+way Replit did); this is why the soak pins `activegraph >=1.7`.
 
-You do not have to check this by hand: the soak runs a **preflight**
-before the first rotation that launches one real minimal trial child.
-On a capable box it prints `preflight: trial child OK`. On an incapable
-one it refuses to run (exit 2) with `this box cannot run subprocess
-trials; activegraph not importable in the trial child` rather than
-producing a digest full of identical silent crashes. If you see that
-refusal, the box cannot host the soak; move it to a standard pip/venv
-machine.
+You do not have to check the box by hand: the soak runs a **preflight**
+before the first rotation, delegating to the runtime's canonical probe
+(`activegraph.sandbox.preflight`), which spawns a null-job child under
+the real sandbox env. On a capable box it prints `preflight: trial
+child OK`. On an incapable one it refuses to run (exit 2) with a message
+carrying the child's real error rather than producing a digest full of
+identical silent crashes. If you see that refusal, the box cannot host
+the soak; the message names the cause.
 
 ## Starting it
 

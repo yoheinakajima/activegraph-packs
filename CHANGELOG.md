@@ -6,6 +6,20 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.5.2: activegraph 1.7.0, soak green on the fixed
+  trial child.** Runtime floor raised to `>=1.7,<2.0`. 1.7.0 computes
+  the trial child's import path from the parent's resolved `sys.path`,
+  so the child imports activegraph on any install the parent can
+  (editable/venv/Nix) with the sandbox allow-list still closed. That
+  answers the whitelist courier better than asked (automatic, pass
+  nothing). Scope correction: the child-import break was not
+  Replit-specific (a stock macOS venv failed identically on 1.6.0), so
+  the prior "soak green on 1.6.0" was on the broken version and did not
+  prove the fix. The soak preflight now delegates to the runtime's
+  canonical `activegraph.sandbox.preflight`; the rolled-own probe is
+  gone. **First honest soak on 1.7.0: one clean rotation, all seven
+  paths OK, digest GREEN.** That is the green light that starts the real
+  soak clock and clears the last author-build gate.
 - **Evolution pack v0.5.1: soak preflight + never-opaque crash detail.**
   A Replit soak RED (root cause environmental: the runtime's trial-child
   env whitelist strips `REPLIT_PYTHONPATH`, so the child cannot import

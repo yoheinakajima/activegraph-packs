@@ -1007,23 +1007,24 @@ def fx_24_soak_preflight_and_crash_detail(tmp) -> dict:
                                  trial_fixture_timeout_seconds=8.0)
     harness = SoakHarness(os.path.join(tmp, "soak"), settings=settings)
 
-    # Defect 2, positive: a real minimal trial child runs on this box.
+    # Defect 2, positive: the runtime's canonical probe passes here.
     ok, msg = harness.preflight()
     assert ok, msg
     assert "trial child OK" in msg
 
-    # Defect 2, refusal: an incapable child (patched to crash before
-    # reporting) makes the preflight refuse, naming the real cause.
-    original = sb.run_forked_trial
-    sb.run_forked_trial = lambda *a, **k: sb.TrialReport(
-        outcome="crashed", fork_run_id="", events_appended=0,
-        behavior_failures=0,
-        detail="ModuleNotFoundError: No module named 'activegraph'",
-        exit_code=1)
+    # Defect 2, refusal: the harness wraps the runtime's canonical
+    # probe, so an incapable box surfaces as a SandboxStartupError that
+    # the wrapper turns into REFUSING TO RUN, naming the real cause.
+    def _raise(*a, **k):
+        raise sb.SandboxStartupError(
+            "child failed: ModuleNotFoundError: No module named 'activegraph'")
+
+    original = sb.preflight
+    sb.preflight = _raise
     try:
         refused_ok, refused_msg = harness.preflight()
     finally:
-        sb.run_forked_trial = original
+        sb.preflight = original
     assert not refused_ok
     assert "cannot run subprocess trials" in refused_msg
     assert "ModuleNotFoundError" in refused_msg
