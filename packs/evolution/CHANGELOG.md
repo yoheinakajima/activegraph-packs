@@ -1,5 +1,35 @@
 # Evolution Pack Changelog
 
+## v0.5.0 — Author-frame enforced boundaries (2026-07-08)
+
+The LLM-author design passed review (build gate 2). The four required
+changes turn asserted trust boundaries into enforced ones, built ahead
+of the author so its build is a wiring step. The author stays unbuilt
+(remaining gates: a green soak, and the mock-model assembly fixtures).
+
+### Added
+- author_frame.py: `validate_structured_fields` (charset-checks admitted
+  structured fields against the manifest identifier pattern; a
+  prose-shaped capability name or an off-allow-list field path is
+  rejected) and `recompute_drafting_taint` (unions injection flags over
+  a drafting record's ADMITTED object ids, never its stored flags
+  field). AUTHOR_CHARTER_FILENAME, the reserved charter path.
+- Charter integrity gate (`static:reserved_paths`, analysis.
+  check_reserved_paths, EvolutionSettings.reserved_paths): runs FIRST,
+  refusing any proposal that targets the charter or another human-PR-only
+  path. §8's "by hand only" is now a gate.
+- Fixtures 21 (charter reserved-path refused first), 22 (taint
+  recomputed from admitted ids; a lying record cannot launder), 23
+  (prose structured field and off-allow-list field path both refused).
+  Twenty-two scenarios total.
+
+### Changed
+- submit_proposal_fn, with a drafting_context_id, recomputes the taint
+  union from admitted ids and refuses submission (ValueError) when a
+  structured field fails the charset check. The stored injection_flags
+  field is no longer trusted for enforcement.
+
+
 ## v0.4.1 — Retention concurrency verdict folded (2026-07-08)
 
 The runtime ruled the retention offline requirement per-RUN (CONTRACT

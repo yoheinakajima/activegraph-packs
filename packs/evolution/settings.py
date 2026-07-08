@@ -15,6 +15,15 @@ DEFAULT_FIXTURE_EXTRA_ALLOW = ["sys", "pathlib", "activegraph"]
 # Reserved namespaces an authored pack may never register into (gate 6).
 DEFAULT_RESERVED_NAMESPACES = ["tool_gateway", "evolution", "mcp"]
 
+# Reserved repo paths an authored pack may never target (charter gate,
+# llm-author-design §3a/§8). The charter is the author's system prompt,
+# the one fully-trusted origin in the drafting frame; it is human-PR-only
+# and charter improvement is permanently out of scope for any autonomous
+# loop, so authoring it is refused before any other gate runs.
+from .author_frame import AUTHOR_CHARTER_FILENAME  # noqa: E402
+
+DEFAULT_RESERVED_PATHS = [AUTHOR_CHARTER_FILENAME]
+
 
 class EvolutionSettings(BaseModel):
     """Configuration for Evolution Pack v0.1.
@@ -73,6 +82,10 @@ class EvolutionSettings(BaseModel):
     import_allow_list: list[str] = Field(default=DEFAULT_IMPORT_ALLOW)
     fixture_extra_allow: list[str] = Field(default=DEFAULT_FIXTURE_EXTRA_ALLOW)
     reserved_namespaces: list[str] = Field(default=DEFAULT_RESERVED_NAMESPACES)
+    reserved_paths: list[str] = Field(
+        default=DEFAULT_RESERVED_PATHS,
+        description="Repo paths an authored pack may never target "
+                    "(charter and other human-PR-only files).")
 
     allowed_files: list[str] = Field(
         default=[

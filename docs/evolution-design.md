@@ -687,6 +687,16 @@ scripted generator, never a live LLM:
     suspends the proposal deterministically at submission, shows the
     loud banner, and offers no approve button; a referenced-but-absent
     record renders as a refusal.
+21. **Charter integrity** (llm-author-design §3a/§8, review change 1):
+    a proposal whose file set targets the reserved charter path is
+    refused at `static:reserved_paths`, before any other gate runs.
+22. **Drafting taint recompute** (llm-author-design §4, review change
+    2): the taint union is recomputed from the record's admitted object
+    ids at submission, so a record that lies about its stored flags
+    still suspends.
+23. **Structured-field charset** (llm-author-design §3b/§6, review
+    change 4): a prose-shaped structured field, and a field path off the
+    §3b allow-list, are both refused at submission.
 
 ## 9. Dependencies and sequencing
 

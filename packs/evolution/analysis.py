@@ -43,6 +43,27 @@ def check_file_set(files: dict[str, str], allowed: list[str]) -> list[str]:
     return violations
 
 
+def check_reserved_paths(files: dict[str, str],
+                         reserved_paths: list[str]) -> list[str]:
+    """The charter integrity gate (llm-author-design §3a/§8): an authored
+    pack may never target a reserved repo path. The charter is the
+    author's system prompt, the one fully-trusted origin in the frame,
+    and its trust is human-PR-only, so authoring it (or any reserved
+    path) is refused in the same family as the reserved-namespace gate.
+    Matched by exact relative path OR basename, so a candidate cannot
+    smuggle a charter override under a subdirectory."""
+    reserved = set(reserved_paths)
+    violations = []
+    for path in files:
+        basename = path.rsplit("/", 1)[-1]
+        if path in reserved or basename in reserved:
+            violations.append(
+                f"authored file {path!r} targets reserved path "
+                f"(charter and other human-PR-only files are never "
+                f"authorable)")
+    return violations
+
+
 def check_fixture_entrypoint(files: dict[str, str]) -> list[str]:
     """The trial-child contract: the fixture file must define a
     module-level `def main(rt)` the sandbox scenario loader can call."""

@@ -6,6 +6,19 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.5.0: author-frame enforced boundaries** (LLM-author
+  build gate 2 met). The design review passed; its four required
+  changes turn asserted trust boundaries into enforced ones, built
+  ahead of the author. Charter integrity is now a gate
+  (`static:reserved_paths`, first to run): a proposal targeting the
+  human-PR-only charter path is refused. Drafting-record taint is
+  recomputed from admitted object ids at submission, so a record that
+  lies about its stored flags cannot launder taint. Admitted structured
+  fields are charset-validated against the manifest identifier pattern;
+  prose-shaped fields are refused. The exception message stays out of
+  the author frame (closed NO). `packs/evolution/author_frame.py`,
+  fixtures 21-23. The author itself stays unbuilt (remaining gates: a
+  green soak and the mock-model assembly fixtures).
 - **Evolution pack v0.4.0: the soak harness** (LLM-author gate 5's
   clock starts). `python -m packs.evolution.soak` runs the complete
   loop unattended on a keyless machine: seven paths per rotation

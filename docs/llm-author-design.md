@@ -1,12 +1,28 @@
 # LLM Author: design
 
-**Status: DESIGN ONLY. The author is unbuilt on purpose. The evolution
-pipeline stays scripted-author-only until BOTH gates below hold: the
-runtime ships subprocess isolation for fork trials (evolution-design
-§7.2), AND this design has survived a review by someone who did not
-write it. Building this from a prompt drafted in an afternoon is the
-single riskiest move available to this codebase, which is why the
-design exists before the code.**
+**Status: DESIGN FINAL, BUILD GATED. The author is unbuilt on purpose.
+Subprocess isolation shipped and is consumed (evolution-design §7.2),
+and this design has passed review by someone who did not write it (see
+History). The pipeline stays scripted-author-only until the remaining
+build gates hold: a green soak (evolution-design gate 5) and the four
+enforced boundaries this document now specifies. Building the author
+from a prompt drafted in an afternoon is the single riskiest move
+available to this codebase, which is why the design and its enforced
+trust boundaries exist before the code.**
+
+## History
+
+- **2026-07-08, design review complete (build gate 2).** Approved: the
+  origin-over-content posture is the correct and only defensible
+  architecture; the no-tools-during-drafting property is airtight; and
+  building the drafting-record renderer ahead of the author was the
+  right sequencing. Four changes required and folded, each turning an
+  ASSERTED trust boundary into an ENFORCED one with a fixture: charter
+  integrity as a gate (§3a/§8), drafting-record tamper-evidence via
+  taint recompute (§4), the exception-message question closed as NO for
+  v1 (§3b/§8), and structured-field charset validation (§3b/§6). The
+  reviewer flagged the exclusion of prior proposals' rationales (§3/§5)
+  as well-caught and kept as-is.
 
 The evolution pack (docs/evolution-design.md) runs gap, proposal,
 gates, trial, held approval, adoption. Its `submit_proposal_fn` is the
@@ -70,6 +86,22 @@ sha256 is recorded on the drafting record, so "which instructions was
 the author under" is answerable forever. No runtime string
 interpolation into the charter, ever.
 
+The charter is the ONE fully-trusted origin in the frame, so its trust
+is enforced, not merely asserted. Three rules, all mechanical:
+
+- **Human-PR-only.** The charter changes through the same PR review as
+  any repo file, by a human. No runtime path writes it.
+- **Never an authorable target.** The charter path is a reserved
+  authored path, in the same gate family as the reserved capability
+  namespaces. A proposal whose file set includes the charter path is
+  refused at `static:reserved_paths`, the FIRST gate, before file-set
+  or manifest checks run (implemented: `analysis.check_reserved_paths`,
+  `EvolutionSettings.reserved_paths`, default `author_charter.md`).
+- **Charter improvement is permanently out of scope for any autonomous
+  loop**, not just v1. A system that tunes its own author's
+  instructions has removed the one origin the whole posture trusts.
+  This is a standing rule, not a deferral.
+
 **(b) The gap, structured.** From the `capability_gap` and its
 evidence chain, STRUCTURED FIELDS ONLY: capability name, provider,
 risk class, exception_type, failure counts, the object types involved.
@@ -79,6 +111,29 @@ do not cross. A traceback quotes the failing input; the failing input
 is the attacker's text in the tool-failure case. If the owner wants
 the author to see prose about the gap, the owner writes that prose
 (section d).
+
+The exception MESSAGE never crosses either, closed as NO for v1: the
+message embeds attacker input by construction (a failing capability
+call quotes what it was called with), and there is no honest
+"sanitized" for text whose whole risk is that it is prose. Admit the
+exception TYPE and frame names only. Debuggability is served by the
+owner reading the actual `capability_result` on the GOVERNED decision
+surface, never by piping it into the UNGOVERNED author frame. A
+"lightly sanitized message" would split the difference and gut the
+origin rule, so the door stays shut.
+
+"Structured fields only" is enforced by charset, not by intent: a
+capability NAME that reads like a sentence is prose wearing an
+identifier's slot. At frame assembly every admitted field is validated
+against the manifest charset the runtime already defines
+(`^[a-z][a-z0-9_]{1,63}$` for provider/capability names, a dotted
+identifier for exception_type, the `low|medium|high|critical` set for
+risk class, an int for counts), and a field path outside this closed
+allow-list is inadmissible entirely. A field carrying prose-shaped text
+is REFUSED, not passed through as an "identifier"
+(implemented: `author_frame.validate_structured_fields`, enforced as a
+submission backstop in `submit_proposal_fn`). This bounds the residual
+channel §6 names to actual identifiers.
 
 **(c) The target surface, from source of truth.** Manifests of the
 packs the candidate will sit beside (declared surfaces, consumed
@@ -108,13 +163,26 @@ exclusion would gut the feature.
 Every draft writes a `drafting_context` object BEFORE the model call:
 the charter hash, the gap id, the exact object ids and field paths
 admitted under (b) and (c), the owner chat_input ids admitted under
-(d), and the injection flags found on any of them. The proposal then
-inherits `injection_flags` as the union over every admitted object,
-the same deterministic rule gaps use, computed from the drafting
-record rather than from anything the model reports. A tainted context
-yields a suspended proposal even when the model output looks pristine,
-and the decision surface renders the drafting record next to the diff
-so the owner sees what the author read, never just what it wrote.
+(d), and the injection flags found on any of them. The record is SEALED
+before the model call and immutable after: the model's output is a file
+set, and file sets cannot patch the record.
+
+The taint enforcement does not trust the record's stored flags field.
+`submit_proposal_fn` RECOMPUTES the injection-flag union from the
+objects the record ADMITTED, read fresh from the graph by id, and the
+proposal inherits that recomputed union, never the value the record
+stores. This is the §4 analog of gap-lineage's "no model choice can
+launder the flags" rule, applied where it matters most: a record that
+lies about its own cleanliness (or a record-corruption bug that empties
+the flags field) while admitting a tainted object still yields a
+suspended proposal, because the union is derived from the admitted ids,
+not from any field a writer could tamper with (implemented:
+`author_frame.recompute_drafting_taint`; fixture: a record with an
+empty stored flags field but a flagged admitted owner input still
+suspends). A tainted context yields a suspended proposal even when the
+model output looks pristine, and the decision surface renders the
+drafting record next to the diff so the owner sees what the author
+read, never just what it wrote.
 
 ## 5. The author frame's mechanics
 
@@ -153,8 +221,12 @@ so the owner sees what the author read, never just what it wrote.
 - It does not claim the regex tripwire catches injections. Origin
   classification is the control; the tripwire is an audit trail.
 - It does not claim structured fields are unpoisonable. A capability
-  NAME could in principle carry a payload. Structured admission
-  shrinks the channel from prose to identifiers; it does not zero it.
+  NAME could in principle carry a payload, so §3b charset-validates
+  every admitted field against the manifest identifier pattern and
+  refuses prose-shaped values: the channel is bounded to identifiers,
+  which is as small as this gets. A payload that fits inside a valid
+  `^[a-z][a-z0-9_]{1,63}$` identifier is the residue that remains, and
+  the gates, trial, pins, and reading owner are its containment.
 - It does not cover a hostile owner. A verified approver steering the
   author toward a bad pack is out of scope by definition: that person
   already holds approval power.
@@ -167,7 +239,9 @@ so the owner sees what the author read, never just what it wrote.
    only; in-process replay is evolution-design T5's accepted surface
    and stops being acceptable the day an adversarial author exists).
 2. This design reviewed by someone who did not write it, with the
-   review recorded in this file's history.
+   review recorded in this file's history. MET (see History,
+   2026-07-08): approved with four required changes, all folded and
+   enforced with fixtures.
 3. The decision surface renders drafting records (§4), so LLM-authored
    proposals are reviewable to the same depth as their diffs. BUILT
    AHEAD of the author: the drafting_context schema is registered, the
@@ -180,20 +254,39 @@ so the owner sees what the author read, never just what it wrote.
    with a mock model: context assembly admits exactly the §3 set, a
    flagged owner input taints the proposal, a memory object in the
    graph provably never reaches the frame, the drafting record is
-   complete, and the no-tools property holds by construction.
+   complete, and the no-tools property holds by construction. Four of
+   the enforced boundaries already have fixtures in the evolution
+   suite, built ahead of the author so the build is a wiring step:
+   - fixture 20: the drafting record renders on the decision surface;
+     a tainted record suspends with a loud banner and no approve
+     button.
+   - fixture 21: a proposal targeting the charter path is refused at
+     `static:reserved_paths`, before any other gate (change 1).
+   - fixture 22: taint is recomputed from admitted ids, so a record
+     that lies about its stored flags cannot launder taint (change 2).
+   - fixture 23: a prose-shaped structured field, and a field path off
+     the §3b allow-list, are both refused at submission (change 4).
+   What remains for this gate when the author lands: the mock-model
+   assembly fixtures (exact §3 admission set, memory-never-reaches-frame,
+   no-tools-by-construction).
 
 Until then: scripted author, owner-drafted packs, and nothing else.
 
-## 8. Open questions, stated instead of hidden
+## 8. Open questions
 
-- Whether (b) should admit a bounded, sanitized exception MESSAGE (not
-  the traceback) for debuggability, and what "sanitized" would honestly
-  mean for text that embeds attacker input by construction.
-- Charter evolution: the charter is hash-pinned per draft, and how the
-  charter itself gets improved (by hand only, presumably through the
-  same PR review as any repo file) deserves an explicit rule before
-  anyone is tempted to let the system tune its own author.
-- Multi-turn drafting with the OWNER in the loop (owner reads a draft,
-  replies, author revises): each turn re-runs §3 assembly and appends
-  to the drafting record, which the design supports in principle, and
-  v1 should still ship single-shot.
+Two of the three are now closed by the review (§3b, §3a); one remains.
+
+- **CLOSED (review): exception message.** Whether (b) admits a
+  sanitized exception message is answered NO for v1 (§3b). The message
+  embeds attacker input by construction and has no honest "sanitized"
+  form; type and frame names cross, the message does not, and
+  debuggability lives on the governed decision surface.
+- **CLOSED (review): charter evolution.** The charter is human-PR-only,
+  a reserved authored path enforced at the first gate (§3a), and
+  charter improvement is permanently out of scope for any autonomous
+  loop. The "by hand only, presumably" is now a gate, not a
+  presumption.
+- **OPEN: multi-turn drafting with the OWNER in the loop** (owner reads
+  a draft, replies, author revises): each turn re-runs §3 assembly and
+  appends to the drafting record, which the design supports in
+  principle, and v1 should still ship single-shot.

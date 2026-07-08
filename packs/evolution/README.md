@@ -1,4 +1,4 @@
-# Evolution Pack — v0.4
+# Evolution Pack — v0.5
 
 Self-modification with provenance. The assistant authors candidate packs;
 static gates check them without executing anything; fork trials run them
@@ -74,7 +74,7 @@ mismatch aborts with nothing loaded.
 python packs/evolution/fixtures/run_fixtures.py
 ```
 
-Nineteen acceptance scenarios (design §8): happy path, the six-way static
+Twenty-two acceptance scenarios (design §8): happy path, the six-way static
 gate matrix, trial isolation, held-out discipline, conflict-then-retry,
 deterministic taint inheritance, self-approval blocked twice,
 approve-then-swap dead for source AND manifest-only swaps, restart
@@ -84,8 +84,11 @@ decision surface rendered end to end, zero trial residue after adoption,
 the conflict retry cap parking at needs_owner, subprocess isolation
 (a runaway import dies in the child, the parent survives), retention
 pins (promoted-from fork logs refuse retirement), a full soak rotation
-(all seven soak paths terminal, digest GREEN), and the drafting-record
-render (a tainted author context suspends with no approve button).
+(all seven soak paths terminal, digest GREEN), the drafting-record
+render (a tainted author context suspends with no approve button), and
+the author-frame boundaries (charter reserved-path refusal, taint
+recompute a lying record cannot launder, structured-field charset
+rejection).
 Scripted author only; no LLM, no keys, no network.
 
 ## The soak (gate 5)

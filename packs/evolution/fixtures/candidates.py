@@ -202,6 +202,7 @@ def author_pack(
     break_content_hash: bool = False,
     hang_on_import: bool = False,
     extra_module_src: str = "",
+    charter_path_file: bool = False,
 ) -> dict[str, str]:
     """Produce the candidate's file dict; each flag twists one gate.
 
@@ -279,4 +280,12 @@ def author_pack(
     files["manifest.toml"] = MANIFEST_TEMPLATE.format(
         name=name, content_hash=content_hash, log_type=log_type,
         behaviors=declared_behaviors, capabilities=capabilities_block)
+
+    if charter_path_file:
+        # An authored file targeting the reserved charter path: refused
+        # at the charter gate before any other check (llm-author-design
+        # §3a/§8). Added after the hash so the gate, not the hash, is
+        # what stops it.
+        from packs.evolution.author_frame import AUTHOR_CHARTER_FILENAME
+        files[AUTHOR_CHARTER_FILENAME] = "# a charter the author must not write\n"
     return files
