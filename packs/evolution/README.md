@@ -52,8 +52,14 @@ review index and API clients the same JSON as before.
 | `boot.retire_unpinned_trial_forks(path)` | Offline retention housekeeping; promoted-from forks refuse (runtime pins) |
 
 Demo server wiring: `ACTIVEGRAPH_EVOLUTION=1` (plus `ACTIVEGRAPH_OWNER`,
-required by the registration refusal). Tickets are processed by the
-schedule tick driver on the runtime-executor thread.
+required by the registration refusal, and
+`ACTIVEGRAPH_APPROVAL_TOKEN`, required by the approval channel:
+decisions over an unauthenticated HTTP channel refuse while evolution
+is on). The token authenticates the CHANNEL; the principal check on
+the approver ref stays the DECISION. Binding an HTTP session to a
+verified principal is chassis territory beyond this demo server, per
+the gate list. Tickets are processed by the schedule tick driver on
+the runtime-executor thread.
 
 ## The pins
 

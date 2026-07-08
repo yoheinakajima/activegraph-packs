@@ -26,6 +26,19 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
   retention API; promoted-from fork logs refuse with
   `RetentionPinnedError` (fixture 18); the demo server runs the
   housekeeping offline, before the runtime attaches.
+- **Tool Gateway v0.6.0: registration enforcement** (the Q8 chain
+  closes). Armed once by the host, every native
+  `register_local_capability` call checks graph-derived pack
+  declarations and refuses undeclared pairs, risk-class drift, and
+  disabled packs' surfaces. Fixture 7 now proves three independent
+  walls against self-approval.
+- **Approval channel auth** (gate 4, the demo-server half): approval
+  decisions require `Authorization: Bearer $ACTIVEGRAPH_APPROVAL_TOKEN`
+  (constant-time compare, 401 without it, refusals audited into the
+  graph), and refuse outright when evolution is on with no token
+  configured. The token authenticates the channel; the principal check
+  stays the decision. Session-to-principal binding remains product
+  chassis territory, stated in the docs.
 
 ## v0.5.0 — Evolution hardening: decision surface, residue, retry cap (2026-07-08)
 

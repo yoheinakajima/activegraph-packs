@@ -249,13 +249,16 @@ _DECISION_JS = """
 async function decide(decision) {
   const call_id = document.getElementById('call-id').value;
   const approver = document.getElementById('approver-ref').value;
+  const token = document.getElementById('approval-token').value;
   const body = {call_id: call_id, decision: decision, approver_ref: approver};
   if (decision === 'deny')
     body.reason = document.getElementById('decision-note').value;
   else
     body.note = document.getElementById('decision-note').value;
+  const headers = {'Content-Type': 'application/json'};
+  if (token) headers['Authorization'] = 'Bearer ' + token;
   const res = await fetch('/approvals', {method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: headers,
     body: JSON.stringify(body)});
   const out = await res.json();
   document.getElementById('decision-result').textContent =
@@ -432,6 +435,10 @@ def render_review_html(review: dict[str, Any]) -> str:
             f"value='{_esc(pending['call_id'])}'>"
             "<p><label>Approver ref: <input id='approver-ref' size='28' "
             "placeholder='owner@example.com'></label></p>"
+            "<p><label>Approval token: <input id='approval-token' "
+            "type='password' size='28' autocomplete='off'></label> "
+            "<span class='muted'>authenticates the channel; the approver "
+            "ref is still verified against principals</span></p>"
             "<p><label>Note / denial reason: <input id='decision-note' "
             "size='48'></label></p>"
             "<button class='approve' onclick=\"decide('approve')\">"

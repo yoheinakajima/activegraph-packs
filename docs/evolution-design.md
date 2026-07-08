@@ -324,6 +324,16 @@ and never a raw JSON blob. Agent-authored text is escaped everywhere it
 appears. Fixture 14 renders a real proposal end to end and asserts
 every section is on the page.
 
+The decision CHANNEL is authenticated separately from the decision
+itself: the demo server requires a bearer token
+(`ACTIVEGRAPH_APPROVAL_TOKEN`, constant-time compare, 401 without it,
+refusals audited as approval_auth_denial objects) on approval posts,
+and refuses decisions outright when evolution is on with no token
+configured. The principal check on the approver ref remains the
+decision underneath. Stated plainly: this is demo-server hardening of
+the transport; binding an HTTP session to a verified principal is the
+product chassis's job, and this token does not pretend to be that.
+
 ### Stage 5: adoption (the governed executor, two-phase)
 
 Implementation-forced decision, folded back per the house rule: the
