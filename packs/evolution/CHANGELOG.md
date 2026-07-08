@@ -1,5 +1,35 @@
 # Evolution Pack Changelog
 
+## v0.2.0 — Decision surface, residue policy, retry cap (2026-07-08)
+
+Closes three scare-list items before any product wires an author in.
+
+### Added
+- The decision surface (review.py): build_review assembles one
+  proposal's full review model from graph state alone; render_review_html
+  renders the one page an owner reads before approving (author banner
+  first, injection flags loud, gap, declared surface including consumes,
+  every gate verdict, trial numbers with the fork run id, and the FULL
+  per-file source diff against the currently adopted version). Served by
+  the demo server at /approvals/review; /approvals content-negotiates
+  (JSON for API clients, the review index for browsers). Fixture 14.
+- Bounded conflict retries (chassis.py): sweep_evolution wraps ticket
+  processing; a conflicted adoption is re-gated, re-trialed at
+  parent-now, and requeued under the same approved call at most
+  max_conflict_retries times (new setting, default 2), then parked at
+  the new TERMINAL proposal status needs_owner. Ticket processing
+  refuses parked proposals; the /approvals index lists them. The demo
+  server tick driver now calls the chassis sweep. Fixture 16.
+
+### Changed
+- Trial replay residue policy (design §7.3, RESOLVED): a passing fork
+  removes every object and relation created after the candidate loaded
+  (replayed input copies and everything derived from them) before
+  adoption sees it, so promote carries no replay scaffolding into the
+  parent. Patches to pre-existing shared state still promote. The sweep
+  counts land in mod_trial.eval_summary.replay_residue_removed, and the
+  trial's diff summary now reflects the post-sweep delta. Fixture 15.
+
 ## v0.1.0 — Initial release (2026-07-08)
 
 The reason the last two months of groundwork exist: agent-authored packs

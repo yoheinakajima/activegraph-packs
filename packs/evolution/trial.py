@@ -70,6 +70,31 @@ def _replay_segment(fork, parent_rt, records: list[dict]) -> None:
         fork.run_until_idle()
 
 
+def _sweep_replay_residue(fork, pre_objects: set, pre_relations: set) -> dict:
+    """The trial cleans its own bench before promote (design §7.3).
+
+    Promote's three-way diff treats every fork-only create as adoptable
+    state, so the replayed input copies and everything the candidate
+    derived from them would ride the delta into the parent as duplicate
+    history. They are measurements, not adoptable state: the parent
+    already lived those inputs once. Remove every object and relation
+    CREATED in the fork after the candidate loaded; PATCHES to
+    pre-existing shared objects stay, deliberately, because they are
+    the candidate's claim about desired state and exactly what the
+    conflict check and the decision surface's diff counts exist to
+    scrutinize."""
+    new_objects = [o for o in fork.graph.all_objects()
+                   if o.id not in pre_objects]
+    new_relations = [r for r in fork.graph.all_relations()
+                     if r.id not in pre_relations]
+    for obj in new_objects:
+        fork.graph.remove_object(obj.id)  # cascades touching relations
+    for rel in fork.graph.all_relations():
+        if rel.id not in pre_relations:  # created between surviving objects
+            fork.graph.remove_relation(rel.id)
+    return {"objects": len(new_objects), "relations": len(new_relations)}
+
+
 def run_trial(parent_rt, proposal_id: str, settings: EvolutionSettings) -> dict:
     """Fork, load, fixture gate, in-sample replay, held-out replay, budget.
 
@@ -96,6 +121,11 @@ def run_trial(parent_rt, proposal_id: str, settings: EvolutionSettings) -> dict:
     fork = parent_rt.fork(at_event=tip, label=f"trial:{proposal_id}")
     fork.load_pack(pack)
     events_before = len(fork.graph.events)
+    # The residue baseline: everything that exists after the candidate
+    # loads (its own load-time state included) is keepable; everything
+    # created from here on is replay scaffolding (design §7.3).
+    pre_objects = {o.id for o in fork.graph.all_objects()}
+    pre_relations = {r.id for r in fork.graph.all_relations()}
 
     # Replay segments: recorded inputs split in-sample / held-out. The
     # held-out slice is touched exactly once, here (regimes discipline).
@@ -141,9 +171,17 @@ def run_trial(parent_rt, proposal_id: str, settings: EvolutionSettings) -> dict:
         _record(graph, proposal_id, "in_sample", "fail",
                 f"trial budget exceeded: {new_events} new events")
 
-    diff = parent_rt.diff(fork)
     failures = in_sample_failures + held_out_failures
     verdict = "pass" if not failures and not over_budget else "fail"
+
+    # A passing fork is promote material: sweep the replay residue so
+    # the delta the owner reviews (and adoption applies) carries none
+    # of it. Failed forks are discarded whole; no sweep needed.
+    residue = {"objects": 0, "relations": 0}
+    if verdict == "pass":
+        residue = _sweep_replay_residue(fork, pre_objects, pre_relations)
+
+    diff = parent_rt.diff(fork)
 
     trial = graph.add_object("mod_trial", {
         "proposal_id": proposal_id,
@@ -154,6 +192,7 @@ def run_trial(parent_rt, proposal_id: str, settings: EvolutionSettings) -> dict:
             "held_out_inputs": len(held_out),
             "new_events": new_events,
             "fixture_gate": "pass",
+            "replay_residue_removed": residue,
         },
         "diff_summary": {"is_identical": bool(getattr(diff, "is_identical", False))},
         "failures": [{k: str(v)[:300] for k, v in f.items()} for f in failures][:20],

@@ -1,4 +1,4 @@
-# Evolution Pack — v0.1
+# Evolution Pack — v0.2
 
 Self-modification with provenance. The assistant authors candidate packs;
 static gates check them without executing anything; fork trials run them
@@ -15,12 +15,27 @@ Unverified-mode self-modification does not exist.
 ## The loop
 
 ```
-capability_gap -> mod_proposal -> static gates -> fork trial ->
-held approval (critical) -> adoption_ticket -> [chassis, between frames]
-bundle-hash pin -> gates re-run -> promote dry-run -> load_pack +
-mod_promotion(loading) -> promote (quiescent) -> active -> monitor ->
-disable (immediate deregistration + boot exclusion)
+capability_gap -> mod_proposal -> static gates -> fork trial (+ residue
+sweep) -> held approval (critical, via the review page) ->
+adoption_ticket -> [chassis, between frames] bundle-hash pin -> gates
+re-run -> promote dry-run -> load_pack + mod_promotion(loading) ->
+promote (quiescent) -> active -> monitor -> disable (immediate
+deregistration + boot exclusion)
+
+conflict -> capped auto-retry (max_conflict_retries) -> needs_owner
 ```
+
+## The review page
+
+Approving code you have not read defeats the whole threat model, so
+`review.py` renders one proposal as one page, from graph state alone:
+the author banner first (AUTHORED BY: AGENT, loudly), any injection
+flags on the lineage, the gap, the declared surface including
+`consumes` (outbound reach), every gate verdict, the trial numbers and
+fork run id, and the FULL source diff (small by the size gate, so
+actually readable). The demo server serves it at
+`/approvals/review?proposal_id=...`; `/approvals` gives browsers the
+review index and API clients the same JSON as before.
 
 ## Host surface (runs BETWEEN frames, never inside a behavior)
 
@@ -30,7 +45,9 @@ disable (immediate deregistration + boot exclusion)
 | `trial.run_trial(rt, proposal_id, settings)` | Fixture gate + fork replay (in-sample, then held-out once) |
 | `tools.request_adoption_fn` | Propose adoption; critical always holds |
 | `adopt.register_adoption_capabilities` | Registers the governed capabilities; refuses unsafe configs |
-| `adopt.process_adoption_tickets(rt, settings)` | Phase two: the canonical adopt order |
+| `chassis.sweep_evolution(rt, settings)` | The sweep hosts should call: tickets + capped conflict retries |
+| `adopt.process_adoption_tickets(rt, settings)` | Phase two: the canonical adopt order (wrapped by the chassis) |
+| `review.build_review` / `render_review_html` | The decision surface, from graph state alone |
 | `boot.reload_adopted_packs(rt)` | Boot persistence, bundle-hash checked |
 
 Demo server wiring: `ACTIVEGRAPH_EVOLUTION=1` (plus `ACTIVEGRAPH_OWNER`,
@@ -50,10 +67,12 @@ mismatch aborts with nothing loaded.
 python packs/evolution/fixtures/run_fixtures.py
 ```
 
-Twelve acceptance scenarios (design §8): happy path, the six-way static
+Fifteen acceptance scenarios (design §8): happy path, the six-way static
 gate matrix, trial isolation, held-out discipline, conflict-then-retry,
 deterministic taint inheritance, self-approval blocked twice,
 approve-then-swap dead for source AND manifest-only swaps, restart
 persistence with corruption handling, both registration refusals,
-loading-state tracking, and the apply-time validation ordering proof.
+loading-state tracking, the apply-time validation ordering proof, the
+decision surface rendered end to end, zero trial residue after adoption,
+and the conflict retry cap parking at needs_owner.
 Scripted author only; no LLM, no keys, no network.

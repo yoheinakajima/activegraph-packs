@@ -41,6 +41,14 @@ class EvolutionSettings(BaseModel):
         description="Fork trial budget: max events the trial may add.",
     )
     trial_fixture_timeout_seconds: float = Field(default=30.0, gt=0)
+    max_conflict_retries: int = Field(
+        default=2, ge=0,
+        description=(
+            "Automatic re-trials the chassis may attempt after a promote "
+            "conflict before the proposal goes terminal (needs_owner). "
+            "Zero means every conflict is the owner's problem immediately."
+        ),
+    )
     heldout_fraction: float = Field(
         default=0.5, gt=0.0, lt=1.0,
         description=(

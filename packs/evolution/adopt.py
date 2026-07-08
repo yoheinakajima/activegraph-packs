@@ -180,6 +180,13 @@ def process_adoption_tickets(
         if proposal is None:
             _abort(graph, ticket, None, "proposal vanished")
             continue
+        if proposal.data.get("status") == "needs_owner":
+            # Terminal: the retry cap parked it (chassis.py). Nothing
+            # automatic resurrects it, tickets included.
+            _abort(graph, ticket, None,
+                   "proposal is needs_owner (terminal); owner action required")
+            outcomes.append({"ticket": ticket.id, "outcome": "needs_owner"})
+            continue
 
         # 1. The bundle-hash pin: what loads is what was reviewed.
         try:

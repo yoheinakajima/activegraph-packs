@@ -240,6 +240,16 @@ scenarios produce no regressions in existing packs' fixtures run inside
 the same fork, budget respected. `mod_trial.verdict` records it; the
 fork run id is kept for audit and for the promote step.
 
+A passing fork then sweeps its own bench (§7.3): every object and
+relation CREATED in the fork after the candidate loaded (the replayed
+input copies and everything derived from them) is removed before the
+fork is handed to adoption, so the promote delta carries measurements
+out and adoptable state only. Patches to pre-existing shared objects
+stay, deliberately: they are the candidate's claim about desired state,
+and exactly what the conflict check and the decision surface's diff
+counts exist to scrutinize. `mod_trial.eval_summary` records the sweep
+counts (`replay_residue_removed`).
+
 Open problem, stated instead of designed around: input re-injection
 needs a convention per channel (what exactly gets replayed for a chat
 segment vs an email segment), and "no regressions" needs a comparator
@@ -275,6 +285,20 @@ capabilities this pack will invoke, i.e. its outbound reach), gate
 verdicts, trial summary with failures and eval numbers, `rt.diff`
 counts, the fork run id, and any flags. Approval is
 `approve_capability` on the held call, nothing bespoke.
+
+Implemented: `packs/evolution/review.py`. `build_review` assembles that
+model from graph state alone and `render_review_html` renders the one
+page, with the author banner first (AUTHORED BY: AGENT, loudly), taint
+banners above the fold, per-file unified diffs against the currently
+adopted version of the same pack (a first adoption diffs against
+nothing, so every line renders as added), and the approve/deny controls
+bound to the held call. The demo server serves it at
+`/approvals/review?proposal_id=...`; `/approvals` itself
+content-negotiates, JSON for API clients and the review index for
+browsers, so the owner's path of least resistance is the readable page
+and never a raw JSON blob. Agent-authored text is escaped everywhere it
+appears. Fixture 14 renders a real proposal end to end and asserts
+every section is on the page.
 
 ### Stage 5: adoption (the governed executor, two-phase)
 
@@ -328,6 +352,21 @@ cascade the delta implies, so the parent adopting state must fire
 nothing per-entity. The evolution pack reacts to the one marker event
 and that is sufficient by design.
 
+The conflict outcomes (steps 3 and 5, plus a trial fork lost to a
+restart) feed a BOUNDED automatic retry (`packs/evolution/chassis.py`,
+`sweep_evolution`, the function hosts should call instead of raw
+`process_adoption_tickets`). A conflict is a timing problem, so the
+chassis may re-gate, re-trial at parent-now, and requeue a ticket under
+the SAME approved call: the approval authorized exact bytes pinned by
+bundle hash, and none of that changed. But a proposal that keeps
+conflicting is telling you its target state is contested, and an
+uncapped chassis would fork, replay, and requeue forever. After
+`max_conflict_retries` automatic attempts the proposal moves to
+`needs_owner`, a TERMINAL state: gates, trials, and ticket processing
+all refuse it (a hand-opened ticket aborts without touching it), the
+/approvals index lists it under "needs owner action", and only the
+owner moves it again. Fixture 16 walks the full park-and-refuse path.
+
 ### Stage 6: monitor, disable, roll back
 
 - **Watch window**: after adoption, a behavior watches
@@ -372,6 +411,7 @@ class EvolutionSettings(BaseModel):
     gap_failure_threshold: int = 3
     trial_max_events: int = 2_000
     trial_max_llm_calls: int = 20
+    max_conflict_retries: int = 2      # then needs_owner, terminal
     heldout_segment_events: int = 200
     watch_window_events: int = 500
     import_allow_list: list[str] = [...]   # the §3 stage-2 list
@@ -450,8 +490,22 @@ shipped default.
    restart, which the runtime states plainly and this design accepts.
 2. **Trial process isolation.** Fork isolates state, not the process
    (T5). Runtime ask: optional subprocess execution for fork trials.
-3. **Replay conventions.** Per-channel input re-injection needs a
-   spec; v1 limits itself to chat segments and pack fixtures.
+3. **RESOLVED in v0.2: trial replay residue.** Promote's three-way
+   diff treats every fork-only create as adoptable state, so the
+   replayed input copies (and everything the candidate derived from
+   them) would ride the delta into the parent as duplicate history.
+   Policy: the trial sweeps its own bench. After a passing trial,
+   every object and relation created in the fork after the candidate
+   loaded is removed from the fork before adoption sees it; the parent
+   already lived those inputs once, and their replayed derivatives are
+   measurements, not adoptable state. Patches to pre-existing shared
+   objects stay in the delta deliberately (the candidate's reviewed
+   claim about desired state, and the conflict check's whole subject).
+   The two rejected alternatives, for the record: scratch-store trials
+   break promote's same-store lineage requirement, and mark-and-sweep
+   in the parent pollutes the parent log with create-remove pairs that
+   promote never needed to apply. Still open from the old item: per
+   channel replay conventions beyond chat segments.
 4. **Behavioral regression depth.** v1's comparator is failures plus
    fixture assertions. Graph-state diffing against expected shapes is
    future work.
@@ -508,6 +562,25 @@ scripted generator, never a live LLM:
 12. **Loading-state tracking**: a real-promote conflict after
     `load_pack` leaves `mod_promotion` at `loading`; disable works on
     it, and a restart does not re-load it.
+13. **Apply-time validation and load order**: with the candidate loaded
+    on the parent, a schema-violating delta raises
+    `PackSchemaViolation` with zero mutation; without `load_pack` the
+    same delta promotes untyped. The canonical order is what buys the
+    validation.
+14. **Decision surface**: the review page renders a real proposal end
+    to end from graph state alone (author banner, full diff, surface
+    including consumes, gates, trial numbers, fork run id, held call),
+    a tainted proposal renders its flags loudly with no approve
+    control, and the /approvals index links the held adoption to its
+    review page.
+15. **Trial residue**: after a full adopt, the parent holds exactly its
+    original recorded inputs, zero replay-derived copies or outputs,
+    the shared-state patch still promotes, and the trial records what
+    it swept.
+16. **Retry cap**: a persistently conflicting adoption is retried
+    exactly `max_conflict_retries` times, then parked at `needs_owner`;
+    idle sweeps do nothing further and a hand-opened ticket is refused
+    without touching the parked status.
 
 ## 9. Dependencies and sequencing
 
