@@ -35,7 +35,7 @@ from packs.evolution.tools import (
     request_adoption_fn,
     submit_proposal_fn,
 )
-from packs.evolution.trial import clear_trial_forks, run_trial
+from packs.evolution.trial import run_trial
 from packs.identity_auth import pack as identity_pack, IdentitySettings
 from packs.identity_auth.behaviors import clear_principal_registry
 from packs.identity_auth.tools import register_principal_fn
@@ -49,7 +49,6 @@ SETTINGS = EvolutionSettings(enabled=True, heldout_fraction=0.5)
 def _build_parent(tmp: str, tag: str) -> Runtime:
     clear_local_registry()
     clear_principal_registry()
-    clear_trial_forks()
     rt = Runtime(Graph(), persist_to=os.path.join(tmp, f"{tag}.sqlite"))
     rt.load_pack(core_pack)
     rt.load_pack(tg_pack, settings=ToolGatewaySettings())
@@ -633,6 +632,83 @@ def fx_16_retry_cap(tmp) -> dict:
             "trials_total": trials_before}
 
 
+def fx_17_subprocess_isolation(tmp) -> dict:
+    """Fixture 3's subprocess twin (v1.5 sandbox; T5's edge softens).
+    A candidate that spins forever at module import passes every static
+    gate; in the in-process era its first import would have hung the
+    parent runtime at trial materialization, permanently. Under
+    run_forked_trial the child dies at the wall clock and the parent
+    records the rejection, untouched and responsive."""
+    import time
+
+    settings = EvolutionSettings(enabled=True, heldout_fraction=0.5,
+                                 trial_fixture_timeout_seconds=5.0)
+    rt = _build_parent(tmp, "isolation")
+    proposal = _submit_and_gate(rt, author_pack(hang_on_import=True))
+    assert proposal.data["status"] == "gated", (
+        "the runaway candidate passes every static gate; the process "
+        "boundary is what contains it")
+
+    started = time.monotonic()
+    trial = run_trial(rt, proposal.id, settings)
+    elapsed = time.monotonic() - started
+    assert trial["verdict"] == "fail", trial
+    assert trial["gate"] == "fixtures"
+    assert trial["outcome"] == "limits_exceeded", trial
+    assert elapsed < 25, f"the wall clock must bound the trial ({elapsed:.1f}s)"
+    assert rt.graph.get_object(proposal.id).data["status"] == "rejected"
+
+    # The parent stayed alive and functional through the runaway.
+    rt.graph.add_object("source", {"kind": "note", "content": "still here"})
+    rt.run_until_idle()
+    return {"outcome": trial["outcome"], "elapsed_seconds": round(elapsed, 1)}
+
+
+def fx_18_retention_pins(tmp) -> dict:
+    """§7.5 closes on the runtime retention API: a promoted-from fork
+    log refuses retirement (RetentionPinnedError, the pin set dominates
+    unconditionally), a rejected trial's fork retires clean, and the
+    boot housekeeping helper makes the same calls."""
+    from activegraph.store.retention import RetentionPinnedError, pins, retire
+
+    from packs.evolution.boot import retire_unpinned_trial_forks
+
+    rt = _build_parent(tmp, "retention")
+    db = os.path.join(tmp, "retention.sqlite")
+    proposal = _submit_and_gate(rt, author_pack())
+    trial = run_trial(rt, proposal.id, SETTINGS)
+    assert trial["verdict"] == "pass"
+    assert _approve_and_process(rt, proposal.id)[0]["outcome"] == "promoted"
+    rt.run_until_idle()
+    promoted_fork = trial["fork_run_id"]
+
+    reasons = pins(db, promoted_fork)
+    assert reasons and "promoted-from" in reasons[0], reasons
+    try:
+        retire(db, promoted_fork)
+        raise AssertionError("retiring a promoted-from fork must refuse")
+    except RetentionPinnedError as exc:
+        assert exc.reasons and "promoted-from" in exc.reasons[0]
+
+    # A rejected candidate's forks are disposable.
+    bad = _submit_and_gate(rt, author_pack(
+        trigger='    raise RuntimeError("regression")'))
+    trial2 = run_trial(rt, bad.id, SETTINGS)
+    assert trial2["verdict"] == "fail"
+    rejected_fork = trial2["fork_run_id"]
+    assert pins(db, rejected_fork) == [], "nothing pins a rejected fork"
+
+    outcomes = retire_unpinned_trial_forks(db)
+    assert outcomes[promoted_fork].startswith("pinned"), outcomes
+    assert outcomes[rejected_fork].startswith("retired"), outcomes
+    retired = sum(1 for v in outcomes.values() if v.startswith("retired"))
+    assert retired >= 2, (
+        f"the fixture-gate forks are disposable too: {outcomes}")
+    return {"promoted_fork": "pinned (provenance)",
+            "rejected_fork": "retired",
+            "total_retired": retired}
+
+
 SCENARIOS = [
     ("01 happy path: gap -> gates -> trial -> approval -> promote -> live",
      fx_01_happy_path),
@@ -664,6 +740,10 @@ SCENARIOS = [
      fx_15_trial_residue),
     ("16 retry cap: repeated conflicts park the proposal at needs_owner",
      fx_16_retry_cap),
+    ("17 subprocess isolation: a runaway import dies in the child, parent fine",
+     fx_17_subprocess_isolation),
+    ("18 retention pins: promoted-from forks refuse retirement, rejects retire",
+     fx_18_retention_pins),
 ]
 
 

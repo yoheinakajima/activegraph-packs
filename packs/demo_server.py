@@ -377,6 +377,23 @@ def _build_runtime():
     from packs.chat.llm import select_chat_provider
 
     db = _db_path()
+    # Retention housekeeping BEFORE the runtime attaches (retire/compact
+    # are offline operations per the runtime's contract): archive trial
+    # forks nothing wants anymore. Promoted-from forks are pinned by the
+    # runtime's retention API and stay, as provenance.
+    if _evolution_enabled() and os.path.exists(db):
+        from packs.evolution.boot import retire_unpinned_trial_forks
+        try:
+            housekeeping = retire_unpinned_trial_forks(db)
+            retired = sum(1 for v in housekeeping.values()
+                          if v.startswith("retired"))
+            if housekeeping:
+                print(f"[demo_server] Evolution retention: {retired} trial "
+                      f"fork(s) retired, "
+                      f"{len(housekeeping) - retired} kept", flush=True)
+        except Exception as exc:
+            print(f"[demo_server] Evolution retention skipped: {exc}",
+                  flush=True)
     mem_settings = MemoryGatewaySettings(backend_url=_memory_db_path())
     # Long-term memory recall (chat_memory_context) must query the SAME backend
     # memory_writer persists to, so point ChatSettings.memory_backend_url at the

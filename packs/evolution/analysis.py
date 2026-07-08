@@ -43,6 +43,21 @@ def check_file_set(files: dict[str, str], allowed: list[str]) -> list[str]:
     return violations
 
 
+def check_fixture_entrypoint(files: dict[str, str]) -> list[str]:
+    """The trial-child contract: the fixture file must define a
+    module-level `def main(rt)` the sandbox scenario loader can call."""
+    text = files.get(FIXTURE_FILE, "")
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        return [f"{FIXTURE_FILE}: syntax error: {exc.msg} (line {exc.lineno})"]
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "main":
+            return []
+    return [f"{FIXTURE_FILE}: no module-level `def main(rt)` (the trial "
+            "child's scenario entrypoint)"]
+
+
 def check_size_caps(files: dict[str, str], *, max_total: int,
                     max_file: int) -> list[str]:
     """Gate 7: the review-surface guarantee."""

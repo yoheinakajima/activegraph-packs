@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from .gates import run_static_gates
 from .materialize import materialize_verified
 from .settings import EvolutionSettings
-from .trial import trial_fork_for
+from .trial import load_trial_fork
 
 ADOPT_RISK = "critical"
 DISABLE_RISK = "high"
@@ -210,12 +210,19 @@ def process_adoption_tickets(
             continue
         graph.patch_object(proposal_id, {"status": "adopting"})
 
-        # The trial fork must still be live (in-process registry).
-        fork = trial_fork_for(proposal_id)
+        # The trial fork persists in the store (v1.5 sandbox trials);
+        # reload it by run id from the latest passing trial. Missing or
+        # retired fork logs demand a re-trial.
+        passing = [t for t in graph.objects(type="mod_trial")
+                   if t.data.get("proposal_id") == proposal_id
+                   and t.data.get("verdict") == "pass"]
+        fork = (load_trial_fork(rt, passing[-1].data.get("fork_run_id", ""))
+                if passing else None)
         if fork is None:
             _abort(graph, ticket, proposal_id,
-                   "trial fork not available (restart between trial and "
-                   "adoption); re-trial required", proposal_status="gated")
+                   "trial fork not available in the store (never trialed, "
+                   "or its run was retired); re-trial required",
+                   proposal_status="gated")
             outcomes.append({"ticket": ticket.id, "outcome": "retrial_required"})
             continue
 
