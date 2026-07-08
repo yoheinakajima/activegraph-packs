@@ -1,5 +1,42 @@
 # Memory Gateway Pack Changelog
 
+## v0.3.0 — Retrieval quality + pluggable backends (2026-07-08)
+
+Fixes the July 2026 agent-readiness report §5.1 (verified recall failures:
+"teal", "bakery", and rephrased questions all missed a stored memory at the
+default threshold) and opens the store seam to external memory services.
+
+### Fixed
+- **Lexical recall brittleness.** Scoring is now
+  `max(Jaccard overlap, query-term coverage)` (`backend.lexical_score`).
+  Coverage is immune to stored-sentence length, so short/keyword queries and
+  natural questions recall; interrogative words are stopworded so questions
+  don't dilute their own coverage. Every §5.1 failure case is a regression
+  test (`tests/test_memory_retrieval_quality.py`).
+- **Embedding mode no longer replaces the lexical signal.** With a vector
+  present, an item's score is `max(cosine, lexical)` — a memory is as
+  relevant as its strongest signal. Enabling embeddings can never lose an
+  exact-keyword hit; strictly never worse than either pure mode.
+- `memory_ranker` uses the shared `lexical_score` instead of a private
+  (differently-stopworded) Jaccard.
+
+### Added
+- **`MemoryBackend` protocol + scheme registry.** `register_backend("mem0",
+  factory)` routes any `mem0://…` backend_url through the factory —
+  one settings value switches the entire lifecycle to an external store.
+  `ExternalMemoryBackend` base class no-ops the SQLite-specific niceties so
+  adapters implement only `store_item` + `retrieve_by_query`.
+- **mem0 adapter** (`adapters.Mem0Backend`, `register_mem0_backend()`):
+  subject_ref → user_id, metadata round-trip for category/frame filters,
+  score clamped to the shared [0,1]/min_score scale, lazy import (mem0 is
+  never a dependency), client injection for deterministic tests.
+- **Embedders module** (`embedders.py`): `OpenAIEmbedder` (stdlib HTTP, zero
+  deps, honors `OPENAI_BASE_URL` / `ACTIVEGRAPH_EMBEDDING_MODEL`),
+  `HashEmbedder` (deterministic, for fixtures/tests), and
+  `default_embedder_factory` — wired by the demo server at startup, so
+  recall is hybrid whenever `OPENAI_API_KEY` is present and lexical (never
+  erroring) otherwise.
+
 ## v0.2.0 — Curation: the judgment layer (2026-07-08)
 
 ### Added

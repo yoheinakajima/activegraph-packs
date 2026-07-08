@@ -71,6 +71,18 @@ jobs:
       - name: bridges fixtures
         run: python packs/bridges/fixtures/run_fixtures.py
 
+      - name: schedule fixtures
+        run: python packs/schedule/fixtures/run_fixtures.py
+
+      - name: telegram fixtures
+        run: python packs/telegram/fixtures/run_fixtures.py
+
+      - name: whatsapp fixtures
+        run: python packs/whatsapp/fixtures/run_fixtures.py
+
+      - name: mcp fixtures
+        run: python packs/mcp/fixtures/run_fixtures.py
+
       # ── Cross-pack integration suites ───────────────────────────────────────
 
       - name: Cross-pack integration (Tool Gateway → Core → Memory Gateway)
@@ -81,3 +93,8 @@ jobs:
 
       - name: Cross-pack integration (Identity + Agent Profile + Entity)
         run: python packs/fixtures/identity_profile_entity_integration.py
+
+      # ── pytest suite (unit + regression tests under tests/) ────────────────
+
+      - name: pytest suite
+        run: python -m pytest tests/ -q

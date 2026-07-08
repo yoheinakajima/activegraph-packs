@@ -4,6 +4,58 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ---
 
+## Unreleased
+
+- **Capability catalog** (tool_gateway v0.5.0, mcp v0.2.0): every
+  registered capability queryable with risk class, origin (native vs
+  MCP-derived), LLM-exposability, and live allow-list status. The agent
+  discovers via the governed `catalog.search` capability instead of
+  memorizing an allow-list; the Inspector reads GET /capabilities;
+  inbound MCP callers get `catalog_search` scoped to what their role
+  can reach (default owner-only exposure).
+- **Managed auth** (secrets v0.2.0): OAuth 2.0 device flow behind the
+  existing `resolve_credential_fn` seam. Env still wins; tokens live in
+  a dedicated SQLite store (never the graph); auto-refresh ahead of
+  expiry; the audit trail records WHICH source resolved each credential.
+  Demo server: POST /secrets/oauth/start + /secrets/oauth/poll, with
+  refresh flows surviving restarts.
+- **Design docs**: `docs/evolution-design.md` (the full agent-authored
+  pack lifecycle: gates, fork trials, governed adoption via promote,
+  threat model, acceptance fixtures) and `docs/manifest-spec.md` (DRAFT
+  pack manifest contract for the runtime loader, CI, the evolution
+  pack, multi-repo loading, and pack-sources configs). Both
+  adversarially reviewed; the manifest stays DRAFT until the vc
+  extraction and the evolution pack consume it.
+- **README reframe**: this repo is the official ActiveGraph pack
+  library (general capability layer + conventions + reference chassis);
+  loud security warning on the `ACTIVEGRAPH_REPLY_POLICY=open` default.
+- `packs/_template` gains the mandatory fixtures skeleton.
+- **MCP, both directions** (new `mcp` pack v0.1.0): outbound, any MCP
+  server's tools become Tool Gateway capabilities — approval-required by
+  default, promoted per tool, recorded/sanitized/scanned like every
+  capability (stdlib client, no SDK dependency). Inbound, the assistant
+  is itself an MCP server (`POST /mcp`): other agents can chat with it,
+  search its memory (subject-scoped to the caller), or invoke exposed
+  skills — bearer tokens resolve to Identity/Auth principals, graph-native
+  fail-closed exposure rules decide role access, and the assistant can
+  *propose* changes to its own exposure via the governed
+  `mcp.set_exposure` capability (owner approves). See `docs/mcp.md`.
+- **Untrusted-content posture** (tool_gateway v0.4.0): tool output reaches
+  models fenced in EXTERNAL CONTENT markers; a deterministic injection
+  detector records `injection_flag` audit objects (never blocks — a
+  tripwire, not an oracle); approval capabilities are hard-excluded from
+  LLM exposure (`NEVER_LLM_CALLABLE`). Threat model: `docs/security.md`.
+- **CI**: the pytest suite now runs in CI (it previously ran only
+  locally), plus fixture steps for schedule, telegram, whatsapp, and mcp.
+- **Memory retrieval quality + pluggable backends** (memory_gateway v0.3.0):
+  hybrid recall scoring fixes the July 2026 readiness-report §5.1 failures
+  (short/keyword queries and rephrased questions now recall; every verified
+  failure case is a regression test); the store is a first-class seam
+  (`MemoryBackend` protocol + URL-scheme registry) with a working mem0
+  adapter; bundled `OpenAIEmbedder`/`HashEmbedder` and a default factory the
+  demo server wires at startup (`OPENAI_API_KEY` → hybrid recall, no key →
+  lexical, never errors). See `packs/memory_gateway/CHANGELOG.md`.
+
 ## v0.2.0 — Personal-assistant upgrade (2026-07-08)
 
 The six-phase upgrade from `activegraph-assistant-upgrade-plan.md`: the

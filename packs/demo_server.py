@@ -140,6 +140,117 @@ def _memory_db_path() -> str:
     return os.path.join(data_dir, "activegraph_memory.sqlite")
 
 
+_mcp_settings_cache = None
+_mcp_discovered: dict = {}
+_mcp_gateway = None
+_chat_allow_list: list = []
+
+
+def _current_allow_list() -> list:
+    """The live chat tool allow-list (set by _build_runtime)."""
+    return list(_chat_allow_list)
+
+
+def _get_mcp_settings():
+    """Build MCPSettings from the environment (cached).
+
+    ACTIVEGRAPH_MCP_TOKENS  — inbound bearer tokens: 'tok1:you@x.com,tok2:agent:foo'
+                              (token:identifier pairs; identifier may contain colons).
+    ACTIVEGRAPH_MCP_SERVERS — outbound servers as a JSON list (see MCPSettings.servers).
+    ACTIVEGRAPH_MCP_EXPOSE  — comma-separated gateway capability keys offered inbound
+                              (default: the chat tool allow-list).
+    """
+    global _mcp_settings_cache
+    if _mcp_settings_cache is not None:
+        return _mcp_settings_cache
+    from packs.mcp import MCPSettings
+
+    tokens = {}
+    for pair in os.environ.get("ACTIVEGRAPH_MCP_TOKENS", "").split(","):
+        pair = pair.strip()
+        if not pair or ":" not in pair:
+            continue
+        token, identifier = pair.split(":", 1)
+        if token.strip() and identifier.strip():
+            tokens[token.strip()] = identifier.strip()
+
+    servers = []
+    raw_servers = os.environ.get("ACTIVEGRAPH_MCP_SERVERS", "").strip()
+    if raw_servers:
+        try:
+            parsed = json.loads(raw_servers)
+            if isinstance(parsed, list):
+                servers = parsed
+        except json.JSONDecodeError:
+            print("[demo_server] ACTIVEGRAPH_MCP_SERVERS is not valid JSON — "
+                  "no outbound MCP servers connected", flush=True)
+
+    expose_env = os.environ.get("ACTIVEGRAPH_MCP_EXPOSE", "").strip()
+    expose = ([k.strip() for k in expose_env.split(",") if k.strip()]
+              if expose_env
+              else ["web.fetch_url", "schedule.create_reminder"])
+
+    _mcp_settings_cache = MCPSettings(
+        tokens=tokens,
+        servers=servers,
+        expose_capabilities=expose,
+        memory_backend_url=_memory_db_path(),
+    )
+    return _mcp_settings_cache
+
+
+def _token_db_path() -> str:
+    """Path to the SQLite file holding managed OAuth tokens.
+
+    Deliberately separate from the event log and memory stores: those may
+    be exported or inspected; this file holds secret VALUES and must never
+    be. Override with ACTIVEGRAPH_TOKEN_DB."""
+    override = os.environ.get("ACTIVEGRAPH_TOKEN_DB")
+    if override:
+        return override
+    data_dir = os.path.join(_workspace, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "activegraph_tokens.sqlite")
+
+
+_oauth_source = None
+_oauth_pending: dict = {}  # credential_name -> {"flow": ..., "device_code": ...}
+
+
+def _get_oauth_source():
+    """The managed OAuth credential source, registered once behind the
+    Secrets Pack resolution chain (env still wins)."""
+    global _oauth_source
+    if _oauth_source is None:
+        from packs.secrets.managed import (
+            OAuthCredentialSource,
+            OAuthDeviceFlow,
+            OAuthTokenStore,
+            register_credential_source,
+        )
+        store = OAuthTokenStore(_token_db_path())
+        _oauth_source = OAuthCredentialSource(store)
+        # Rebuild refresh flows for tokens stored in earlier sessions: the
+        # provider column carries the flow config (endpoints + client id)
+        # as JSON, so refresh keeps working across restarts.
+        for name in store.names():
+            record = store.get(name) or {}
+            try:
+                config = json.loads(record.get("provider") or "")
+                _oauth_source.add_flow(name, OAuthDeviceFlow(
+                    provider=config["provider"],
+                    client_id=config["client_id"],
+                    client_secret=config.get("client_secret", ""),
+                    device_authorization_endpoint=config["device_authorization_endpoint"],
+                    token_endpoint=config["token_endpoint"],
+                    scope=config.get("scope", ""),
+                ))
+            except Exception:
+                pass  # env-style or legacy row: resolvable until expiry, no refresh
+        register_credential_source(_oauth_source)
+    return _oauth_source
+
+
 def _store_has_run(path: str) -> bool:
     """True if `path` is an existing SQLite store with at least one run."""
     if not os.path.exists(path):
@@ -218,6 +329,22 @@ def _register_demo_capabilities():
     register_whatsapp_send(
         phone_number_id=os.environ.get("WHATSAPP_PHONE_NUMBER_ID"),
     )
+    # MCP: the governed exposure-editing capability (high risk → owner
+    # approval) and any outbound MCP servers configured in the environment.
+    # Outbound registration happens HERE (before chat settings are built) so
+    # discovered mcp_<server>.<tool> keys can join the chat allow-list.
+    from packs.mcp.server import register_set_exposure_capability
+    register_set_exposure_capability()
+
+    global _mcp_discovered
+    mcp_settings = _get_mcp_settings()
+    if mcp_settings.servers:
+        from packs.mcp.registry import register_configured_servers
+        _mcp_discovered = register_configured_servers(mcp_settings, graph=None)
+        for server_name, keys in _mcp_discovered.items():
+            print(f"[demo_server] MCP outbound '{server_name}': "
+                  f"{len(keys)} tools registered"
+                  f"{' (UNREACHABLE)' if not keys else ''}", flush=True)
 
 
 def _build_runtime():
@@ -263,11 +390,29 @@ def _build_runtime():
     # from the first message. Default policy stays 'open' for the demo.
     owner_refs = [s.strip() for s in os.environ.get("ACTIVEGRAPH_OWNER", "").split(",") if s.strip()]
     identity_settings = IdentitySettings(owner_identifiers=owner_refs)
+    # Chat tool allow-list: the base capabilities, the governed MCP-exposure
+    # editor (so the assistant can PROPOSE changes to its own MCP surface —
+    # high risk, always held for owner approval), and every tool discovered
+    # from configured outbound MCP servers (high-risk ones are held on call;
+    # that is the designed UX for untrusted breadth).
+    mcp_tool_keys = [k for keys in _mcp_discovered.values() for k in keys]
     chat_settings = ChatSettings(
         memory_backend_url=_memory_db_path(),
-        tool_allow_list=["web.fetch_url", "schedule.create_reminder"],
+        tool_allow_list=(
+            ["web.fetch_url", "schedule.create_reminder", "mcp.set_exposure",
+             "catalog.search"]
+            + mcp_tool_keys
+        ),
         reply_policy=os.environ.get("ACTIVEGRAPH_REPLY_POLICY", "open"),
     )
+    # The capability catalog: the agent queries what exists (and what its
+    # allow-list grants) through a governed low-risk call instead of
+    # memorizing tool names. The module-level allow-list keeps allowed_now
+    # live for both the agent's catalog.search and GET /capabilities.
+    global _chat_allow_list
+    _chat_allow_list = list(chat_settings.tool_allow_list)
+    from packs.tool_gateway.catalog import register_catalog_capability
+    register_catalog_capability(_current_allow_list)
     resuming = _store_has_run(db)
 
     # Resolve the chat LLM provider from the environment (live if a provider
@@ -279,6 +424,23 @@ def _build_runtime():
     _chat_config = info
     print(f"[demo_server] Chat LLM: mode={info['mode']} "
           f"provider={info['provider']} model={info.get('model')}", flush=True)
+
+    # Memory recall quality: switch the memory backend to hybrid
+    # lexical+embedding scoring when an embedding provider is configured in
+    # the environment (OPENAI_API_KEY). With no key this is a no-op and
+    # recall stays lexical — the demo must never require a key. Memories
+    # stored before an embedder existed have no vector and keep scoring
+    # lexically; new writes are embedded from here on.
+    from packs.memory_gateway.backend import (
+        auto_configure_embedder,
+        set_embedder_factory,
+    )
+    from packs.memory_gateway.embedders import default_embedder_factory
+    set_embedder_factory(default_embedder_factory)
+    _embedder = auto_configure_embedder()
+    print(f"[demo_server] Memory recall: "
+          f"{'hybrid (lexical + embeddings)' if _embedder else 'lexical'}",
+          flush=True)
 
     if resuming:
         rt = Runtime.load(db, llm_provider=provider)
@@ -349,8 +511,101 @@ def _build_runtime():
     # credential_refs in the graph (values are never read here).
     _ensure_provider_credential_refs(rt.graph)
 
+    # Managed auth: register the OAuth token store behind the Secrets Pack
+    # resolution chain (env still wins) so previously connected accounts
+    # resolve, with refresh, from the first request after a restart.
+    _get_oauth_source()
+
+    # ── MCP (bidirectional) ─────────────────────────────────────────────────
+    # Load the pack (object types for exposure rules + audit records), seed
+    # the fail-closed default exposures (idempotent — operator edits win on
+    # resume), record any outbound discovery in the graph, and build the
+    # inbound gateway mounted at POST /mcp.
+    from packs.mcp import pack as mcp_pack
+    from packs.mcp.server import MCPGateway, ensure_default_exposures
+
+    mcp_settings = _get_mcp_settings()
+    rt.load_pack(mcp_pack, settings=mcp_settings)
+    ensure_default_exposures(rt.graph, mcp_settings)
+    for server_name, keys in _mcp_discovered.items():
+        try:
+            rt.graph.add_object("mcp_server", {
+                "name": server_name,
+                "direction": "outbound",
+                "capability_keys": keys,
+                "status": "connected" if keys else "unreachable",
+                "connected_at": _ts(),
+            })
+        except Exception:
+            pass
+
+    global _mcp_gateway
+    _mcp_gateway = MCPGateway(
+        lambda: _get_rt().graph,
+        mcp_settings,
+        chat_fn=_mcp_chat_fn,
+        memory_fn=_mcp_memory_fn,
+    )
+    if mcp_settings.tokens:
+        print(f"[demo_server] MCP inbound: {len(mcp_settings.tokens)} token(s) "
+              f"configured, POST /mcp is live", flush=True)
+    else:
+        print("[demo_server] MCP inbound: no tokens configured "
+              "(set ACTIVEGRAPH_MCP_TOKENS) — POST /mcp will refuse calls",
+              flush=True)
+
     rt.run_until_idle()
     return rt
+
+
+def _mcp_chat_fn(message: str, user_ref: str, session_id=None) -> dict:
+    """Drive one chat turn for an inbound MCP caller.
+
+    Mirrors POST /chat's pipeline (submit_chat_input → full cascade → read
+    the ChatTurn), with the caller's resolved identifier as user_ref so
+    identity, reply gating, memory scoping, and persona shaping treat the
+    MCP caller exactly like any other sender. Caller must hold
+    _runtime_lock (RLock — the /mcp handler does)."""
+    from packs.chat.tools import submit_chat_input_fn
+
+    rt = _get_rt()
+    frame_id = str(uuid.uuid4())
+    submit_chat_input_fn(
+        rt.graph,
+        user_ref=user_ref,
+        content=message,
+        session_id=session_id,
+        frame_id=frame_id,
+        metadata={"via": "mcp"},
+    )
+    rt.run_until_idle()
+
+    turns = [
+        o for o in rt.graph.all_objects()
+        if o.type == "chat_turn" and (o.data or {}).get("frame_id") == frame_id
+    ]
+    turns.sort(key=lambda t: (t.data or {}).get("turn_number", 0))
+    turn = turns[-1] if turns else None
+    reply = ((turn.data.get("assistant_message") if turn else None) or "").strip()
+    return {
+        "content": reply or "No assistant reply was produced for this message.",
+        "session_id": (turn.data or {}).get("session_id") if turn else session_id,
+    }
+
+
+def _mcp_memory_fn(query: str, subject_ref: str, top_k: int = 5) -> list:
+    """Subject-scoped memory search for an inbound MCP caller."""
+    from packs.memory_gateway.tools import retrieve_memories_fn
+
+    return retrieve_memories_fn(
+        query,
+        top_k=top_k,
+        min_score=0.1,
+        backend_url=_memory_db_path(),
+        subject_ref=subject_ref,
+        subject_scoped=True,
+        include_global=True,
+    )
 
 
 def _get_rt():
@@ -864,6 +1119,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sessions_get()
             elif path == "/channels/whatsapp/webhook":
                 self._handle_whatsapp_verify(qs)
+            elif path == "/capabilities":
+                self._handle_capabilities_get()
             elif path == "/health":
                 self._send_json({"status": "ok"})
             else:
@@ -909,8 +1166,134 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_telegram_update(body)
             elif path == "/channels/whatsapp/webhook":
                 self._handle_whatsapp_webhook(body)
+            elif path == "/mcp":
+                self._handle_mcp(body)
+            elif path == "/secrets/oauth/start":
+                self._handle_oauth_start(body)
+            elif path == "/secrets/oauth/poll":
+                self._handle_oauth_poll(body)
             else:
                 self._send_error("Not found", 404)
+
+    # ── POST /secrets/oauth/start + /secrets/oauth/poll ─────────────────────
+    #
+    # OAuth 2.0 Device Authorization Grant (RFC 8628), the managed-auth path
+    # behind the Secrets Pack's resolve_credential_fn. start begins the flow
+    # and returns the verification URL + user code for the OWNER to visit;
+    # poll exchanges the device code once the owner approved, and stores the
+    # token in the token DB (never the graph). After that, any capability
+    # whose credential_ref_name matches resolves through the managed source,
+    # with the same SecretUsageEvent audit trail as env credentials.
+
+    def _handle_oauth_start(self, body: dict):
+        from packs.secrets.managed import OAuthDeviceFlow
+
+        required = ["credential_name", "client_id",
+                    "device_authorization_endpoint", "token_endpoint"]
+        missing = [k for k in required if not body.get(k)]
+        if missing:
+            self._send_error(f"missing fields: {', '.join(missing)}", 400)
+            return
+        flow = OAuthDeviceFlow(
+            provider=body.get("provider", body["credential_name"]),
+            client_id=body["client_id"],
+            client_secret=body.get("client_secret", ""),
+            device_authorization_endpoint=body["device_authorization_endpoint"],
+            token_endpoint=body["token_endpoint"],
+            scope=body.get("scope", ""),
+        )
+        started = flow.start()
+        name = body["credential_name"]
+        _oauth_pending[name] = {"flow": flow, "device_code": started["device_code"]}
+        self._send_json({
+            "credential_name": name,
+            "verification_uri": started.get("verification_uri")
+            or started.get("verification_url", ""),
+            "user_code": started.get("user_code", ""),
+            "interval": started.get("interval", 5),
+            "expires_in": started.get("expires_in"),
+            "next": "POST /secrets/oauth/poll {\"credential_name\": ...} after approving",
+        })
+
+    def _handle_oauth_poll(self, body: dict):
+        name = (body.get("credential_name") or "").strip()
+        pending = _oauth_pending.get(name)
+        if not pending:
+            self._send_error(f"no pending OAuth flow for {name!r}", 404)
+            return
+        flow = pending["flow"]
+        outcome = flow.poll(pending["device_code"])
+        if outcome["status"] == "pending":
+            self._send_json({"status": "pending", "error": outcome.get("error")})
+            return
+        if outcome["status"] == "error":
+            _oauth_pending.pop(name, None)
+            self._send_json({"status": "error", "error": outcome.get("error")})
+            return
+        token = outcome["token"]
+        source = _get_oauth_source()
+        # provider holds the flow config as JSON (endpoints + client id, no
+        # token material) so refresh still works after a server restart.
+        flow_config = json.dumps({
+            "provider": flow.provider,
+            "client_id": flow.client_id,
+            "client_secret": flow.client_secret,
+            "device_authorization_endpoint": flow.device_authorization_endpoint,
+            "token_endpoint": flow.token_endpoint,
+            "scope": flow.scope,
+        })
+        source.store.put(
+            name,
+            access_token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            expires_in=token.get("expires_in"),
+            token_type=token.get("token_type", "Bearer"),
+            scope=token.get("scope", ""),
+            provider=flow_config,
+        )
+        source.add_flow(name, flow)
+        _oauth_pending.pop(name, None)
+        # The value stays in the token store; the response confirms only
+        # that resolution now works.
+        self._send_json({"status": "connected", "credential_name": name,
+                         "expires_in": token.get("expires_in")})
+
+    # ── GET /capabilities ────────────────────────────────────────────────────
+    #
+    # The capability catalog for humans and the Inspector: every registered
+    # capability with risk class, origin (native vs MCP-derived), and
+    # whether the chat allow-list currently grants it.
+
+    def _handle_capabilities_get(self):
+        _get_rt()  # ensure registrations have happened
+        from packs.tool_gateway.catalog import catalog_entries
+
+        entries = catalog_entries(allow_list=_current_allow_list())
+        self._send_json({"count": len(entries), "capabilities": entries})
+
+    # ── POST /mcp ────────────────────────────────────────────────────────────
+    #
+    # The assistant AS an MCP server (streamable-HTTP, plain-JSON responses):
+    # initialize / tools/list / tools/call over JSON-RPC 2.0. Auth is a
+    # bearer token from ACTIVEGRAPH_MCP_TOKENS; exposure is decided by the
+    # graph-native mcp_exposure rules; every call lands in the audit trail.
+
+    def _handle_mcp(self, body: dict):
+        _get_rt()  # ensure the runtime (and _mcp_gateway) exist
+        if _mcp_gateway is None:
+            self._send_error("MCP gateway not initialized", 503)
+            return
+        token = None
+        auth_header = self.headers.get("Authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+        with _runtime_lock:
+            response = _mcp_gateway.handle_jsonrpc(body, token)
+        if response is None:  # notification — accepted, no body
+            self.send_response(202)
+            self.end_headers()
+            return
+        self._send_json(response)
 
     # ── GET /trace ─────────────────────────────────────────────────────────
 

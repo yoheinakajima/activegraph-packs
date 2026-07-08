@@ -51,6 +51,7 @@ from activegraph.tools.context import ToolContext
 from .gateway import decide_policy, execute_approved_call
 from .settings import ToolGatewaySettings
 from .tools import CapabilitySpec, get_capability_spec, registered_capability_keys
+from .untrusted import NEVER_LLM_CALLABLE, wrap_untrusted
 
 
 def _now_iso() -> str:
@@ -71,6 +72,14 @@ def as_llm_tool(
     would be called with ``{}`` by the model, which is a misconfiguration,
     not a feature. Raises ValueError with the fix if it is missing.
     """
+    if spec.capability_name in NEVER_LLM_CALLABLE:
+        raise ValueError(
+            f"Capability {spec.key!r} can never be offered to a model: "
+            "approval resolution is the human half of 'model proposes; "
+            "runtime disposes'. No allow-list can override this "
+            "(tool_gateway.untrusted.NEVER_LLM_CALLABLE)."
+        )
+
     if spec.input_schema is None:
         raise ValueError(
             f"Capability {spec.key!r} has no input_schema, so it cannot be "
@@ -142,10 +151,18 @@ def as_llm_tool(
         except Exception:
             pass
 
+        # The model sees tool output as EXTERNAL CONTENT: fenced in
+        # data-not-instructions markers, with a visible warning when the
+        # injection scan flagged it. The graph keeps the unfenced (but
+        # sanitized) output on the capability_result.
+        output = result.get("output_data", "")
+        if gw_settings.envelope_llm_output and output:
+            output = wrap_untrusted(output, result.get("injection_flags") or [])
+
         return {
             "status": result["status"],
             "call_id": call.id,
-            "output": result.get("output_data", ""),
+            "output": output,
             "error": result.get("error"),
         }
 

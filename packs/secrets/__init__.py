@@ -49,7 +49,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["tool_gateway"]
 pack = Pack(
     name="secrets",
-    version="0.1.1",
+    version="0.2.0",
     description=(
         "Credential reference management and usage auditing. "
         "Secrets never enter model context — CredentialRef contains names only. "

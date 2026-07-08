@@ -27,6 +27,7 @@ PACKS = [
     "email",
     "entity",
     "identity_auth",
+    "mcp",
     "meeting",
     "memory_gateway",
     "research",

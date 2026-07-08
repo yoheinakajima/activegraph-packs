@@ -223,10 +223,52 @@ class CapabilityResult(BaseModel):
         default=False,
         description="True if output was processed to remove sensitive data.",
     )
+    untrusted: bool = Field(
+        default=True,
+        description=(
+            "Capability output is external content and carries no authority. "
+            "Always True — the field exists so downstream consumers (prompt "
+            "assembly, exports) can filter/mark tool-derived content."
+        ),
+    )
+    injection_flags: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Labels of injection patterns matched in the output (see "
+            "tool_gateway.untrusted.INJECTION_PATTERNS). Non-empty means an "
+            "injection_flag audit object was also created."
+        ),
+    )
     source_id: Optional[str] = Field(
         default=None,
         description="ID of the Core source object created from this result.",
     )
+    frame_id: Optional[str] = Field(default=None)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class InjectionFlag(BaseModel):
+    """A capability result matched known prompt-injection patterns.
+
+    Flags never block execution (heuristics are tripwires, not oracles) —
+    they make the attempt visible: what pattern matched, in which result,
+    with an excerpt, so a human or reviewing behavior can act. The result's
+    envelope also carries a visible warning (see untrusted.wrap_untrusted).
+    """
+
+    call_id: str = Field(description="The capability_call whose output was flagged.")
+    result_id: str = Field(default="", description="The capability_result flagged.")
+    provider_name: str = Field(default="")
+    capability_name: str = Field(default="")
+    patterns: list[str] = Field(
+        default_factory=list,
+        description="Matched pattern labels from untrusted.INJECTION_PATTERNS.",
+    )
+    excerpt: str = Field(
+        default="",
+        description="Short sanitized excerpt of the flagged content (for triage).",
+    )
+    flagged_at: str = Field(default="")
     frame_id: Optional[str] = Field(default=None)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -274,6 +316,14 @@ OBJECT_TYPES = [
             "object so downstream behaviors can observe the output."
         ),
     ),
+    ObjectType(
+        name="injection_flag",
+        schema=InjectionFlag,
+        description=(
+            "Audit record that a capability result matched prompt-injection "
+            "patterns. Never blocks execution — makes the attempt visible."
+        ),
+    ),
 ]
 
 
@@ -312,5 +362,11 @@ RELATION_TYPES = [
             "A capability result is sourced as a Core source object, "
             "enabling downstream observation extraction."
         ),
+    ),
+    RelationType(
+        name="flags",
+        source_types=("injection_flag",),
+        target_types=("capability_result",),
+        description="An injection_flag marks a capability_result as suspect.",
     ),
 ]

@@ -1,5 +1,31 @@
 # Secrets Pack Changelog
 
+## v0.2.0 — Managed credentials (OAuth device flow) (2026-07-08)
+
+### Added
+- `managed.py` — managed credential sources behind the SAME
+  `resolve_credential_fn` seam the gateway already uses. Environment
+  still wins; registered sources are consulted in order; a broken
+  source never blocks the chain.
+  - `OAuthTokenStore`: SQLite persistence for tokens, in a separate
+    file from every graph store because it holds secret VALUES. Names
+    are listable; values never leave the store except at resolve time.
+  - `OAuthDeviceFlow`: RFC 8628 device authorization grant (start /
+    poll / refresh) with injectable HTTP, so the whole flow tests
+    offline against a fake provider.
+  - `OAuthCredentialSource`: resolve with auto-refresh ahead of expiry
+    (60s margin), refresh-token rotation per RFC 6749 §6, fail-closed
+    on dead grants and refreshless expiry.
+- `resolve_credential_with_source_fn` — resolution that also names the
+  satisfying source; `SecretUsageEvent.metadata.source` now records it
+  ('env', 'oauth_token_store', ...) so the audit trail says WHERE a
+  credential came from, never what it was.
+- Demo server: `POST /secrets/oauth/start` + `/secrets/oauth/poll`
+  (owner-facing device-flow connect), token store registered at boot
+  with refresh flows rebuilt from persisted provider config —
+  connected accounts survive restarts. Token DB path:
+  `ACTIVEGRAPH_TOKEN_DB` (default `data/activegraph_tokens.sqlite`).
+
 ## v0.1.1 — Relation integrity fix (2026-07-08)
 
 ### Fixed
