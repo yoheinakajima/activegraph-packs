@@ -82,6 +82,27 @@ environment setup needed.
 > Replit-only editor plugins load only when running on Replit and are silently
 > skipped in a plain checkout.
 
+### Running it as a personal assistant
+
+The demo server is a working always-on assistant, configured entirely by
+environment:
+
+| Env var | Purpose |
+|---------|---------|
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Live LLM (otherwise instructive mock mode) |
+| `ACTIVEGRAPH_OWNER` | Comma-separated owner identifiers (`you@x.com,telegram:123,whatsapp:1555...`) — seeded as owner principals |
+| `ACTIVEGRAPH_REPLY_POLICY` | `open` (default) \| `known` \| `owner_only` — who gets conversational replies (fail-closed) |
+| `SCHEDULE_TICK_SECONDS` | Schedule sweep period (default 10; `<=0` disables) |
+| `TELEGRAM_BOT_TOKEN` | Registered via `POST /secrets` or env; enables Telegram delivery. Run `python -m packs.telegram.poller` |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN` | WhatsApp Cloud API delivery + webhook verification |
+
+Chat is agentic out of the box (`web.fetch_url` +
+`schedule.create_reminder` on the tool allow-list): every model-initiated
+action flows through the Tool Gateway — recorded before it runs,
+policy-checked, credentials injected at execution time, output sanitized —
+and high-risk actions wait in `GET /approvals` for an explicit, verified
+approve/deny. Everything above is reconstructible from `GET /trace`.
+
 ### State & persistence
 
 The demo persists its event log and memory store to SQLite under `data/` by
@@ -205,6 +226,8 @@ For the full architecture, the frames-vs-trace model, and a tour of the Inspecto
 | `GET /sessions` | List chat sessions (id, user, turn count, started_at) |
 | `GET /approvals` | Held capability calls + recent approve/deny decisions |
 | `POST /approvals` | Resolve a held call: `{call_id, decision: approve\|deny, approver_ref}` |
+| `POST /channels/telegram/update` | Inbound Telegram update (posted by the long-poll driver) |
+| `GET/POST /channels/whatsapp/webhook` | WhatsApp Cloud API webhook (+ Meta's hub-challenge verification) |
 | `POST /reset` | Wipe SQLite stores and re-seed from fixtures |
 
 ---
@@ -291,6 +314,11 @@ Full docs index: **[docs/README.md](docs/README.md)**.
 ## Reports
 
 - **[activegraph-builder-report.md](activegraph-builder-report.md)** — Honest field report from building this repo: what clicked, what didn't, rough edges in the ActiveGraph API, and notes for the ActiveGraph maintainers. Includes the confusing relation field naming, re-entrancy footgun, `@tool` callability issue, and a correction on the built-in persistence layer.
+
+- **[activegraph-assistant-upgrade-plan.md](activegraph-assistant-upgrade-plan.md)** — The
+  verified review of the July 2026 hands-on agent evaluation and the six-phase
+  personal-assistant upgrade plan implemented in v0.2.0 (trust loop, agentic
+  chat, reply gating, schedule pack, messenger adapters, memory curation).
 
 - **[activegraph-direction-report.md](activegraph-direction-report.md)** — 29-section architecture direction document covering the design philosophy behind this pack system: kernel vs. Core Pack, behavior specification as the primary developer interface, frames instead of a turn coordinator, memory design, Tool Gateway, pack dependencies, bundles, and the key invariants that should never be violated.
 

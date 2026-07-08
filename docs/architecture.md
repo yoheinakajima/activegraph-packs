@@ -61,12 +61,29 @@ polls. The API server proxies these through.
 | `GET /sessions` | List chat sessions (id, user, turn count, started_at) |
 | `GET /approvals` | Held capability calls (`status='policy_checking'`) + recent decisions |
 | `POST /approvals` | Resolve a held call: `{call_id, decision: approve\|deny, approver_ref, note\|reason}` |
+| `POST /channels/telegram/update` | Inbound Telegram update (posted by `python -m packs.telegram.poller`) |
+| `GET/POST /channels/whatsapp/webhook` | WhatsApp Cloud API webhook + hub-challenge verification |
 | `POST /reset` | Wipe the SQLite stores and re-seed from fixtures |
 
 Approval state lives entirely in the graph — a pending approval *is* a
 `capability_call` at `status='policy_checking'`, and decisions are
 `capability_approval` / `capability_denial` objects — so the approvals API is
 a thin view with no server-side bookkeeping, and it survives restarts.
+
+## Concurrency model
+
+The HTTP front end is threaded (`ThreadingHTTPServer`) so a slow LLM turn
+never blocks another request at the socket — but the runtime is
+single-threaded by design (its SQLite event store binds to its creating
+thread). One dedicated **runtime executor thread** owns every graph touch;
+request handlers and the schedule tick driver submit closures to it and
+wait. Concurrency at the edges, strict serialization at the graph.
+
+The **schedule tick driver** is the reference host driver for the Schedule
+Pack: a daemon thread sweeps every `SCHEDULE_TICK_SECONDS` (default 10),
+calling `emit_due_ticks(graph, now)` on the executor — this is the only
+place wall-clock time enters the graph, exactly as chat input enters via
+HTTP.
 
 ## Frames and the trace
 

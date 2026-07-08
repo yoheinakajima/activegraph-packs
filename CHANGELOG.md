@@ -4,6 +4,55 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ---
 
+## v0.2.0 — Personal-assistant upgrade (2026-07-08)
+
+The six-phase upgrade from `activegraph-assistant-upgrade-plan.md`: the
+verified findings of the July 2026 agent evaluation, implemented.
+
+### New packs (3)
+
+| Pack | Description |
+|---|---|
+| `schedule` | Graph-native scheduling: schedules, ticks, heartbeats — the clock lives at the edge, fixtures are synthetic-time |
+| `telegram` | Telegram transport adapter: updates → chat_input; outbound replies as policy-checked gateway sends |
+| `whatsapp` | WhatsApp Cloud API transport adapter — the structural mirror of telegram |
+
+### Highlights
+
+- **Trust loop closed** (tool_gateway v0.3.0): held capability calls are now
+  resolvable — approve/deny tools with verified approvers, capability_denial
+  audit objects, `GET/POST /approvals`. The graph is the single source of
+  truth for approval state.
+- **Agentic chat** (chat v0.3.0): `ChatSettings.tool_allow_list` wires
+  gateway PROXY tools into the native LLM loop — every model-initiated
+  action is recorded, policy-checked, credential-injected, and sanitized.
+  Deterministic intent routing (`communication.intent_router`) covers the
+  zero-LLM path.
+- **Reply gating** (chat + communication + identity_auth): who gets a full
+  reply is policy ('open'/'known'/'owner_only'), decided pre-LLM, fail-closed,
+  with audience-aware profile shaping. Strangers cost zero tokens.
+- **Memory curation** (memory_gateway v0.2.0 + core v0.1.2): questions are
+  never memorized; guidance from non-conversational third-party content is
+  rejected with a written rationale ("documents don't give orders");
+  same-frame recall exclusion; `auto_accept_categories` finally works.
+- **Repo-wide relation integrity fix**: 80 `add_relation` calls across 14
+  packs passed arguments in the wrong order, writing garbage edges since
+  v0.1.0. Fixed everywhere, with the fixture assertions and the demo
+  server's `/graph` decoding that had normalized the bug.
+- **Provider compatibility** (chat llm.py): pack-scoped tool names sanitized
+  at the wire boundary; reasoning-model parameter translation; honest
+  fallback errors.
+- **Demo server**: sessions/approvals/channel-webhook endpoints, schedule
+  tick driver, and a single runtime-executor thread under a threaded HTTP
+  front end.
+
+### Bundles
+
+`messaging_assistant` (assistant + telegram + whatsapp) joins the four
+existing bundles; `assistant` now includes `schedule`.
+
+---
+
 ## v0.1.0 — Initial release (2026-06-03)
 
 ### Packs (15 + bridge)

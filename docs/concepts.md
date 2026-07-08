@@ -70,7 +70,9 @@ through load order (they are conventions, not enforced kwargs on `Pack(...)`):
 
 - **`requires`** — hard dependencies the pack assumes are already loaded; Core is
   the universal one. Almost every layered pack lists `requires = ["core"]`;
-  communication adapters like `chat` and `email` also require `communication`.
+  communication adapters like `chat` and `email` also require `communication`
+  (and the messenger adapters `telegram`/`whatsapp` additionally require `chat`,
+  whose session/memory/gating machinery they reuse).
 - **`integrates_with`** — optional packs that *improve* behavior but are not
   mandatory. A pack must still function (degrade gracefully) when they are absent.
 
@@ -79,8 +81,8 @@ Layered packs split further by intent:
 | Tier | Packs | Role |
 |------|-------|------|
 | **Core** | `core` | The 7 universal primitives. Depends on nothing. |
-| **Infrastructure** | `tool_gateway`, `secrets`, `memory_gateway`, `identity_auth`, `agent_profile`, `entity` | Cross-cutting capabilities every assistant needs: tool execution, credentials, memory lifecycle, identity, agent persona, entity dedupe. |
-| **Communication** | `communication`, `chat`, `email` | Channel-neutral messaging plus channel adapters. |
+| **Infrastructure** | `tool_gateway`, `secrets`, `memory_gateway`, `identity_auth`, `agent_profile`, `entity`, `schedule` | Cross-cutting capabilities every assistant needs: tool execution, credentials, memory lifecycle, identity, agent persona, entity dedupe. |
+| **Communication** | `communication`, `chat`, `telegram`, `whatsapp`, `email` | Channel-neutral messaging plus channel adapters (`chat` is the conversation engine the messenger adapters reuse). |
 | **Domain** | `research`, `vc`, `codebase`, `team_ops`, `meeting` | Specific verticals. Channel-agnostic — they consume infrastructure and communication, never own them. |
 | **Bridge** | `bridges` (diligence_core_bridge) | Zero-ontology pack mapping a third-party pack's outputs onto Core types. |
 

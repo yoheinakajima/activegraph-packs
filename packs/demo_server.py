@@ -33,13 +33,56 @@ import threading
 import traceback
 import uuid
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 # ─── Runtime singleton ────────────────────────────────────────────────────────
 
-_runtime_lock = threading.Lock()
+# ── Runtime executor ──────────────────────────────────────────────────────
+# The runtime is single-threaded by design (its SQLite event store is bound
+# to the thread that created it), so ONE dedicated thread owns every graph
+# touch. Request threads and the schedule tick driver submit closures and
+# wait: the socket layer is concurrent (ThreadingHTTPServer — a slow chat
+# turn no longer blocks /health at accept()), while graph access stays
+# strictly serial. _runtime_lock remains as a re-entrant, contention-free
+# lock for handlers that nest (everything already runs on the executor
+# thread).
+
+
+class _RuntimeExecutor:
+    def __init__(self) -> None:
+        import queue
+
+        self._q: "queue.Queue" = queue.Queue()
+        self._thread = threading.Thread(
+            target=self._loop, name="runtime-executor", daemon=True,
+        )
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            fn, fut = self._q.get()
+            if not fut.set_running_or_notify_cancel():
+                continue
+            try:
+                fut.set_result(fn())
+            except BaseException as e:  # surfaced to the submitting thread
+                fut.set_exception(e)
+
+    def run(self, fn):
+        """Run fn on the runtime thread and return its result (or raise)."""
+        import concurrent.futures
+
+        if threading.current_thread() is self._thread:
+            return fn()  # already on the runtime thread — run inline
+        fut: "concurrent.futures.Future" = concurrent.futures.Future()
+        self._q.put((fn, fut))
+        return fut.result()
+
+
+_EXECUTOR = _RuntimeExecutor()
+_runtime_lock = threading.RLock()
 _rt = None                  # the live Runtime
 _initial_events: list = []  # events captured at startup (for reset)
 _frames: dict = {}          # frame_id -> {id, status, started_at, ended_at, events[]}
@@ -315,7 +358,10 @@ def _get_rt():
     if _rt is None:
         with _runtime_lock:
             if _rt is None:
-                _rt = _build_runtime()
+                # Constructed ON the runtime executor thread: the SQLite
+                # event store binds to its creating thread, and every later
+                # graph touch happens on that same thread via _EXECUTOR.
+                _rt = _EXECUTOR.run(_build_runtime)
     return _rt
 
 
@@ -786,6 +832,16 @@ class Handler(BaseHTTPRequestHandler):
         path = self._path()
         qs = self._parse_qs()
         try:
+            # All graph access happens on the runtime executor thread; the
+            # request thread only parses the request and (after the closure
+            # returns) has already had its response written.
+            _EXECUTOR.run(lambda: self._dispatch_get(path, qs))
+        except Exception as e:
+            traceback.print_exc()
+            self._send_error(str(e), 500)
+
+    def _dispatch_get(self, path, qs):
+        if True:
             if path == "/trace":
                 self._handle_trace(qs)
             elif path == "/graph":
@@ -812,15 +868,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"status": "ok"})
             else:
                 self._send_error("Not found", 404)
-        except Exception as e:
-            traceback.print_exc()
-            self._send_error(str(e), 500)
 
     def do_POST(self):
         path = self._path()
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length else {}
         try:
+            _EXECUTOR.run(lambda: self._dispatch_post(path, body))
+        except Exception as e:
+            traceback.print_exc()
+            self._send_error(str(e), 500)
+
+    def _dispatch_post(self, path, body):
+        if True:
             if path == "/chat":
                 self._handle_chat(body)
             elif path == "/reset":
@@ -851,9 +911,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_whatsapp_webhook(body)
             else:
                 self._send_error("Not found", 404)
-        except Exception as e:
-            traceback.print_exc()
-            self._send_error(str(e), 500)
 
     # ── GET /trace ─────────────────────────────────────────────────────────
 
@@ -1534,14 +1591,17 @@ def _tick_driver_loop(period_seconds: float):
 
     from packs.schedule.tools import emit_due_ticks_fn
 
+    def _sweep():
+        rt = _get_rt()
+        ticks = emit_due_ticks_fn(rt.graph, datetime.now(timezone.utc))
+        if ticks:
+            rt.run_until_idle()
+        return len(ticks)
+
     while True:
         _time.sleep(period_seconds)
         try:
-            rt = _get_rt()
-            with _runtime_lock:
-                ticks = emit_due_ticks_fn(rt.graph, datetime.now(timezone.utc))
-                if ticks:
-                    rt.run_until_idle()
+            _EXECUTOR.run(_sweep)
         except Exception:
             traceback.print_exc()
 
@@ -1574,7 +1634,10 @@ def main():
 
     _start_tick_driver()
 
-    server = HTTPServer(("0.0.0.0", port), Handler)
+    # Threaded: read endpoints no longer queue behind a slow chat turn at
+    # the socket level; actual graph access stays serialized by the runtime
+    # lock (the runtime is single-threaded by design).
+    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

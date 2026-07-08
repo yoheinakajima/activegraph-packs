@@ -10,6 +10,19 @@ assistant you can actually run" — while keeping the property that makes this r
 
 ---
 
+> **Implementation status (2026-07-08): all six phases shipped.**
+> Phase 0 (trust loop + provider shim + the repo-wide relation-integrity fix
+> it uncovered), Phase 1 (agentic chat via gateway proxies + intent routing),
+> Phase 2 (reply gating + audience-aware profile), Phase 3 (`schedule` pack),
+> Phase 4 (`telegram` **and** `whatsapp` adapter packs — WhatsApp added at
+> the owner's request), Phase 5 (memory curation), Phase 6 (runtime-executor
+> server chassis). See the root `CHANGELOG.md` v0.2.0 and per-pack
+> changelogs; every phase landed with deterministic fixtures and the full
+> matrix green. Part 4's upstream runtime issues remain open against the
+> `activegraph` PyPI package, with the pack-side mitigations in place.
+
+---
+
 ## Part 1 — Report verification
 
 Every substantive claim in the experience report was checked against the code. Verdicts:
