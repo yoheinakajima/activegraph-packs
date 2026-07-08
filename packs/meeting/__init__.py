@@ -37,7 +37,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], composes_with=["team_ops", "identity_auth", "communication"]
 pack = Pack(
     name="meeting",
-    version="0.1.1",
+    version="0.1.2",
     description=(
         "Meeting ingestion and processing: transcript parsing (structured and plain text), "
         "decision extraction, action item extraction with Core task creation, "

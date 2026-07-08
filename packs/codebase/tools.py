@@ -101,13 +101,13 @@ def create_issue_fn(
 
 
 @tool(name="ingest_github_webhook", description="Ingest a GitHub webhook event payload.")
-def ingest_github_webhook(graph: Graph, event: str, payload: dict[str, Any]) -> object:
+def ingest_github_webhook(graph: Graph, event: str, payload: dict[str, Any] = None) -> object:
     return ingest_github_webhook_fn(graph, event, payload)
 
 
 @tool(name="ingest_repo_file", description="Ingest a repo file (e.g. ADR markdown) into the graph.")
 def ingest_repo_file(
-    graph: Graph, repo_full_name: str, path: str, content: str, language: str | None = None
+    graph: Graph, repo_full_name: str, path: str = "", content: str = "", language: str | None = None
 ) -> object:
     return ingest_repo_file_fn(graph, repo_full_name, path, content, language)
 
@@ -123,7 +123,7 @@ def create_repo(
 
 @tool(name="create_issue", description="Create an issue source to trigger issue_tracker.")
 def create_issue(
-    graph: Graph, repo_full_name: str, issue_number: int, title: str,
+    graph: Graph, repo_full_name: str, issue_number: int = None, title: str = "",
     body: str = "", state: str = "open", labels: list[str] | None = None,
     author_ref: str | None = None,
 ) -> object:

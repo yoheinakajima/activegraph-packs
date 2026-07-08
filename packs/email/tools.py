@@ -81,10 +81,10 @@ def create_email_response_fn(
 def ingest_email(
     graph,
     message_id: str,
-    from_addr: str,
-    to_addrs: list,
-    subject: str,
-    body_text: str,
+    from_addr: str = "",
+    to_addrs: list = None,
+    subject: str = "",
+    body_text: str = "",
     received_at: Optional[str] = None,
 ):
     return ingest_email_fn(
@@ -104,7 +104,7 @@ def ingest_email(
 def create_email_response(
     graph,
     comm_message_id: str,
-    content: str,
+    content: str = "",
     status: str = "draft",
 ):
     return create_email_response_fn(

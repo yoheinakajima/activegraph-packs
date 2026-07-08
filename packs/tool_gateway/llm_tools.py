@@ -36,8 +36,8 @@ behavior-declared Tool objects into its registry automatically).
 
 Naming: proxy tools keep the gateway's canonical "provider.capability" key
 as their tool name, so the trace and the capability registry read the same.
-The chat pack's ProviderCompat sanitizes the dot at the provider wire
-boundary and maps it back.
+The runtime sanitizes the dot at the provider wire boundary and maps it
+back (activegraph.llm.wire, CONTRACT v1.3 #3).
 """
 
 from __future__ import annotations

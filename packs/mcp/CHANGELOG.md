@@ -1,5 +1,13 @@
 # MCP Pack Changelog
 
+## v0.2.1 — Declarative capability surface (2026-07-08)
+
+### Added
+- `Pack.capabilities` populated with this pack's `CapabilityDecl`s
+  (activegraph v1.4, manifest-spec Q8 chain step 1), so the loader's
+  two-way surface check covers gateway capabilities; CI's AST check
+  keeps the declaration honest against the registration call sites.
+
 ## v0.2.0 — Caller-scoped capability catalog (2026-07-08)
 
 ### Added

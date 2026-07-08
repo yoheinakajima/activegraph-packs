@@ -1,302 +1,112 @@
-"""Unit tests for the provider-boundary compatibility layer (packs/chat/llm.py).
+"""Shim-retirement proof: the runtime owns the provider wire boundary.
 
-ProviderCompat's contract: canonical pack-scoped tool names ('pack.tool')
-everywhere inside the framework, wire-legal names ('pack__tool') on the
-provider API, translated back on the way in. _OpenAIParamShim's contract:
-reasoning-family models get max_completion_tokens and no temperature/top_p;
-every other model's payload passes through byte-identical.
+Until activegraph v1.3, this repo carried two shims in packs/chat/llm.py:
+ProviderCompat (pack-scoped tool names sanitized to the wire alphabet and
+reverse-mapped on the way back) and an OpenAI reasoning-family parameter
+shim (max_tokens → max_completion_tokens, temperature/top_p dropped).
+CONTRACT v1.3 #3 moved both into the runtime. Per the shim-retirement
+rule — every shim dies with proof — these tests point at the REAL runtime
+surfaces that replaced the shims. If any of them fails on a future
+runtime, the wire boundary regressed and the pin (or the shim) must come
+back.
 
-These are direct unit tests (no subprocess fixture) because the seam is a
-pure function boundary — no graph, no runtime, no API key.
+Also covers the error-taxonomy split the old shim's honest-fallback text
+worked around: auth/request errors are terminal reason codes now, no
+longer retried as network flakes.
 """
 
 from __future__ import annotations
 
 import sys
-from decimal import Decimal
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from dataclasses import dataclass, field
-from typing import Any, Optional
-
-from activegraph.llm.types import LLMMessage, LLMResponse, ToolCall
-
-from packs.chat.llm import (
-    FallbackChatProvider,
-    ProviderCompat,
-    _is_reasoning_family,
-    _OpenAIParamShim,
-    _safe_tool_name,
+from activegraph.llm.openai import OpenAIProvider
+from activegraph.llm.wire import (
+    build_tool_name_map,
+    classify_provider_exception,
+    restore_tool_name,
+    sanitize_tool_name,
 )
 
 
-# ------------------------------------------------------------------ stubs
+# ------------------------------------------------- tool-name wire boundary
 
 
-@dataclass
-class _StubProvider:
-    """Records the kwargs it was called with; returns a scripted response."""
-
-    response: LLMResponse
-    seen: dict[str, Any] = field(default_factory=dict)
-    default_model: str = "stub-1"
-
-    def complete(self, **kwargs: Any) -> LLMResponse:
-        self.seen = kwargs
-        return self.response
-
-    def estimate_cost(self, **kwargs: Any) -> Decimal:
-        return Decimal("0")
-
-    def count_tokens(self, **kwargs: Any) -> int:
-        return 0
-
-    def recognizes_model(self, name: str) -> bool:
-        return True
+def test_pack_scoped_names_sanitize_and_round_trip():
+    """'pack.tool' → 'pack__tool' on the wire, restored exactly."""
+    canonical = "diligence.fetch_filings"
+    wire_name = sanitize_tool_name(canonical)
+    assert wire_name == "diligence__fetch_filings"
+    name_map = build_tool_name_map([{"name": canonical}, {"name": "web.fetch_url"}])
+    assert restore_tool_name(wire_name, name_map) == canonical
+    assert restore_tool_name(sanitize_tool_name("web.fetch_url"), name_map) == "web.fetch_url"
 
 
-def _response(tool_calls: Optional[list[ToolCall]] = None) -> LLMResponse:
-    return LLMResponse(
-        raw_text="ok",
-        parsed=None,
-        input_tokens=0,
-        output_tokens=0,
-        cost_usd=Decimal("0"),
-        latency_seconds=0.0,
-        model="stub-1",
-        finish_reason="stop",
-        tool_calls=tool_calls,
-    )
+def test_wire_safe_names_pass_through_unchanged():
+    """Non-pack tool names stay byte-identical (pre-v1.3 requests intact)."""
+    assert sanitize_tool_name("fetch_url") == "fetch_url"
+    assert sanitize_tool_name("tool-name_2") == "tool-name_2"
 
 
-# ------------------------------------------------------------------ ProviderCompat
+def test_gateway_capability_keys_are_wire_translatable():
+    """The exact names this repo puts on allow-lists survive the boundary:
+    the gateway's canonical 'provider.capability' keys and MCP-derived
+    'mcp_<server>.<tool>' keys."""
+    for key in ["catalog.search", "mcp.set_exposure", "mcp_github.create_issue",
+                "schedule.create_reminder"]:
+        wire_name = sanitize_tool_name(key)
+        assert "." not in wire_name
+        assert restore_tool_name(wire_name, build_tool_name_map([{"name": key}])) == key
 
 
-def test_scoped_tool_names_sanitized_outbound_and_restored_inbound():
-    stub = _StubProvider(
-        response=_response(
-            tool_calls=[ToolCall(id="c1", name="my_pack__do_thing", args={"x": 1})]
-        )
-    )
-    compat = ProviderCompat(stub)
-
-    resp = compat.complete(
-        system="",
-        messages=[LLMMessage(role="user", content="hi")],
-        model="gpt-4o-mini",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=1.0,
-        output_schema=None,
-        timeout_seconds=30.0,
-        tools=[{"name": "my_pack.do_thing", "description": "d", "input_schema": {}}],
-    )
-
-    # Outbound: the wire saw the sanitized name; canonical name nowhere on the wire.
-    assert stub.seen["tools"][0]["name"] == "my_pack__do_thing"
-    # Inbound: the runtime sees the canonical name again.
-    assert resp.tool_calls[0].name == "my_pack.do_thing"
-    assert resp.tool_calls[0].args == {"x": 1}
+def test_unmapped_response_names_pass_through():
+    """A hallucinated tool name with no mapping is not guessed at — the
+    runtime's unknown-tool handling owns that error (the old shim's rule,
+    preserved by the runtime)."""
+    assert restore_tool_name("made_up_tool", build_tool_name_map([{"name": "a.b"}])) == "made_up_tool"
 
 
-def test_prior_turn_assistant_tool_calls_sanitized_without_mutation():
-    stub = _StubProvider(response=_response())
-    compat = ProviderCompat(stub)
-
-    assistant_msg = LLMMessage(
-        role="assistant",
-        content="",
-        tool_calls=[ToolCall(id="c0", name="my_pack.do_thing", args={})],
-    )
-    compat.complete(
-        system="",
-        messages=[assistant_msg],
-        model="gpt-4o-mini",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=1.0,
-        output_schema=None,
-        timeout_seconds=30.0,
-        tools=[{"name": "my_pack.do_thing", "description": "d", "input_schema": {}}],
-    )
-
-    sent = stub.seen["messages"][0]
-    assert sent.tool_calls[0].name == "my_pack__do_thing"
-    # The runtime owns the original message objects — never mutated.
-    assert assistant_msg.tool_calls[0].name == "my_pack.do_thing"
+# ------------------------------------------------- reasoning-family params
 
 
-def test_unscoped_names_and_toolless_calls_pass_through():
-    stub = _StubProvider(
-        response=_response(tool_calls=[ToolCall(id="c1", name="plain_tool", args={})])
-    )
-    compat = ProviderCompat(stub)
-
-    resp = compat.complete(
-        system="",
-        messages=[],
-        model="gpt-4o-mini",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=1.0,
-        output_schema=None,
-        timeout_seconds=30.0,
-        tools=[{"name": "plain_tool", "description": "d", "input_schema": {}}],
-    )
-    assert stub.seen["tools"][0]["name"] == "plain_tool"
-    assert resp.tool_calls[0].name == "plain_tool"
-
-    # No tools → kwargs pass through untouched (same messages object).
-    msgs = [LLMMessage(role="user", content="hi")]
-    compat.complete(
-        system="",
-        messages=msgs,
-        model="gpt-4o-mini",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=1.0,
-        output_schema=None,
-        timeout_seconds=30.0,
-    )
-    assert stub.seen["messages"] is msgs
+def test_runtime_owns_reasoning_family_params():
+    """OpenAIProvider recognizes the reasoning families the retired shim
+    covered (and gpt-5), and exposes the prefix seam the shim lacked."""
+    provider = OpenAIProvider()
+    for model in ["o1-mini", "o3-large", "o4-mini", "gpt-5-turbo"]:
+        assert provider._is_reasoning_model(model), model
+    assert not provider._is_reasoning_model("gpt-4o-mini")
+    # The seam the shim never had: operator-extendable prefixes.
+    custom = OpenAIProvider(reasoning_model_prefixes=("o1", "future-family"))
+    assert custom._is_reasoning_model("future-family-1")
 
 
-def test_hallucinated_tool_name_passes_through_unmapped():
-    stub = _StubProvider(
-        response=_response(tool_calls=[ToolCall(id="c1", name="not_a_tool", args={})])
-    )
-    compat = ProviderCompat(stub)
-    resp = compat.complete(
-        system="",
-        messages=[],
-        model="gpt-4o-mini",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=1.0,
-        output_schema=None,
-        timeout_seconds=30.0,
-        tools=[{"name": "my_pack.do_thing", "description": "d", "input_schema": {}}],
-    )
-    # Unknown names are the runtime's error to raise, not ours to guess at.
-    assert resp.tool_calls[0].name == "not_a_tool"
+# ------------------------------------------------- error taxonomy split
 
 
-def test_safe_tool_name():
-    assert _safe_tool_name("pack.tool") == "pack__tool"
-    assert _safe_tool_name("plain") == "plain"
+class _FakeAuthError(Exception):
+    status_code = 401
 
 
-# ------------------------------------------------------------------ _OpenAIParamShim
+class _FakeBadRequest(Exception):
+    status_code = 400
 
 
-class _StubOpenAIClient:
-    def __init__(self) -> None:
-        self.seen: dict[str, Any] = {}
-
-        import types
-
-        self.chat = types.SimpleNamespace(
-            completions=types.SimpleNamespace(create=self._create)
-        )
-
-    def _create(self, **kwargs: Any) -> Any:
-        self.seen = kwargs
-        return object()
+class _FakeRateLimit(Exception):
+    status_code = 429
 
 
-def test_reasoning_family_detection():
-    assert _is_reasoning_family("gpt-5")
-    assert _is_reasoning_family("gpt-5-mini")
-    assert _is_reasoning_family("o3-mini")
-    assert not _is_reasoning_family("gpt-4o-mini")
-    assert not _is_reasoning_family("gpt-4.1")
+class _FakeTimeout(Exception):
+    pass
 
 
-def test_param_shim_translates_for_reasoning_models_only():
-    inner = _StubOpenAIClient()
-    shim = _OpenAIParamShim(inner)
-
-    shim.chat.completions.create(model="gpt-5-mini", max_tokens=256, temperature=0.7)
-    assert inner.seen == {"model": "gpt-5-mini", "max_completion_tokens": 256}
-
-    shim.chat.completions.create(model="gpt-4o-mini", max_tokens=256, temperature=0.7)
-    assert inner.seen == {"model": "gpt-4o-mini", "max_tokens": 256, "temperature": 0.7}
-
-
-# ------------------------------------------------------------------ FallbackChatProvider
-
-
-class _ExplodingProvider(_StubProvider):
-    def complete(self, **kwargs: Any) -> LLMResponse:
-        raise ValueError("model `nope-9` does not exist (HTTP 400)")
-
-
-def test_fallback_names_the_real_error_on_plain_chat():
-    fallback = FallbackChatProvider(
-        _ExplodingProvider(response=_response()), provider="openai", key_env="OPENAI_API_KEY"
-    )
-    resp = fallback.complete(
-        system="",
-        messages=[],
-        model="nope-9",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=1.0,
-        output_schema=None,
-        timeout_seconds=30.0,
-    )
-    assert "ValueError" in resp.raw_text
-    assert "nope-9" in resp.raw_text
-
-
-def test_fallback_degrades_on_first_call_even_with_tools_offered():
-    # No tool interaction has happened yet — a canned reply is safe and
-    # better UX than a dead turn.
-    fallback = FallbackChatProvider(
-        _ExplodingProvider(response=_response()), provider="openai", key_env="OPENAI_API_KEY"
-    )
-    resp = fallback.complete(
-        system="",
-        messages=[LLMMessage(role="user", content="hi")],
-        model="nope-9",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=1.0,
-        output_schema=None,
-        timeout_seconds=30.0,
-        tools=[{"name": "t", "description": "", "input_schema": {}}],
-    )
-    assert "ValueError" in resp.raw_text
-
-
-def test_fallback_reraises_mid_tool_loop():
-    # Prior tool activity exists — canned text would silently replace a
-    # grounded answer, so the error must surface.
-    fallback = FallbackChatProvider(
-        _ExplodingProvider(response=_response()), provider="openai", key_env="OPENAI_API_KEY"
-    )
-    import pytest
-
-    mid_loop_messages = [
-        LLMMessage(role="user", content="hi"),
-        LLMMessage(
-            role="assistant",
-            content="",
-            tool_calls=[ToolCall(id="c1", name="t", args={})],
-        ),
-        LLMMessage(role="tool", content="{}", tool_use_id="c1"),
-    ]
-    with pytest.raises(ValueError):
-        fallback.complete(
-            system="",
-            messages=mid_loop_messages,
-            model="nope-9",
-            max_tokens=100,
-            temperature=0.7,
-            top_p=1.0,
-            output_schema=None,
-            timeout_seconds=30.0,
-            tools=[{"name": "t", "description": "", "input_schema": {}}],
-        )
+def test_terminal_errors_are_no_longer_network_flakes():
+    """A revoked key or an invalid request is terminal, not retried with
+    backoff and blamed on the network (the pre-v1.3 failure mode)."""
+    assert classify_provider_exception(_FakeAuthError("bad key")) == "llm.auth_error"
+    assert classify_provider_exception(_FakeBadRequest("bad param")) == "llm.request_error"
+    assert classify_provider_exception(_FakeRateLimit("slow down")) == "llm.rate_limited"
+    # Unknown shapes keep the transient code (pre-v1.3 retry behavior).
+    assert classify_provider_exception(_FakeTimeout("timeout")) == "llm.network_error"

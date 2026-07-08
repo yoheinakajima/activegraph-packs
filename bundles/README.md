@@ -51,30 +51,6 @@ rt = build_email_assistant(
 )
 ```
 
-### VC Bundle (`bundles/vc_bundle.py`)
-
-Full venture capital assistant with diligence, founder tracking, and meeting ingestion.
-The most feature-complete bundle — reference implementation for cross-pack graph composition.
-
-**Packs:** *Email Assistant Bundle* + `diligence`* + `diligence_core_bridge` + `vc` + `meeting`
-
-> **Note on Diligence co-loading:** The bundled Diligence pack (v1.0.5) declares
-> `derived_from` which conflicts with Core Pack's same relation. When both are
-> loaded together, `build_vc_assistant()` gracefully skips Diligence and logs
-> a note. The `diligence_core_bridge` still works — it subscribes to events by
-> object type name, so you can inject Diligence-type objects (document, claim,
-> memo, risk) directly into the graph and the bridge will map them to Core
-> primitives (source, observation, artifact, evaluation).
-
-```python
-from bundles.vc_bundle import build_vc_assistant
-from packs.vc import VCSettings
-
-rt = build_vc_assistant(
-    vc_settings=VCSettings(owner_firm_name="Benchmark Capital"),
-)
-```
-
 ### Research Bundle (`bundles/research_bundle.py`)
 
 Research assistant for paper processing and hypothesis generation.
@@ -151,14 +127,14 @@ The bridge never modifies Diligence objects.
 | `entity` | ❌ | ✅ | ✅ | ❌ |
 | `diligence`* | ❌ | ❌ | ⚠️* | ❌ |
 | `diligence_core_bridge` | ❌ | ❌ | ✅ | ❌ |
-| `vc` | ❌ | ❌ | ✅ | ❌ |
 | `meeting` | ❌ | ❌ | ✅ | ❌ |
 | `research` | ❌ | ❌ | ❌ | ✅ |
 | `codebase` | add-on | add-on | add-on | ❌ |
 | `team_ops` | add-on | add-on | add-on | ❌ |
 
 *⚠️ Diligence v1.0.5 declares `derived_from` which conflicts with Core Pack.
-`build_vc_assistant()` handles this gracefully — the bridge works without Diligence co-loaded.
+The `diligence_core_bridge` works without Diligence co-loaded — it subscribes by
+object type name, so injected Diligence-type objects still map to Core primitives.
 
 ## Examples
 

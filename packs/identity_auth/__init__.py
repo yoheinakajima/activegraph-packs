@@ -64,7 +64,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], composes_with=["entity"]
 pack = Pack(
     name="identity_auth",
-    version="0.2.0",
+    version="0.2.1",
     description=(
         "Identity resolution and permission checking. "
         "Resolves every source to a Principal (owner/admin/collaborator/external/customer/unknown/blocked). "

@@ -82,7 +82,7 @@ def approve_response_fn(graph, candidate_id: str):
 def create_comm_message(
     graph,
     channel: str,
-    content: str,
+    content: str = "",
     sender_ref: str = "",
     direction: str = "inbound",
     thread_id: Optional[str] = None,
@@ -102,8 +102,8 @@ def create_comm_message(
 def create_response_candidate(
     graph,
     message_id: str,
-    channel: str,
-    content: str,
+    channel: str = "",
+    content: str = "",
     thread_id: Optional[str] = None,
     status: str = "proposed",
 ):

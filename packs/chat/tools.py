@@ -58,7 +58,7 @@ def get_session_turns_fn(graph, session_id: str) -> list:
 def submit_chat_input(
     graph,
     user_ref: str,
-    content: str,
+    content: str = "",
     session_id: Optional[str] = None,
     frame_id: Optional[str] = None,
 ):

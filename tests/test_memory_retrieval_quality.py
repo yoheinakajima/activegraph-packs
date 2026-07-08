@@ -129,16 +129,17 @@ def test_lexical_score_shape():
 class SynonymEmbedder(HashEmbedder):
     """HashEmbedder plus a tiny synonym fold, so a rephrased query lands on
     the same buckets as the stored sentence — a deterministic stand-in for
-    what a real semantic embedder does with paraphrases."""
+    what a real semantic embedder does with paraphrases. Implements the
+    runtime EmbeddingProvider signature, like its base."""
 
     SYNONYMS = {"shop": "bakery", "business": "bakery", "hue": "color"}
 
-    def embed(self, texts):
+    def embed(self, *, texts, model=""):
         folded = []
         for text in texts:
             words = [self.SYNONYMS.get(w, w) for w in text.lower().split()]
             folded.append(" ".join(words))
-        return super().embed(folded)
+        return super().embed(texts=folded, model=model)
 
 
 def test_embedding_recovers_rephrasing_lexical_misses():

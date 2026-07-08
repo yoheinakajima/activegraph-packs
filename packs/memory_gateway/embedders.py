@@ -33,19 +33,33 @@ import re
 import urllib.request
 from typing import Optional
 
+# SHIM RETIRED (v0.3.1, activegraph >=1.3): the runtime now defines the
+# EmbeddingProvider protocol (embed(*, texts, model) + default_model,
+# activegraph.llm.embedding) — the seam this pack's ad-hoc Embedder
+# protocol anticipated. Both embedders here now implement the RUNTIME
+# protocol; retrieval logic stays in this pack as agreed. The backend
+# accepts both the runtime shape and the legacy embed(texts) shape, since
+# the pack-level seam is public API (see backend._invoke_embedder).
+
 
 class HashEmbedder:
     """Deterministic hashing-trick embedder: token → sha1 bucket counts.
 
-    Not semantic — texts are close iff they share tokens — but deterministic,
+    Implements the runtime's EmbeddingProvider protocol. Not semantic —
+    texts are close iff they share tokens — but deterministic,
     dependency-free, and shaped exactly like a real embedder, which is what
     fixtures and tests need to exercise the vector path with no API key.
+    (The runtime ships its own HashEmbeddingProvider test double; this one
+    stays because the token-bucket shape gives tests meaningful overlap
+    semantics, e.g. the SynonymEmbedder subclass in the retrieval suite.)
     """
+
+    default_model = "hash-256"
 
     def __init__(self, dim: int = 256):
         self.dim = dim
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, *, texts: list[str], model: str = "") -> list[list[float]]:
         vectors = []
         for text in texts:
             vec = [0.0] * self.dim
@@ -59,12 +73,17 @@ class HashEmbedder:
 class OpenAIEmbedder:
     """OpenAI embeddings via stdlib HTTP — no ``openai`` package required.
 
+    Implements the runtime's EmbeddingProvider protocol
+    (``embed(*, texts, model)`` + ``default_model``), so it can also be
+    handed to ``Runtime(embedding_provider=...)`` where forks inherit it.
     Honors ``OPENAI_BASE_URL`` (proxies, Azure-style gateways) and reads the
     key from ``OPENAI_API_KEY`` unless one is passed explicitly. Errors
     propagate to the caller; the backend's ``_safe_embed`` already converts
     any embedder failure into a lexical fallback, so a flaky network can
     degrade recall quality but never break recall.
     """
+
+    default_model = "text-embedding-3-small"
 
     def __init__(
         self,
@@ -73,7 +92,7 @@ class OpenAIEmbedder:
         base_url: Optional[str] = None,
         timeout: float = 30.0,
     ):
-        self.model = model
+        self.default_model = model  # instance override, protocol-visible
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         base = base_url or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
         self.base_url = base.rstrip("/")
@@ -81,10 +100,11 @@ class OpenAIEmbedder:
         if not self.api_key:
             raise ValueError("OpenAIEmbedder requires an API key (OPENAI_API_KEY)")
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, *, texts: list[str], model: str = "") -> list[list[float]]:
         request = urllib.request.Request(
             f"{self.base_url}/embeddings",
-            data=json.dumps({"model": self.model, "input": texts}).encode(),
+            data=json.dumps({"model": model or self.default_model,
+                             "input": texts}).encode(),
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}",

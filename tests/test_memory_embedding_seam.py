@@ -156,3 +156,26 @@ def test_auto_configure_uses_factory_when_available():
     emb = auto_configure_embedder()
     assert emb is not None
     assert get_embedder() is emb
+
+
+# ------------------------------------------- runtime EmbeddingProvider seam
+
+
+def test_pack_embedders_satisfy_runtime_protocol():
+    """Seam adoption proof (activegraph >=1.3): this pack's embedders ARE
+    runtime EmbeddingProviders, and the runtime's own test double drops
+    straight into the pack's set_embedder seam."""
+    from activegraph.llm.embedding import EmbeddingProvider, HashEmbeddingProvider
+
+    from packs.memory_gateway.embedders import HashEmbedder
+
+    assert isinstance(HashEmbedder(), EmbeddingProvider)
+    vectors = HashEmbedder().embed(texts=["a b", "c"], model="")
+    assert len(vectors) == 2
+
+    # The runtime's provider, unmodified, behind the pack seam:
+    set_embedder(HashEmbeddingProvider())
+    backend = SqliteMemoryBackend(":memory:")
+    backend.store_item("m1", "dark mode preference", category="preference")
+    results = backend.retrieve_by_query("dark mode", top_k=5, min_score=0.0)
+    assert any(r["item_id"] == "m1" for r in results)

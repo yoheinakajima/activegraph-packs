@@ -197,9 +197,9 @@ def set_schedule_enabled_fn(graph, schedule_id: str, enabled: bool) -> dict[str,
 def create_schedule(
     graph,
     name: str,
-    kind: str,
-    payload_emit_type: str,
-    now: str,
+    kind: str = "",
+    payload_emit_type: str = "",
+    now: str = "",
     payload_data: Optional[dict] = None,
     every_seconds: Optional[int] = None,
     at_time: Optional[str] = None,
@@ -239,7 +239,7 @@ def list_due_schedules(graph, now: str) -> list[dict]:
     name="set_schedule_enabled",
     description="Enable or disable a schedule by id.",
 )
-def set_schedule_enabled(graph, schedule_id: str, enabled: bool) -> dict:
+def set_schedule_enabled(graph, schedule_id: str, enabled: bool = None) -> dict:
     """Registered tool wrapper — delegates to set_schedule_enabled_fn."""
     return set_schedule_enabled_fn(graph, schedule_id, enabled)
 

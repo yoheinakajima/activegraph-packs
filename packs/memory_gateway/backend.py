@@ -184,6 +184,19 @@ def auto_configure_embedder() -> Optional[Embedder]:
     return emb
 
 
+def _invoke_embedder(emb: Any, texts: list[str]) -> list[list[float]]:
+    """Call an embedder in whichever shape it implements.
+
+    Preferred: the runtime's EmbeddingProvider protocol
+    (``embed(*, texts, model)`` + ``default_model``, activegraph >=1.3).
+    Legacy: this pack's original ``embed(texts)`` seam, kept working
+    because it is public API that third-party embedders may implement."""
+    try:
+        return emb.embed(texts=texts, model=getattr(emb, "default_model", "") or "")
+    except TypeError:
+        return emb.embed(texts)
+
+
 def _safe_embed(texts: list[str]) -> Optional[list[list[float]]]:
     """Embed texts with the active embedder, swallowing any failure → None.
 
@@ -193,7 +206,7 @@ def _safe_embed(texts: list[str]) -> Optional[list[list[float]]]:
     if emb is None:
         return None
     try:
-        vectors = emb.embed(texts)
+        vectors = _invoke_embedder(emb, texts)
     except Exception:
         return None
     if not vectors or len(vectors) != len(texts):

@@ -455,7 +455,7 @@ def deny_capability_fn(
 def execute_capability(
     provider_name: str,
     capability_name: str,
-    input_data: dict[str, Any],
+    input_data: dict[str, Any] = None,
     call_id: str = "",
     frame_id: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -477,8 +477,11 @@ def execute_capability(
         "Returns display-ready dicts, oldest first."
     ),
 )
-def pending_approvals(graph) -> list[dict[str, Any]]:
-    """Registered tool wrapper — delegates to pending_approvals_fn."""
+def pending_approvals(graph, ctx=None) -> list[dict[str, Any]]:
+    """Registered tool wrapper — delegates to pending_approvals_fn.
+
+    Second parameter satisfies the runtime's (args, ctx) invocation
+    contract (v1.3 registration-time validation); it is unused."""
     return pending_approvals_fn(graph)
 
 
@@ -491,7 +494,7 @@ def pending_approvals(graph) -> list[dict[str, Any]]:
         "is verified against Identity/Auth when principals are registered."
     ),
 )
-def approve_capability(graph, call_id: str, approver_ref: str, note: str = "") -> dict[str, Any]:
+def approve_capability(graph, call_id: str, approver_ref: str = "", note: str = "") -> dict[str, Any]:
     """Registered tool wrapper — delegates to approve_capability_fn."""
     return approve_capability_fn(graph, call_id, approver_ref, note)
 
@@ -504,7 +507,7 @@ def approve_capability(graph, call_id: str, approver_ref: str, note: str = "") -
         "refusals are as auditable as grants."
     ),
 )
-def deny_capability(graph, call_id: str, approver_ref: str, reason: str = "") -> dict[str, Any]:
+def deny_capability(graph, call_id: str, approver_ref: str = "", reason: str = "") -> dict[str, Any]:
     """Registered tool wrapper — delegates to deny_capability_fn."""
     return deny_capability_fn(graph, call_id, approver_ref, reason)
 

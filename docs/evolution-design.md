@@ -1,9 +1,12 @@
 # Evolution Pack: design
 
-**Status: DESIGN. Implementation is blocked by the pack manifest spec
-(docs/manifest-spec.md, task #4) and the activegraph v1.3.0 pin bump
-(task #10, which delivers `promote`). Nothing in this document is code
-yet. The goal of this document is to make the implementation boring.**
+**Status: IMPLEMENTED (packs/evolution, activegraph >=1.4). This
+document is the design of record; implementation-forced decisions were
+folded back in the same commits that made them (per the house rule that
+an uncovered decision is a doc bug). The v1.4 runtime deliveries this
+consumes: promote with apply-time delta validation (CONTRACT v1.3 #4
+addendum 4c), `disable_pack`, and the manifest reference
+implementation.**
 
 The evolution pack lets the assistant author new packs for itself, trial
 them in isolation against its own history, and adopt them only after the
@@ -44,7 +47,7 @@ Consumption pattern for adoption, in order, inside one governed
 executor. This is the single canonical order; §3 stage 5 restates it
 with rationale:
 
-1. Recompute gates against the proposal's pinned content hash.
+1. Recompute gates against the proposal's pinned bundle hash.
 2. `parent_rt.promote(fork_rt, dry_run=True)`. A conflict here aborts
    the adoption BEFORE anything irreversible happens (there is no
    unload), and the proposal moves to `conflict` with the runtime's
@@ -60,6 +63,16 @@ with rationale:
 5. React to `promote.applied` (quiescent apply means nothing else
    fires) and record the `mod_promotion`.
 
+Apply-time delta validation (v1.4, CONTRACT v1.3 #4 addendum 4c) is
+why step 3 loads the candidate BEFORE the real promote: promote
+validates the full delta against the parent's REGISTERED schemas
+pre-mutation, so with the candidate loaded, a schema-violating delta
+raises `PackSchemaViolation` with nothing applied. Types no loaded pack
+declares keep v0.9 untyped semantics (validated-or-untyped, never
+silently unvalidated), so skipping the load does not fail, it just
+validates nothing. The order is what buys the validation. Acceptance
+fixture 13 proves both halves.
+
 ## 2. Graph vocabulary
 
 New object types (all with full schemas at implementation time):
@@ -67,19 +80,24 @@ New object types (all with full schemas at implementation time):
 | Type | Purpose | Key fields |
 |---|---|---|
 | `capability_gap` | Something the assistant could not do | `kind` (tool_failure, unhandled_intent, reflection, owner_request), `description`, `evidence_refs`, `status` |
-| `mod_proposal` | One candidate pack version | `gap_id`, `pack_name`, `pack_version`, `manifest` (per manifest-spec), `source_artifact_ids`, `content_hash`, `rationale`, `authored_by`, `status` |
+| `mod_proposal` | One candidate pack version | `gap_id`, `pack_name`, `pack_version`, `manifest` (per manifest-spec), `source_artifact_ids`, `bundle_hash`, `rationale`, `authored_by`, `status` |
 | `gate_result` | One gate's verdict on one proposal | `proposal_id`, `gate` (static, fixtures, in_sample, held_out), `verdict`, `details` |
 | `mod_trial` | One fork trial of one proposal | `proposal_id`, `fork_run_id`, `forked_at_event`, `eval_summary`, `diff_summary`, `failures`, `verdict` |
 | `mod_promotion` | A completed adoption | `proposal_id`, `trial_id`, `promote_marker_event_id`, `from_run`, `applied_counts`, `status` (active, disabled) |
 | `mod_rollback` | A disable/rollback action | `promotion_id`, `method`, `reason`, `at` |
 
 Proposal source files are stored as Core `artifact` objects, one per
-file, hashed individually; `mod_proposal.content_hash` is the manifest's
-content hash over the same file set MINUS `manifest.toml`, computed
-exactly per manifest-spec §4 (the canonicalization there is normative
-for all three places this hash gets recomputed). The hash is the pin:
-what the owner approved is byte-identical to what the executor loads,
-or the executor refuses.
+file, hashed individually; `mod_proposal.bundle_hash` is the BUNDLE
+hash: the manifest-spec §4 walk WITHOUT the manifest exclusion, so it
+covers every byte including `manifest.toml` itself. The manifest is the
+exact document the owner's decision surface renders (risk classes,
+`consumes`, `authored_by`), so a pin that excluded it would leave
+approve-then-swap of the manifest open. Computed by
+`activegraph.packs.manifest.compute_bundle_hash`, imported, never
+reimplemented; recomputed at gate time, at adoption time, and at every
+boot re-materialization. The hash is the pin: what the owner approved
+is byte-identical to what the executor loads, or the executor
+refuses.
 
 Proposal status machine:
 
@@ -114,8 +132,14 @@ Deterministic behaviors, no LLM required to notice a gap:
 
 ### Stage 1: drafting
 
-An `@llm_behavior` authors a candidate: a manifest (per manifest-spec)
-plus source files. Constraints on what may be authored:
+A candidate is a manifest (per manifest-spec) plus source files,
+submitted through `submit_proposal_fn`. The AUTHOR is pluggable behind
+that one entry point: the acceptance fixtures use a scripted generator,
+a chat tool can route an owner-drafted pack, and the LLM author (an
+`@llm_behavior` drafting from a `capability_gap`) is host wiring that
+arrives with the product chassis, because prompt design for code
+generation is a product concern, never gate machinery. Every author
+goes through the same gates. Constraints on what may be authored:
 
 - **Both manifest and source, always together.** The manifest declares
   the full capability surface; the static gate cross-checks source
@@ -143,8 +167,9 @@ Run in order, first failure stops the pipeline, every verdict is a
 
 1. **Manifest validity**: parses, schema-valid per manifest-spec,
    version sane, declared runtime range includes the pinned runtime.
-2. **Hash integrity**: manifest content hash matches the stored
-   artifacts.
+2. **Hash integrity**: the manifest's internal content hash matches
+   the stored source artifacts (manifest-spec §4), and the proposal's
+   BUNDLE hash matches the full artifact set including the manifest.
 3. **Declared-vs-actual**: AST walk of the source; every behavior,
    tool, object type, and capability registration found in code must be
    declared in the manifest, and vice versa.
@@ -251,14 +276,29 @@ verdicts, trial summary with failures and eval numbers, `rt.diff`
 counts, the fork run id, and any flags. Approval is
 `approve_capability` on the held call, nothing bespoke.
 
-### Stage 5: adoption (the governed executor)
+### Stage 5: adoption (the governed executor, two-phase)
 
-The `evolution.adopt_proposal` executor, running only after approval,
-in the §1 canonical order:
+Implementation-forced decision, folded back per the house rule: the
+gateway executes approved calls INSIDE a behavior frame
+(`call_executor`), and `promote` / `load_pack` / `disable_pack` mutate
+runtime registries and apply events, which must not happen mid-frame.
+So adoption is two-phase. Phase one is the governed part: the
+`evolution.adopt_proposal` executor (reachable only through an approved
+capability call) validates the proposal reference and writes an
+`adoption_ticket`. Phase two is the chassis part:
+`process_adoption_tickets(rt)`, called by the host between
+`run_until_idle` cycles (the demo server's runtime-executor loop, or a
+fixture), performs the canonical order below OUTSIDE any frame. The
+governance is unchanged: tickets are born only from approved calls,
+every phase-two step is graph state, and a crashed phase two leaves the
+ticket visible.
 
-1. Recompute the content hash of the stored artifacts and compare to
-   the approved proposal's hash. Mismatch aborts loudly. This closes
-   the approve-then-swap window: what loads is what was reviewed.
+Phase two, in the §1 canonical order:
+
+1. Recompute the BUNDLE hash of the stored artifacts (manifest
+   included, per §2) and compare to the approved proposal's pin.
+   Mismatch aborts loudly. This closes the approve-then-swap window
+   for code and manifest alike: what loads is what was reviewed.
 2. Re-run the static gates (cheap, deterministic; the world may have
    changed, e.g. gateway settings now auto-approve critical).
 3. `parent_rt.promote(fork_rt, dry_run=True)`. A conflict aborts NOW,
@@ -295,12 +335,14 @@ and that is sufficient by design.
   configurable window and raises a `capability_gap` of kind
   `reflection` if the failure rate is nonzero. Self-noticing, not
   self-healing: fixes are new proposals through the same loop.
-- **Disable (v1 rollback)**: `mod_promotion.status = disabled` via a
-  governed capability. The chassis is the enforcement point: adopted
-  packs load at boot from the graph's active `mod_promotion` records,
-  so a disabled pack stays down after restart. Live unload does not
-  exist in the runtime today; until it does, disable means "no new
-  loads plus restart to evict", stated plainly.
+- **Disable (v1 rollback, upgraded for v1.4)**: `mod_promotion.status
+  = disabled` via a governed capability, PLUS immediate deregistration:
+  `rt.disable_pack(name)` removes the pack's behaviors, tools, and
+  validators from the live registries, so nothing fires from the moment
+  of disable (code objects stay in memory, inert; true unload of
+  imported Python is not honestly achievable and the runtime does not
+  claim it). Boot-time exclusion via `mod_promotion` records remains
+  the durable half. Re-enable is a fresh adoption.
 - **State rollback**: promoted state is ordinary events; history is
   immutable. Full undo exists structurally (fork the parent at the
   event before the promote marker) but re-homing a fork as the new
@@ -376,9 +418,14 @@ approver verification is also T2's backstop, and it holds only because
 stage 4 refuses to register adoption in unverified-identity mode. That
 refusal is load-bearing for both threats and gets its own fixtures.
 
-**T4: approve-then-swap.** Source mutates between owner approval and
-executor load. Containment: content hash pinned on the proposal,
-recomputed at adoption and at every boot re-materialization.
+**T4: approve-then-swap.** Source OR MANIFEST mutates between owner
+approval and executor load. The manifest is an attack surface in its
+own right: swapping only `manifest.toml` relabels risk classes, empties
+`consumes`, or flips `authored_by` while the reviewed code stays
+untouched. Containment: the proposal pins the BUNDLE hash (§2), which
+covers every byte including the manifest, recomputed at gate time, at
+adoption, and at every boot re-materialization via the runtime's
+`compute_bundle_hash`.
 
 **T5: the trial itself as attack surface.** Candidate code runs inside
 the fork during stage 3, before any approval. This is the sharpest
@@ -398,9 +445,9 @@ shipped default.
 
 ## 7. Explicit open problems
 
-1. **No unload.** The runtime cannot evict a loaded pack. Disable is
-   boot-time enforcement plus restart. Runtime ask filed as a
-   fast-follow (`disable_pack` or behavior deregistration).
+1. **RESOLVED in v1.4: `disable_pack`.** Deregistration is live
+   (behaviors stop firing immediately); memory eviction still needs a
+   restart, which the runtime states plainly and this design accepts.
 2. **Trial process isolation.** Fork isolates state, not the process
    (T5). Runtime ask: optional subprocess execution for fork trials.
 3. **Replay conventions.** Per-channel input re-injection needs a
@@ -444,7 +491,8 @@ scripted generator, never a live LLM:
    `approve_capability` fails the reserved-namespace gate; forcing it
    into the registry anyway is refused by `as_llm_tool`.
 8. **Hash pin**: artifact bytes mutate after approval; the adoption
-   executor aborts; nothing loads.
+   executor aborts; nothing loads. Second case: ONLY `manifest.toml`
+   mutates (a relabeled risk class); the bundle-hash pin still aborts.
 9. **Restart persistence**: adopted pack reloads at boot from
    `mod_promotion`; a disabled one stays down; a hash-mismatched one is
    disabled loudly.
@@ -470,3 +518,11 @@ machinery, identity_auth approver verification, artifacts (core),
 schedule (reflection ticks). Runtime fast-follow asks, in priority
 order: subprocess trial isolation (T5), pack disable/unload (§7.1),
 compaction pinning for promoted-from forks (§7.5).
+
+Strict-replay note (CONTRACT v1.3 #4.4b): strict replay diverges on runs
+that combine `replay_strict=True` with behaviors subscribed to
+`promote.applied`, because marker-derived events are recorded but never
+re-derived. This pack IS that subscriber (`mod_promotion` recording), so
+its fixtures never assert under strict replay across a promoted block,
+and any host enabling strict replay on a store with adoptions must
+expect divergence there. Ordinary replay (projection) is unaffected.

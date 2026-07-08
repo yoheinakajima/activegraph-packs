@@ -7,19 +7,17 @@ Available bundles:
   ASSISTANT_BUNDLE        — core infrastructure for any interactive assistant
   MESSAGING_BUNDLE        — assistant + telegram + whatsapp transport adapters
   EMAIL_ASSISTANT_BUNDLE  — assistant + email + entity
-  VC_BUNDLE               — email assistant + diligence + bridge + vc + meeting
   RESEARCH_BUNDLE         — focused research pipeline (headless-friendly)
 
 Factory functions:
   build_assistant()         — returns Runtime with ASSISTANT_BUNDLE loaded
   build_messaging_assistant()— returns Runtime with MESSAGING_BUNDLE loaded
   build_email_assistant()   — returns Runtime with EMAIL_ASSISTANT_BUNDLE loaded
-  build_vc_assistant()      — returns Runtime with VC_BUNDLE loaded
   build_research_assistant()— returns Runtime with RESEARCH_BUNDLE loaded
 
 Usage:
-    from bundles import build_vc_assistant
-    rt = build_vc_assistant()
+    from bundles import build_assistant
+    rt = build_assistant()
     rt.run_goal("Diligence: Northwind Robotics")
 """
 
@@ -43,7 +41,6 @@ from bundles.email_assistant import (
     EMAIL_ASSISTANT_PACK_LIST,
     build_email_assistant,
 )
-from bundles.vc_bundle import VC_BUNDLE, VC_PACK_LIST, build_vc_assistant
 from bundles.research_bundle import RESEARCH_BUNDLE, RESEARCH_PACK_LIST, build_research_assistant
 
 __all__ = [
@@ -59,9 +56,6 @@ __all__ = [
     "EMAIL_ASSISTANT_BUNDLE",
     "EMAIL_ASSISTANT_PACK_LIST",
     "build_email_assistant",
-    "VC_BUNDLE",
-    "VC_PACK_LIST",
-    "build_vc_assistant",
     "RESEARCH_BUNDLE",
     "RESEARCH_PACK_LIST",
     "build_research_assistant",

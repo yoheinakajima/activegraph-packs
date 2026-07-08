@@ -1,5 +1,20 @@
 # Memory Gateway Pack Changelog
 
+## v0.4.0 — Runtime EmbeddingProvider seam adoption (2026-07-08)
+
+### Changed
+- `OpenAIEmbedder` and `HashEmbedder` now implement the runtime's
+  `EmbeddingProvider` protocol (`embed(*, texts, model)` +
+  `default_model`, activegraph >=1.3), so they drop into
+  `Runtime(embedding_provider=...)` unchanged. BREAKING for subclasses:
+  `embed` is keyword-only now.
+- The backend seam accepts BOTH shapes: runtime providers and the
+  legacy `embed(texts)` Embedder protocol (still public API), via
+  `backend._invoke_embedder`. The runtime's own `HashEmbeddingProvider`
+  works behind `set_embedder()` unmodified (proof test in
+  `tests/test_memory_embedding_seam.py`). Retrieval logic stays in this
+  pack, as agreed with the runtime.
+
 ## v0.3.0 — Retrieval quality + pluggable backends (2026-07-08)
 
 Fixes the July 2026 agent-readiness report §5.1 (verified recall failures:

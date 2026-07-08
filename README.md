@@ -9,9 +9,9 @@ on the runtime compose from, plus the conventions that keep a multi-pack
 assistant coherent — the layering model, the coordination style, the
 fixture discipline, and the pack format itself
 ([docs/manifest-spec.md](docs/manifest-spec.md), draft). Specialized
-domain packs (the `vc` pack first) are being extracted to their own
-repos, establishing the pattern for third-party pack libraries; the
-bundles and demo server here are the reference assistant chassis, and
+domain packs belong in their own repos once the manifest's multi-repo
+loading lands, establishing the pattern for third-party pack libraries;
+the bundles and demo server here are the reference assistant chassis, and
 products built on this library ship their own. [CONTRIBUTING.md](CONTRIBUTING.md)
 is the canonical pack-author guide — the same bar every pack in this
 library meets, human-authored or otherwise.
@@ -41,8 +41,8 @@ pip install -e ".[dev]"          # activegraph + all packs (editable install)
 python packs/demo_server.py
 
 # Option B: build a runtime in your own code
-python -c "from bundles import build_vc_assistant; \
-  build_vc_assistant().run_goal('Diligence: Northwind Robotics')"
+python -c "from bundles import build_assistant; \
+  build_assistant().run_goal('Summarize what you can do')"
 ```
 
 ### Path 2 — Run the full demo locally (UI + API + runtime)
@@ -105,6 +105,7 @@ environment:
 | `ACTIVEGRAPH_MCP_TOKENS` | Inbound MCP auth: `token:identifier` pairs — other agents can chat, search memory, or call exposed skills over `POST /mcp` (see [docs/mcp.md](docs/mcp.md)) |
 | `ACTIVEGRAPH_MCP_SERVERS` | Outbound MCP servers (JSON) — their tools become governed capabilities, approval-required by default |
 | `ACTIVEGRAPH_MCP_EXPOSE` | Capability keys offered to inbound MCP callers (default: the chat allow-list) |
+| `ACTIVEGRAPH_EVOLUTION` | `1` enables the evolution pack (self-modification loop). Requires `ACTIVEGRAPH_OWNER`: adoption refuses to register without a verified approver |
 | `ACTIVEGRAPH_TOKEN_DB` | Managed OAuth token store (default `data/activegraph_tokens.sqlite`) — connect accounts via `POST /secrets/oauth/start` + `/poll`; tokens never enter the graph |
 
 Chat is agentic out of the box (`web.fetch_url` +
@@ -171,10 +172,10 @@ Full explanation, dependency graph, and the invariants that hold it together:
 | `chat` | Chat adapter — the conversation engine (sessions, memory, reply gating, agentic responses) every interactive channel reuses |
 | `telegram` | Telegram transport adapter — inbound updates → chat_input; outbound replies as policy-checked gateway sends |
 | `whatsapp` | WhatsApp Cloud API transport adapter — the structural mirror of telegram |
+| `evolution` | Self-modification with provenance: agent-authored packs behind static gates, fork trials, bundle-hash pins, verified owner approval, and quiescent promote adoption. Ships disabled |
 | `mcp` | Bidirectional MCP: outbound servers' tools become governed capabilities; inbound, the assistant is an MCP server other agents can use (token auth, role-scoped exposure, full audit) |
 | `email` | Email adapter — threading, deduplication, draft formatting, approval-gated outbound sends |
 | `research` | Knowledge tracking for academic and applied research: papers, claims, hypotheses |
-| `vc` | Venture capital deal flow: founder outreach, company profiling, memo drafting, followup tracking |
 | `codebase` | Engineering workflow tracking: repos, issues, PRs, architecture decisions, dependency auditing |
 | `team_ops` | Project management layer extending Core tasks with assignments, milestones, workload estimation |
 | `meeting` | Meeting processing: decision extraction, action item tracking, automated summarization |
@@ -188,16 +189,15 @@ Plus `packs/bridges/` — a Diligence-Core bridge that maps the bundled ActiveGr
 | `assistant` | core, tool_gateway, secrets, memory_gateway, agent_profile, identity_auth, communication, schedule, chat |
 | `messaging_assistant` | assistant bundle + telegram, whatsapp |
 | `email_assistant` | assistant bundle + email, entity |
-| `vc_bundle` | email_assistant bundle + diligence_core_bridge, vc, meeting |
 | `research_bundle` | core, tool_gateway, memory_gateway, research |
 
 A bundle is a preset list of packs with a factory function — not a new pack with its own ontology.
 
 ```python
-from bundles import build_vc_assistant
+from bundles import build_email_assistant
 
-rt = build_vc_assistant()
-rt.run_goal("Diligence: Northwind Robotics")
+rt = build_email_assistant()
+rt.run_goal("Triage today's inbox")
 ```
 
 ---

@@ -56,9 +56,6 @@ jobs:
       - name: research fixtures
         run: python packs/research/fixtures/run_fixtures.py
 
-      - name: vc fixtures
-        run: python packs/vc/fixtures/run_fixtures.py
-
       - name: codebase fixtures
         run: python packs/codebase/fixtures/run_fixtures.py
 
@@ -82,6 +79,9 @@ jobs:
 
       - name: mcp fixtures
         run: python packs/mcp/fixtures/run_fixtures.py
+
+      - name: evolution fixtures
+        run: python packs/evolution/fixtures/run_fixtures.py
 
       # ── Cross-pack integration suites ───────────────────────────────────────
 

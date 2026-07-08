@@ -113,7 +113,7 @@ def add_action_item_fn(
 
 @tool(name="ingest_transcript", description="Ingest a meeting transcript to extract decisions and action items.")
 def ingest_transcript(
-    graph: Graph, title: str, content: str, date: str | None = None,
+    graph: Graph, title: str, content: str = "", date: str | None = None,
     participants: list[str] | None = None, platform: str = "other",
     duration_minutes: int | None = None,
 ) -> object:
@@ -131,7 +131,7 @@ def create_meeting(
 
 @tool(name="add_decision", description="Add a decision to an existing meeting.")
 def add_decision(
-    graph: Graph, meeting_id: str, text: str,
+    graph: Graph, meeting_id: str, text: str = "",
     decided_by: list[str] | None = None, confidence: float = 0.85,
 ) -> object:
     return add_decision_fn(graph, meeting_id, text, decided_by, confidence)
@@ -139,7 +139,7 @@ def add_decision(
 
 @tool(name="add_action_item", description="Add an action item to a meeting and create a Core task.")
 def add_action_item(
-    graph: Graph, meeting_id: str, text: str,
+    graph: Graph, meeting_id: str, text: str = "",
     owner_ref: str | None = None, due_at: str | None = None, create_task: bool = True,
 ) -> object:
     return add_action_item_fn(graph, meeting_id, text, owner_ref, due_at, create_task)
