@@ -176,7 +176,8 @@ def _build_runtime():
     being re-seeded from scratch.
     """
     from activegraph import Runtime
-    from bundles import build_assistant, load_assistant_packs
+    from bundles import build_assistant, load_assistant_packs, seed_owner_principals
+    from packs.identity_auth import IdentitySettings
     from packs.identity_auth.behaviors import rebuild_principal_registry
     from packs.memory_gateway import MemoryGatewaySettings
     from packs.chat import ChatSettings
@@ -196,9 +197,16 @@ def _build_runtime():
     # Gateway. In mock mode the provider never requests tools, so this is
     # inert without an API key.
     _register_demo_capabilities()
+    # Reply gating (identity on the respond path): ACTIVEGRAPH_OWNER is a
+    # comma-separated list of owner identifiers (emails/handles); the seeded
+    # principals make the fail-closed 'known' / 'owner_only' policies usable
+    # from the first message. Default policy stays 'open' for the demo.
+    owner_refs = [s.strip() for s in os.environ.get("ACTIVEGRAPH_OWNER", "").split(",") if s.strip()]
+    identity_settings = IdentitySettings(owner_identifiers=owner_refs)
     chat_settings = ChatSettings(
         memory_backend_url=_memory_db_path(),
         tool_allow_list=["web.fetch_url"],
+        reply_policy=os.environ.get("ACTIVEGRAPH_REPLY_POLICY", "open"),
     )
     resuming = _store_has_run(db)
 
@@ -218,6 +226,7 @@ def _build_runtime():
             rt,
             memory_gateway_settings=mem_settings,
             chat_settings=chat_settings,
+            identity_settings=identity_settings,
         )
         # Replay rebuilds graph objects without firing behaviors, so the
         # in-memory principal dedup registry is empty — repopulate it from
@@ -233,6 +242,10 @@ def _build_runtime():
         # Stores created before self-knowledge existed have no profile; seed one
         # now (idempotent — skips if the resumed store already has a profile).
         seed_default_profile(rt)
+        # Owner principals: idempotent (register_principal_fn dedups against
+        # the just-rebuilt registry), so newly configured owners get seeded
+        # and already-seeded ones are left alone.
+        seed_owner_principals(rt, identity_settings=identity_settings)
         print(f"[demo_server] Resumed run {rt.run_id} from {db} "
               f"({n} principals re-indexed)", flush=True)
     else:
@@ -240,6 +253,7 @@ def _build_runtime():
             persist_to=db,
             memory_gateway_settings=mem_settings,
             chat_settings=chat_settings,
+            identity_settings=identity_settings,
             llm_provider=provider,
         )
         print(f"[demo_server] Fresh run {rt.run_id} persisting to {db}", flush=True)

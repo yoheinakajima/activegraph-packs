@@ -82,6 +82,30 @@ def rebuild_principal_registry(graph) -> int:
     return count
 
 
+def resolve_known_principal(graph, sender_ref: str) -> Optional[dict]:
+    """Behavior-safe principal lookup by sender_ref.
+
+    Uses the in-process dedup registry + graph.get_object (never a
+    graph.objects() scan, so it is safe inside behavior context). Returns
+    ``{"id": ..., **principal.data}`` for a sender that has a Principal, or
+    None for one never seen (call rebuild_principal_registry after a resume,
+    as the bundles and demo server already do).
+
+    This is the lookup channel adapters use for reply gating and
+    audience-aware context — see packs/communication/gating.py.
+    """
+    pid = _PRINCIPAL_REGISTRY.get(_normalize_identifier(sender_ref))
+    if not pid:
+        return None
+    try:
+        obj = graph.get_object(pid)
+    except Exception:
+        return None
+    if obj is None:
+        return None
+    return {"id": pid, **(obj.data or {})}
+
+
 # ------------------------------------------------------------------ helpers
 
 

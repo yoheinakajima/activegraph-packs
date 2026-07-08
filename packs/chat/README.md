@@ -165,6 +165,8 @@ ChatSettings(
     llm_provider="mock",           # "mock" | "openai" | "anthropic"
     model="gpt-4o-mini",           # Ignored for mock
     system_prompt_override=None,   # Override AgentProfile system prompt
+    reply_policy="open",           # "open" | "known" | "owner_only"
+    deflection_message="...",      # Bounded template for gated senders
     tool_allow_list=[],            # Gateway capability keys the LLM may call
     max_tool_turns=4,              # Cap on LLM↔tool round-trips per turn
     max_context_messages=10,       # Prior turns in LLM context
@@ -173,6 +175,32 @@ ChatSettings(
     auto_approve_responses=True,   # Auto-approve chat responses (no owner gate)
 )
 ```
+
+## Reply gating (identity on the respond path)
+
+Who gets a full conversational reply is a policy, not an accident of
+reachability. `chat_ingester` decides via
+`communication.gating.decide_reply` and stamps the verdict on the
+comm_message (`metadata.reply_gate`); the two responders then split
+declaratively:
+
+```
+comm_message [reply_gate=open]     → chat_llm_responder      (full LLM reply)
+comm_message [reply_gate=deflect]  → chat_deflection_responder (bounded template, no LLM)
+```
+
+A gated sender never triggers the model call — and never has their message
+memorized or context assembled. Policies: `open` (default; everyone except
+blocked principals), `known` (owner/admin/collaborator), `owner_only`
+(owner/admin). Restrictive policies are **fail-closed**: seed the owner
+first (`bundles.seed_owner_principals`, or
+`identity_auth.register_principal`). The verdict and reason are auditable
+on the message and on the deflection candidate (`metadata.gated`).
+
+The profile context is audience-aware on the same information: the sender's
+resolved role shapes the AgentProfile view (a stranger gets the
+external-shaped view with the mission suppressed), instead of the old
+owner-framed view for everyone.
 
 ## Agentic chat (tools in the reply loop)
 

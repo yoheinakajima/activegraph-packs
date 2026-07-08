@@ -22,6 +22,23 @@
 - Tests: `tests/test_provider_compat.py`, `tests/test_agentic_chat.py`
   (scripted-provider end-to-end: tool call → gateway → grounded reply).
 
+- **Reply gating — identity on the respond path.**
+  `ChatSettings.reply_policy` ('open' | 'known' | 'owner_only', default
+  'open') is decided at ingestion via `communication.gating.decide_reply`
+  and stamped on the comm_message (`metadata.reply_gate` / `reply_gate_reason`
+  / `sender_role`). `chat_llm_responder` matches `reply_gate == "open"`
+  declaratively in its `where`, so gated senders never trigger the LLM call;
+  the new `chat_deflection_responder` serves them
+  `ChatSettings.deflection_message` (bounded template, `metadata.gated=true`).
+  Restrictive policies are fail-closed — seed the owner via
+  `bundles.seed_owner_principals`. Blocked principals are deflected under
+  every policy. Context/memory behaviors skip deflected messages.
+- **Audience-aware profile.** `chat_profile_context` no longer hardcodes
+  `audience_role="owner"` for every requester — the sender's resolved role
+  (stamped at ingestion) shapes the profile view, so strangers get the
+  external-shaped view (mission suppressed) instead of the owner-framed one.
+- Tests: `tests/test_reply_gating.py`.
+
 ### Changed
 - `FallbackChatProvider` now names the actual underlying error in its
   fallback reply (a 400 no longer reads like a network problem), degrades

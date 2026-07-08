@@ -121,3 +121,13 @@ rt.run_until_idle()
 - `principal_resolver` always creates a new Principal per source (no dedup across messages from the same sender — Entity Pack handles dedup via `entity_id` link)
 - OAuth/OIDC auth flows are out of scope — Identity Pack handles role assignment, not authentication infrastructure
 - `permission_checker` only fires on actions carrying `principal_id` in metadata
+
+## Explicit registration & adapter lookup (v0.2)
+
+- `register_principal(graph, sender_ref, role, name=None, channel=...)` —
+  create or promote a Principal with an explicit role. Idempotent by
+  normalized ref; keeps the dedup registry in sync. Use it to seed the owner
+  (`bundles.seed_owner_principals`) or promote a contact to collaborator.
+- `resolve_known_principal(graph, sender_ref)` — behavior-safe lookup
+  (registry + get_object). Channel adapters use it for reply gating and
+  audience-aware profile context (`packs/communication/gating.py`).

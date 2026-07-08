@@ -102,6 +102,38 @@ def _chat_pack_for(
     return build_chat_pack(llm_tools=tools, max_tool_turns=cs.max_tool_turns)
 
 
+def seed_owner_principals(
+    rt: Runtime,
+    *,
+    identity_settings: IdentitySettings | None = None,
+) -> list[str]:
+    """Seed Principal objects for the configured owner identifiers.
+
+    Restrictive reply policies (ChatSettings.reply_policy = 'known' /
+    'owner_only') are fail-closed: an unrecognized sender is deflected. So a
+    deployment that restricts replies must make the owner recognizable
+    BEFORE the first message arrives — this creates an owner Principal per
+    identifier in IdentitySettings.owner_identifiers.
+
+    Idempotent (register_principal_fn dedups by normalized ref, and a
+    resumed store replays existing principals). Returns the principal ids.
+    """
+    settings = identity_settings or IdentitySettings()
+    if not settings.owner_identifiers:
+        return []
+    try:
+        from packs.identity_auth.tools import register_principal_fn
+    except Exception:
+        return []
+
+    ids = []
+    for ref in settings.owner_identifiers:
+        out = register_principal_fn(rt.graph, ref, role="owner", channel="any")
+        ids.append(out["principal_id"])
+    rt.run_until_idle()
+    return ids
+
+
 def seed_default_profile(
     rt: Runtime,
     *,
@@ -215,6 +247,10 @@ def build_assistant(
     # "who are you?" with no setup. Opt out with seed_profile=False.
     if seed_profile:
         seed_default_profile(rt, agent_profile_settings=agent_profile_settings)
+
+    # Make the configured owner recognizable before their first message —
+    # required for the fail-closed reply policies to let the owner through.
+    seed_owner_principals(rt, identity_settings=identity_settings)
 
     return rt
 

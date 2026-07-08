@@ -140,3 +140,14 @@ The router only PROPOSES (`capability_call`, status=proposed, linked
 hold, credential injection, and audit govern everything after. With no
 routes configured (default) or without the Tool Gateway loaded, intents
 stay informational — no coupling.
+
+## Reply gating helper
+
+`gating.decide_reply(graph, sender_ref, reply_policy=...)` is the single
+policy decision every channel adapter shares: `"open"` (all but blocked),
+`"known"` (owner/admin/collaborator), `"owner_only"` (owner/admin). It is
+behavior-safe (identity registry + get_object; no graph scans) and
+fail-closed — an unverifiable sender under a restrictive policy is
+deflected, with the reason in the returned dict. Adapters stamp the verdict
+onto the `comm_message` they create so responders can match it in `where`.
+See the Chat Pack for the reference wiring.

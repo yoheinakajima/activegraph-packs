@@ -275,17 +275,29 @@ def run_self_knowledge_fixture() -> dict:
     from packs.agent_profile import pack as ap_pack, AgentProfileSettings
     from packs.agent_profile.behaviors import clear_profile_registry
     from packs.agent_profile.tools import register_profile_fn
+    from packs.identity_auth import pack as identity_pack, IdentitySettings
+    from packs.identity_auth.behaviors import clear_principal_registry
+    from packs.identity_auth.tools import register_principal_fn
 
     def _runtime(chat_settings: ChatSettings):
         clear_thread_registry()
         clear_session_registry()
         clear_profile_registry()
+        clear_principal_registry()
         g = Graph()
         rt = Runtime(g, llm_provider=MockChatProvider())
         rt.load_pack(core_pack, settings=CoreSettings())
         rt.load_pack(ap_pack, settings=AgentProfileSettings())
+        # Identity determines the profile AUDIENCE: the mission is owner-facing,
+        # so the owner must be a registered principal (v0.3 — chat no longer
+        # assumes every requester is the owner).
+        rt.load_pack(identity_pack, settings=IdentitySettings(
+            owner_identifiers=["alice@example.com"],
+        ))
         rt.load_pack(comm_pack, settings=CommunicationSettings())
         rt.load_pack(chat_pack, settings=chat_settings)
+        register_principal_fn(g, "alice@example.com", role="owner", name="Alice")
+        rt.run_until_idle()
         return g, rt
 
     # ── 1. Profile present + include_profile (default) → identity injected ──

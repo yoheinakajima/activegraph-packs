@@ -75,6 +75,56 @@ def check_principal_permission_fn(
         return {"allowed": False, "role": "unknown", "reason": f"error: {exc}"}
 
 
+def register_principal_fn(
+    graph: Any,
+    sender_ref: str,
+    role: str,
+    name: Optional[str] = None,
+    channel: str = "unknown",
+) -> dict:
+    """Create or promote a Principal for *sender_ref* with an explicit role.
+
+    The explicit counterpart to the automatic resolvers (which assign
+    default_external_role to unknown senders): use it to seed the owner at
+    build time or to promote a contact to collaborator/admin. Idempotent —
+    an existing principal for the same normalized ref is patched, not
+    duplicated, and the in-process dedup registry is kept in sync so the
+    resolvers and reply gating see the change immediately.
+
+    Returns {"principal_id": ..., "role": ..., "created": bool}.
+    """
+    from datetime import datetime, timezone
+
+    from .behaviors import _PRINCIPAL_REGISTRY, _normalize_identifier
+
+    now = datetime.now(timezone.utc).isoformat()
+    norm = _normalize_identifier(sender_ref)
+
+    existing_id = _PRINCIPAL_REGISTRY.get(norm)
+    if existing_id:
+        try:
+            graph.patch_object(existing_id, {"role": role, "last_seen_at": now})
+        except Exception:
+            pass
+        return {"principal_id": existing_id, "role": role, "created": False}
+
+    identifiers: dict[str, str] = {"ref": sender_ref}
+    if "@" in sender_ref:
+        identifiers["email"] = sender_ref
+    principal = graph.add_object("principal", {
+        "name": name or sender_ref,
+        "role": role,
+        "auth_confidence": 1.0,   # explicit registration, not inference
+        "identifiers": identifiers,
+        "channel": channel,
+        "last_seen_at": now,
+        "seen_count": 1,
+        "metadata": {"registered_by": "register_principal"},
+    })
+    _PRINCIPAL_REGISTRY[norm] = principal.id
+    return {"principal_id": principal.id, "role": role, "created": True}
+
+
 # ------------------------------------------------------------------ tool wrappers
 
 
@@ -107,4 +157,23 @@ def check_principal_permission(
     return check_principal_permission_fn(graph, principal_id, action, risk_class)
 
 
-TOOLS = [lookup_principal, check_principal_permission]
+@tool(
+    name="register_principal",
+    description=(
+        "Create or promote a Principal with an explicit role (e.g. seed the "
+        "owner, promote a contact to collaborator). Idempotent by normalized "
+        "sender_ref. Returns {principal_id, role, created}."
+    ),
+)
+def register_principal(
+    graph: Any,
+    sender_ref: str,
+    role: str,
+    name: Optional[str] = None,
+    channel: str = "unknown",
+) -> dict:
+    """Registered tool wrapper — delegates to register_principal_fn."""
+    return register_principal_fn(graph, sender_ref, role, name, channel)
+
+
+TOOLS = [lookup_principal, check_principal_permission, register_principal]

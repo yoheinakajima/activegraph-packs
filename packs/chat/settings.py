@@ -32,6 +32,32 @@ class ChatSettings(BaseModel):
             "Useful for testing. Default: None (use AgentProfile context)."
         ),
     )
+    reply_policy: str = Field(
+        default="open",
+        description=(
+            "Who receives full conversational replies: 'open' (everyone — the "
+            "demo default), 'known' (owner/admin/collaborator principals), "
+            "'owner_only' (owner/admin). Decided at ingestion via "
+            "communication.gating.decide_reply and stamped on the comm_message "
+            "(metadata.reply_gate), so gated senders never trigger the LLM call "
+            "at all — they get the bounded deflection_message instead, and the "
+            "verdict is auditable on the message. Restrictive policies are "
+            "fail-closed: seed the owner principal first (see "
+            "bundles.seed_owner_principals). Blocked principals are deflected "
+            "under every policy, including 'open'."
+        ),
+    )
+    deflection_message: str = Field(
+        default=(
+            "Hi — I'm a personal assistant and I only chat with my owner and "
+            "their approved contacts. Your message was received and logged."
+        ),
+        description=(
+            "The bounded template reply a gated sender receives. Deflection is "
+            "a decision, not silence: strangers get a polite, non-conversational "
+            "answer and the gate verdict is recorded in the graph."
+        ),
+    )
     tool_allow_list: list[str] = Field(
         default_factory=list,
         description=(

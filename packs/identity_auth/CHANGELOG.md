@@ -1,5 +1,18 @@
 # Identity/Auth Pack Changelog
 
+## v0.2.0 — Explicit registration + behavior-safe lookup (2026-07-08)
+
+### Added
+- `register_principal` / `register_principal_fn` — create or promote a
+  Principal with an explicit role (seed the owner, promote a contact to
+  collaborator). Idempotent by normalized sender_ref; keeps the in-process
+  dedup registry in sync so resolvers and reply gating see the change
+  immediately. The explicit counterpart to the automatic resolvers.
+- `resolve_known_principal(graph, sender_ref)` — behavior-safe principal
+  lookup (registry + get_object; no graph scans). This is the lookup channel
+  adapters use for reply gating and audience-aware context
+  (packs/communication/gating.py).
+
 ## v0.1.1 — Relation integrity fix (2026-07-08)
 
 ### Fixed

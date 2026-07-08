@@ -16,6 +16,13 @@
 - Fixture: `run_intent_router_fixture` (routed 'request' executes through
   the gateway; unrouted 'query' proposes nothing).
 
+- `gating.py` — `decide_reply(graph, sender_ref, reply_policy=...)`: the one
+  reply-gating decision shared by every channel adapter ('open' | 'known' |
+  'owner_only'). Behavior-safe (identity registry + get_object, no scans),
+  fail-closed for unverifiable senders, and 'blocked' principals are denied
+  even under 'open'. Adapters stamp the verdict on the comm_message at
+  ingestion so responders can match it declaratively in `where`.
+
 ### Design decisions
 - Degrades gracefully: without the Tool Gateway Pack the `capability_call`
   type does not exist and the router no-ops — intents stay informational.

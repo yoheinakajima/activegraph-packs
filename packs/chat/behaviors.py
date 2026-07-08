@@ -157,6 +157,21 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
     # comm_thread (keyed "chat::<session_id>" by thread_tracker).
     thread_id_hint = session_id
 
+    # ── Reply gate: identity on the respond path ──────────────────────────
+    # Decided HERE (at ingestion) and stamped onto the comm_message, because
+    # chat_llm_responder matches the verdict declaratively in its `where`
+    # clause — that is what lets a gated sender skip the (paid) LLM call
+    # entirely. Fail-closed under restrictive policies; blocked senders are
+    # deflected even under "open". See packs/communication/gating.py.
+    try:
+        from packs.communication.gating import decide_reply
+
+        gate = decide_reply(graph, user_ref, reply_policy=settings.reply_policy)
+    except Exception:
+        # Communication pack is a hard requirement of chat, so this only
+        # trips on truly broken installs — behave like the open default.
+        gate = {"gate": "open", "role": None, "reason": "gating unavailable"}
+
     # ── 2. Create Core Source ──────────────────────────────────────────────
     try:
         source = graph.add_object("source", {
@@ -187,6 +202,9 @@ def chat_ingester(event, graph, ctx, *, settings: ChatSettings):
             "metadata": {
                 "thread_id_hint": thread_id_hint,
                 "session_id": session_id,
+                "reply_gate": gate["gate"],
+                "reply_gate_reason": gate["reason"],
+                "sender_role": gate["role"],
             },
         })
         comm_msg_id = comm_msg.id
@@ -296,7 +314,10 @@ def chat_context_assembler(event, graph, ctx, *, settings: ChatSettings):
     obj = event.payload.get("object", {})
     msg_id = obj.get("id")
     msg_data = obj.get("data", {})
-    session_id = (msg_data.get("metadata") or {}).get("session_id")
+    meta = msg_data.get("metadata") or {}
+    if meta.get("reply_gate") == "deflect":
+        return  # Gated sender: template reply only — no context assembly.
+    session_id = meta.get("session_id")
     frame_id = msg_data.get("frame_id")
     if not session_id:
         return
@@ -407,6 +428,8 @@ def chat_profile_context(event, graph, ctx, *, settings: ChatSettings):
     frame_id = msg_data.get("frame_id")
     if not msg_id:
         return
+    if (msg_data.get("metadata") or {}).get("reply_gate") == "deflect":
+        return  # Gated sender: template reply only — no profile assembly.
 
     # ── Escape hatch: literal system-prompt override (bypasses the profile) ──
     # Checked BEFORE the include_profile gate: an explicitly configured override
@@ -440,12 +463,20 @@ def chat_profile_context(event, graph, ctx, *, settings: ChatSettings):
     except Exception:
         return  # agent_profile not installed/loaded → run identity-free.
 
-    # Chat is the owner's own console, so assemble the owner-facing view.
+    # ── Audience-aware assembly ──────────────────────────────────────────────
+    # The profile view is shaped by WHO is asking: agent_profile suppresses the
+    # mission and filters instructions/goals for external audiences. The
+    # sender's role was resolved at ingestion (identity registry) and stamped
+    # on the message by chat_ingester; unresolved senders assemble as
+    # "unknown" — the external-shaped view — never as owner. (Chat used to
+    # hardcode audience_role="owner" for every requester, which handed
+    # strangers the owner-framed identity.)
+    audience_role = (msg_data.get("metadata") or {}).get("sender_role") or "unknown"
     view_model = assemble_profile_view(
         graph,
         settings=AgentProfileSettings(),
         channel="chat",
-        audience_role="owner",
+        audience_role=audience_role,
         frame_id=frame_id,
     )
     if view_model is None:
@@ -556,6 +587,8 @@ def chat_memory_proposer(event, graph, ctx, *, settings: ChatSettings):
     obj = event.payload.get("object", {})
     msg_id = obj.get("id")
     data = obj.get("data", {})
+    if (data.get("metadata") or {}).get("reply_gate") == "deflect":
+        return  # Don't memorize senders the assistant won't converse with.
     content = (data.get("content") or "").strip()
     frame_id = data.get("frame_id")
     if not msg_id or len(content) < 6:
@@ -630,6 +663,8 @@ def chat_memory_context(event, graph, ctx, *, settings: ChatSettings):
     obj = event.payload.get("object", {})
     msg_id = obj.get("id")
     data = obj.get("data", {})
+    if (data.get("metadata") or {}).get("reply_gate") == "deflect":
+        return  # Gated sender: no LLM call happens, so no recall needed.
     query = (data.get("content") or "").strip()
     frame_id = data.get("frame_id")
     if not msg_id or not query:
@@ -728,6 +763,10 @@ def make_llm_responder(tools: Optional[list] = None, max_tool_turns: int = 4):
             "object.type": "comm_message",
             "object.data.channel": "chat",
             "object.data.direction": "inbound",
+            # The reply gate stamped by chat_ingester. Gated senders never
+            # reach this behavior — and therefore never trigger the LLM call;
+            # chat_deflection_responder serves them a bounded template.
+            "object.data.metadata.reply_gate": "open",
         },
         description=(
             _RESPONDER_DESCRIPTION + (_AGENTIC_DESCRIPTION_SUFFIX if tools else "")
@@ -809,6 +848,55 @@ chat_llm_responder = make_llm_responder()
 
 
 @behavior(
+    name="chat_deflection_responder",
+    on=["object.created"],
+    where={
+        "object.type": "comm_message",
+        "object.data.channel": "chat",
+        "object.data.direction": "inbound",
+        "object.data.metadata.reply_gate": "deflect",
+    },
+    creates=["comm_response_candidate"],
+)
+def chat_deflection_responder(event, graph, ctx, *, settings: ChatSettings):
+    """Serve gated senders a bounded template reply — no LLM, no tools.
+
+    On: object.created (comm_message, channel=chat, inbound, reply_gate=deflect)
+    Creates: comm_response_candidate (status=approved, metadata.gated=true)
+    Relations: response_to
+
+    The mirror of chat_llm_responder for the deflect branch of the reply
+    gate: one declarative predicate each, so the split is visible in the
+    behavior map rather than buried in an if. Deflection is a decision, not
+    silence — the sender gets a polite fixed answer, the LLM is never
+    invoked, and the gate verdict is auditable on both the message
+    (reply_gate_reason) and the candidate (metadata.gated).
+    """
+    obj = event.payload.get("object", {})
+    msg_id = obj.get("id")
+    msg_data = obj.get("data", {})
+
+    try:
+        candidate = graph.add_object("comm_response_candidate", {
+            "message_id": msg_id,
+            "thread_id": msg_data.get("thread_id"),
+            "channel": "chat",
+            "content": settings.deflection_message,
+            "status": "approved",
+            "created_by_behavior": "chat_deflection_responder",
+            "frame_id": msg_data.get("frame_id"),
+            "metadata": {
+                "gated": True,
+                "reply_gate_reason": (msg_data.get("metadata") or {}).get("reply_gate_reason"),
+            },
+        })
+        # NOTE: add_relation signature is (source, target, type).
+        graph.add_relation(candidate.id, msg_id, "response_to")
+    except Exception:
+        pass
+
+
+@behavior(
     name="chat_responder",
     on=["object.created"],
     where={"object.type": "comm_response_candidate"},
@@ -874,5 +962,6 @@ BEHAVIORS = [
     chat_memory_proposer,
     chat_memory_context,
     chat_llm_responder,
+    chat_deflection_responder,
     chat_responder,
 ]
