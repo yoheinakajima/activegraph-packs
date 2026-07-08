@@ -125,7 +125,8 @@ def run_trial(parent_rt, proposal_id: str, settings: EvolutionSettings) -> dict:
                             f"{fixture_report.detail}")[:200],
         })
         return {"verdict": "fail", "gate": "fixtures",
-                "outcome": fixture_report.outcome}
+                "outcome": fixture_report.outcome,
+                "detail": fixture_report.detail}
 
     # Child run 2: the pinned chassis driver replays the recorded
     # segment (in-sample, then held-out exactly once) and sweeps.
@@ -197,6 +198,7 @@ def run_trial(parent_rt, proposal_id: str, settings: EvolutionSettings) -> dict:
             "new_events": report.events_appended,
             "fixture_gate": "pass",
             "child_outcome": report.outcome,
+            "child_detail": report.detail,
             "replay_residue_removed": {
                 "objects": int(sweep.get("objects", 0)),
                 "relations": int(sweep.get("relations", 0)),
