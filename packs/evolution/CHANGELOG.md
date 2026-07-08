@@ -1,5 +1,37 @@
 # Evolution Pack Changelog
 
+## v0.5.2 — activegraph 1.7.0: soak green on the fixed trial child (2026-07-08)
+
+The whitelist question is answered in the runtime: 1.7.0 computes the
+trial child's import path from the parent's resolved sys.path, so the
+child imports activegraph on any install the parent can (editable,
+venv, Nix/Replit) with the allow-list still closed. Scope correction
+absorbed: the child-import break was NOT Replit-specific; a stock macOS
+venv failed identically on 1.6.0. The prior "soak runs green" was on
+1.6.0 (the broken version) on an editable install that masked the bug;
+this is the first honest soak on the fixed path.
+
+### Changed
+- Runtime floor raised to activegraph >=1.7,<2.0 (pyproject + all 20
+  manifests): this cycle depends on the automatic child import-path
+  computation and activegraph.sandbox.preflight.
+- The soak preflight now delegates to the runtime's canonical
+  activegraph.sandbox.preflight (the probe that stays correct as the
+  sandbox evolves); SoakHarness.preflight is a thin wrapper turning its
+  SandboxStartupError into the soak's REFUSING TO RUN message. The
+  rolled-own null-trial probe is gone. TrialReport.detail (now populated
+  at the source in 1.7.0) flows into the digest through the same graph
+  records trial.run_trial writes.
+- Runbook environment-constraint section updated: 1.7.0 resolves the
+  non-CI-install break; the preflight delegates to the runtime probe.
+- Fixture 24 patches activegraph.sandbox.preflight (not run_forked_trial)
+  to exercise the refusal wrapper.
+
+### Verified
+- One clean rotation on 1.7.0 from a fresh store, all seven paths OK,
+  digest GREEN (the green light for the real soak clock).
+
+
 ## v0.5.1 — Soak preflight and never-opaque crash detail (2026-07-08)
 
 Two defects surfaced by a Replit soak RED (root cause environmental:

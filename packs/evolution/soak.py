@@ -410,62 +410,32 @@ class SoakHarness:
         """Probe that a trial child can actually START on this box, once,
         before rotation 1 (Defect 2).
 
-        Runs one real, minimal `run_forked_trial` against a throwaway
-        store: a trivial candidate pack, an empty scenario (load + settle
-        only). This exercises the EXACT subprocess and environment path
-        the real trials use, so it fails the same way they would. On an
-        incapable box (the trial child cannot import activegraph under
-        the sandbox's env whitelist), the child dies before reporting and
-        the outcome is `crashed`; the soak then refuses to run rather
-        than accumulating identical silent crashes.
+        Delegates to the runtime's canonical probe,
+        `activegraph.sandbox.preflight()` (v1.7): it spawns the child
+        with a null job under the real sandbox env and raises
+        `SandboxStartupError` (with the child's stderr tail) when the
+        child cannot start. That is the probe that stays correct as the
+        sandbox evolves, so this is a thin wrapper over it rather than a
+        second implementation. On an incapable box, this turns the
+        error into the soak's "REFUSING TO RUN" message.
 
         Returns (ok, message). ok=False means do not run the soak here."""
-        import tempfile
+        from activegraph.sandbox import SandboxStartupError, TrialLimits
+        from activegraph.sandbox import preflight as sandbox_preflight
 
-        from activegraph import Graph, Runtime
-        from activegraph.packs.manifest import compute_bundle_hash
-        from activegraph.sandbox import (
-            PackSource,
-            TrialLimits,
-            run_forked_trial,
-        )
-
-        from packs.evolution.fixtures.candidates import author_pack
-        from packs.evolution.materialize import write_files
-
-        tmp = tempfile.mkdtemp(prefix="soak_preflight_")
-        db = os.path.join(tmp, "preflight.sqlite")
-        rt = Runtime(Graph(), persist_to=db)
-        rt.graph.add_object("source", {"kind": "probe", "content": "preflight"})
-        rt.run_until_idle()
-        root = write_files(
-            author_pack(name="preflight_pack", log_type="preflight_log"),
-            pack_name="preflight_pack")
         try:
-            report = run_forked_trial(
-                db, parent_run_id=rt.run_id,
-                at_event=rt.graph.events[-1].id,
-                pack_source=PackSource(
-                    root_dir=str(root),
-                    expected_bundle_hash=compute_bundle_hash(root)),
-                scenario="",  # load + settle only: the lightest real probe
-                limits=TrialLimits(
-                    wall_clock_seconds=self.settings.trial_fixture_timeout_seconds),
-                label="soak-preflight")
-        except Exception as exc:
-            return False, (f"this box cannot run subprocess trials; the trial "
-                           f"child could not be launched: {type(exc).__name__}: "
-                           f"{exc}")
-        if report.outcome == "crashed":
+            sandbox_preflight(limits=TrialLimits(
+                wall_clock_seconds=self.settings.trial_fixture_timeout_seconds))
+        except SandboxStartupError as exc:
             return False, (
-                "this box cannot run subprocess trials; activegraph not "
-                "importable in the trial child (the child crashed before "
-                f"reporting). Child detail: {report.detail}. The soak needs a "
-                "box where sys.executable can import activegraph in a "
-                "subprocess under the sandbox env whitelist (standard "
-                "pip/venv satisfies this; Replit does not without help). See "
-                "docs/soak-runbook.md.")
-        return True, f"trial child OK (probe outcome: {report.outcome})"
+                "this box cannot run subprocess trials; the trial child "
+                f"could not start under the sandbox env. Child detail: {exc}. "
+                "The soak needs a box where sys.executable can import "
+                "activegraph in a subprocess (v1.7 computes the child's "
+                "import path from the parent's resolved sys.path, so any "
+                "editable/venv/Nix install the parent can import from works). "
+                "See docs/soak-runbook.md.")
+        return True, "trial child OK (activegraph.sandbox.preflight passed)"
 
     # --------------------------------------------------------- rotation
 
