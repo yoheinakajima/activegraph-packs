@@ -2,32 +2,30 @@
 embedding seam.
 
 This is the default backend for Memory Gateway Pack. It provides a simple
-store for MemoryItems backed by SQLite, with two retrieval modes:
+store for MemoryItems backed by SQLite, with hybrid retrieval scoring:
 
-  * Lexical (default)  — Jaccard keyword overlap. Zero dependencies, never
-    errors, works out of the box with no API key.
-  * Embedding (opt-in) — cosine similarity over vectors. Activated *only*
-    when an embedder is registered via ``set_embedder`` (or discovered by
-    ``auto_configure_embedder``). With no embedder the backend stays fully
-    lexical and never raises.
+  * Lexical (always on)   — max(Jaccard overlap, query-term coverage). Zero
+    dependencies, never errors, works out of the box with no API key, and
+    robust to the short-query-vs-long-sentence shape ("teal" finds "my
+    favorite color is teal…"). See ``lexical_score``.
+  * Embedding (opt-in)    — cosine similarity over vectors, activated when an
+    embedder is registered via ``set_embedder`` (or discovered by
+    ``auto_configure_embedder``; ``embedders.default_embedder_factory`` wires
+    OpenAI from the environment). Cosine is BLENDED with the lexical signal —
+    an item's score is the max of the two — so embeddings add rephrasing
+    recall without ever costing exact-keyword recall.
 
-The selection is automatic: ``store_item`` embeds an item iff an embedder is
-present, and ``retrieve_by_query`` ranks by cosine iff an embedder is present
-(falling back to lexical for any item without a stored vector, and on any
-embedder error). This is the "trivially pluggable embeddings" seam — see
-``docs/long-term-memory.md`` for wiring an OpenAI/other provider. We never
-bundle a provider as a hard dependency.
+``store_item`` embeds an item iff an embedder is present; items without a
+stored vector (or on any embedder error) simply score lexically. We never
+bundle an embedding provider as a hard dependency.
 
-The backend interface is minimal:
-  store_item(item_id, text, category, confidence, metadata)
-  retrieve_by_query(query, top_k, min_score, category) → list[dict]
-  find_by_text(text) → Optional[str]   # write-path dedup
-  enforce_limit(max_items)
-  clear()
-
-External backends (Postgres+pgvector, Mem0, Supermemory, …) implement this
-same interface and are swapped in by pointing ``backend_url`` at a custom
-factory; the docs page covers the integration boundary.
+External backends (mem0, Zep, Supermemory, Postgres+pgvector, …) implement
+the ``MemoryBackend`` protocol — usually by subclassing
+``ExternalMemoryBackend`` and implementing just ``store_item`` +
+``retrieve_by_query`` — and are switched in by registering a URL scheme with
+``register_backend`` and pointing ``backend_url`` at it (e.g.
+``mem0://default``). ``adapters.py`` ships a mem0 adapter; the docs page
+covers the integration boundary.
 """
 
 from __future__ import annotations
@@ -42,13 +40,22 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 # ------------------------------------------------------------------ helpers
 
 
+STOPWORDS = {
+    # articles / conjunctions / prepositions / auxiliaries
+    "a", "an", "the", "and", "or", "in", "on", "at", "to",
+    "for", "of", "with", "is", "are", "was", "were", "be",
+    "it", "i", "we", "you", "they", "not",
+    # interrogatives and question auxiliaries: they carry no memory content,
+    # and leaving them in dilutes coverage scoring for natural questions
+    # ("what color do I like?" should reduce to {color, like}).
+    "what", "whats", "who", "whom", "whose", "when", "where", "which",
+    "why", "how", "does", "did", "will", "would", "can", "could",
+    "should", "shall", "please",
+}
+
+
 def _word_set(text: str) -> set[str]:
     """Lowercase word set for keyword search."""
-    STOPWORDS = {
-        "a", "an", "the", "and", "or", "in", "on", "at", "to",
-        "for", "of", "with", "is", "are", "was", "were", "be",
-        "it", "i", "we", "you", "they", "not",
-    }
     words = re.findall(r"[a-z]+", text.lower())
     return {w for w in words if w not in STOPWORDS and len(w) > 2}
 
@@ -58,6 +65,30 @@ def _jaccard(a: str, b: str) -> float:
     if not wa or not wb:
         return 0.0
     return len(wa & wb) / len(wa | wb)
+
+
+def lexical_score(query: str, text: str) -> float:
+    """Lexical relevance of *text* to *query*, in [0, 1].
+
+    max(Jaccard overlap, query-term coverage). Jaccard alone is brittle for
+    the common recall shape — a short query against a long stored sentence —
+    because the union term punishes every stored word the query didn't say:
+    query "teal" against "my favorite color is teal and I run a bakery called
+    Crumbtown" gets Jaccard ~0.14 and misses a 0.2 threshold even though the
+    query term is literally present. Coverage (|query ∩ text| / |query|) is
+    the asymmetric complement: it asks "how much of what was ASKED does this
+    memory contain?" and is immune to stored-sentence length. Taking the max
+    keeps near-identical sentences at Jaccard ~1.0 while making keyword and
+    natural-question recall behave.
+    """
+    qwords = _word_set(query)
+    twords = _word_set(text)
+    if not qwords or not twords:
+        return 0.0
+    overlap = len(qwords & twords)
+    coverage = overlap / len(qwords)
+    jaccard = overlap / len(qwords | twords)
+    return max(jaccard, coverage)
 
 
 def _normalize_text(text: str) -> str:
@@ -181,6 +212,93 @@ def _cosine(a: list[float], b: list[float]) -> float:
     # Clamp to [0,1] so scores compose with the lexical [0,1] range and the
     # shared min_score threshold. Negative cosines (opposite vectors) → 0.
     return max(0.0, min(1.0, dot / (na * nb)))
+
+
+# ------------------------------------------------------------------ backend protocol
+#
+# Anything satisfying this protocol can be the memory store: behaviors and
+# tools only ever talk to a backend through these methods. External services
+# (mem0, Zep, Supermemory, Postgres+pgvector, …) plug in by subclassing
+# ExternalMemoryBackend (which no-ops the SQLite-specific niceties) and
+# registering a URL scheme with register_backend() — after which pointing
+# MemoryGatewaySettings.backend_url at e.g. "mem0://default" switches the
+# ENTIRE lifecycle (writer, retriever, chat recall) to the external store
+# with zero behavior changes.
+
+
+@runtime_checkable
+class MemoryBackend(Protocol):
+    """The full surface behaviors/tools use. Only ``store_item`` and
+    ``retrieve_by_query`` carry the semantics; the rest are lifecycle and
+    write-path helpers that external adapters may no-op (see
+    ``ExternalMemoryBackend`` for safe defaults)."""
+
+    def store_item(self, item_id: str, text: str, category: Optional[str] = None,
+                   confidence: float = 0.7, metadata: Optional[dict] = None,
+                   subject_ref: Optional[str] = None) -> None: ...
+
+    def retrieve_by_query(self, query: str, top_k: int = 10, min_score: float = 0.2,
+                          category: Optional[str] = None,
+                          subject_ref: Optional[str] = None,
+                          subject_scoped: bool = False, include_global: bool = True,
+                          exclude_frame_id: Optional[str] = None) -> list[dict[str, Any]]: ...
+
+    def find_by_text(self, text: str, subject_ref: Optional[str] = None) -> Optional[str]: ...
+    def set_subject(self, item_id: str, subject_ref: Optional[str]) -> None: ...
+    def get_subject(self, item_id: str) -> Optional[str]: ...
+    def enforce_limit(self, max_items: int) -> None: ...
+    def update_retrieval(self, item_id: str) -> None: ...
+    def clear(self) -> None: ...
+    def count(self) -> int: ...
+    def close(self) -> None: ...
+
+
+class ExternalMemoryBackend:
+    """Convenience base for external-store adapters.
+
+    Subclass and implement ``store_item`` + ``retrieve_by_query`` — the two
+    methods with real semantics. Everything else defaults to a safe no-op
+    chosen for external stores: no write-path text dedup (find_by_text →
+    None means memory_writer always stores; external stores typically dedup
+    server-side), no LRU eviction (retention is the store's job), no local
+    retrieval stats. Override any of them when the service supports it.
+    """
+
+    def __init__(self, url: str):
+        self.db_url = url
+
+    def store_item(self, item_id, text, category=None, confidence=0.7,
+                   metadata=None, subject_ref=None) -> None:
+        raise NotImplementedError
+
+    def retrieve_by_query(self, query, top_k=10, min_score=0.2, category=None,
+                          subject_ref=None, subject_scoped=False,
+                          include_global=True, exclude_frame_id=None) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def find_by_text(self, text, subject_ref=None) -> Optional[str]:
+        return None
+
+    def set_subject(self, item_id, subject_ref) -> None:
+        pass
+
+    def get_subject(self, item_id) -> Optional[str]:
+        return None
+
+    def enforce_limit(self, max_items) -> None:
+        pass
+
+    def update_retrieval(self, item_id) -> None:
+        pass
+
+    def clear(self) -> None:
+        pass
+
+    def count(self) -> int:
+        return 0
+
+    def close(self) -> None:
+        pass
 
 
 # ------------------------------------------------------------------ backend
@@ -326,12 +444,18 @@ class SqliteMemoryBackend:
     ) -> list[dict[str, Any]]:
         """Retrieve MemoryItems ranked by similarity to *query*.
 
-        Ranking mode is selected automatically: cosine similarity over stored
-        vectors when an embedder is registered, lexical Jaccard otherwise. The
-        two modes are kept on the same [0,1] scale so a single min_score works
-        for both. Lexical is the per-item fallback for any item lacking a vector
-        and for the whole query if embedding the query fails — recall never
-        errors just because embeddings are misconfigured.
+        Scoring is hybrid: every item gets a lexical score (max of Jaccard
+        overlap and query-term coverage — see ``lexical_score``), and when an
+        embedder is registered AND the item has a stored vector, also a cosine
+        score. The item's score is the MAX of the signals available for it —
+        a memory is as relevant as its strongest signal. This is strictly
+        never worse than either pure mode: embedding recall catches
+        rephrasings that share no keywords, lexical recall catches exact
+        keywords ("teal") whose cosine against a long sentence can be
+        middling. Both signals live on the same [0,1] scale so a single
+        min_score governs both. Recall never errors just because embeddings
+        are misconfigured — a missing/failing embedder simply drops the
+        cosine signal.
 
         Access control: when ``subject_scoped`` is True, only items whose
         subject_ref equals ``subject_ref`` are returned, so a caller acting for
@@ -389,14 +513,12 @@ class SqliteMemoryBackend:
                         continue
                 except Exception:
                     pass
-            score = None
+            score = lexical_score(query, text)
             if query_vec is not None and embedding_json:
                 try:
-                    score = _cosine(query_vec, json.loads(embedding_json))
+                    score = max(score, _cosine(query_vec, json.loads(embedding_json)))
                 except Exception:
-                    score = None
-            if score is None:  # lexical fallback (no vector / embed failed)
-                score = _jaccard(query, text)
+                    pass  # bad stored vector → lexical signal already in place
             if score >= min_score:
                 scored.append({
                     "item_id": item_id,
@@ -463,17 +585,44 @@ class SqliteMemoryBackend:
 
 # ------------------------------------------------------------------ factory
 
-_backends: dict[str, SqliteMemoryBackend] = {}
+_backends: dict[str, MemoryBackend] = {}
+
+# Registered external-backend factories, keyed by URL scheme ("mem0", "zep",
+# …). A factory takes the full URL and returns a MemoryBackend. Registration
+# is application-side (never automatic on import), same rule as embedders.
+_backend_factories: dict[str, Callable[[str], MemoryBackend]] = {}
 
 
-def get_backend(db_url: str = ":memory:") -> SqliteMemoryBackend:
+def register_backend(scheme: str, factory: Callable[[str], MemoryBackend]) -> None:
+    """Register an external backend factory for a URL scheme.
+
+    After ``register_backend("mem0", lambda url: Mem0Backend(url))``, any
+    backend_url of the form ``mem0://...`` — in MemoryGatewaySettings,
+    ChatSettings.memory_backend_url, or a retrieval request — resolves to the
+    external store. One registration switches the whole memory lifecycle."""
+    _backend_factories[scheme] = factory
+
+
+def unregister_backend(scheme: str) -> None:
+    """Remove a registered scheme (mainly for tests)."""
+    _backend_factories.pop(scheme, None)
+
+
+def get_backend(db_url: str = ":memory:") -> MemoryBackend:
     """Get or create a backend instance for the given db_url.
 
-    In-memory backends are per-process singletons (shared within a run).
-    File-based backends are also singletons keyed by path.
+    Dispatch: a ``scheme://`` URL whose scheme was registered via
+    register_backend() resolves through that factory; everything else
+    (":memory:", file paths) is the built-in SQLite backend. Instances are
+    per-process singletons keyed by URL, so the writer and every retrieval
+    path share one store per URL.
     """
     if db_url not in _backends:
-        _backends[db_url] = SqliteMemoryBackend(db_url)
+        scheme = db_url.split("://", 1)[0] if "://" in db_url else None
+        if scheme and scheme in _backend_factories:
+            _backends[db_url] = _backend_factories[scheme](db_url)
+        else:
+            _backends[db_url] = SqliteMemoryBackend(db_url)
     return _backends[db_url]
 
 

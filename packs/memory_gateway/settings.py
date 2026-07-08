@@ -34,9 +34,13 @@ class MemoryGatewaySettings(BaseModel):
     backend_url: str = Field(
         default=":memory:",
         description=(
-            "SQLite database URL for memory storage. Defaults to in-memory "
-            "SQLite (no persistence across runs). Use a file path like "
-            "'memory.db' for persistence."
+            "Memory backend URL. Defaults to in-memory SQLite (no persistence "
+            "across runs); a file path like 'memory.db' persists. A "
+            "'scheme://' URL whose scheme was registered via "
+            "backend.register_backend() selects an external store instead — "
+            "e.g. 'mem0://default' after adapters.register_mem0_backend(). "
+            "Must match ChatSettings.memory_backend_url so recall reads the "
+            "store the writer writes."
         ),
     )
 

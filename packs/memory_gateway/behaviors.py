@@ -32,32 +32,12 @@ from typing import Optional
 
 from activegraph.packs import behavior
 
-from .backend import get_backend
+from .backend import get_backend, lexical_score
 from .object_types import MemoryItem, MemoryRanking, MemoryRetrieval
 from .settings import MemoryGatewaySettings
 
 
 # ------------------------------------------------------------------ helpers
-
-
-def _word_set(text: str) -> set[str]:
-    """Lowercase word set, stripping punctuation and stopwords."""
-    STOPWORDS = {
-        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to",
-        "for", "of", "with", "is", "are", "was", "were", "be", "been",
-        "have", "has", "do", "does", "this", "that", "it", "i", "we",
-        "you", "they", "my", "our", "your", "not", "by", "as",
-    }
-    words = re.findall(r"[a-z]+", text.lower())
-    return {w for w in words if w not in STOPWORDS and len(w) > 2}
-
-
-def _jaccard(a: str, b: str) -> float:
-    """Jaccard similarity between word sets of two strings."""
-    wa, wb = _word_set(a), _word_set(b)
-    if not wa or not wb:
-        return 0.0
-    return len(wa & wb) / len(wa | wb)
 
 
 def _derive_subject_ref(graph, source_ids) -> Optional[str]:
@@ -472,7 +452,8 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
     Creates: memory_ranking for each item in retrieval.item_ids
     Creates: scored_by(memory_ranking → memory_retrieval) relation
 
-    Uses Jaccard word-overlap scoring (same heuristic as Core task_linker).
+    Uses the shared lexical relevance score (max of Jaccard overlap and
+    query-term coverage — see backend.lexical_score).
     Domain packs can add LLM-backed rerankers in their own behaviors.
     """
     obj = event.payload.get("object", {})
@@ -496,7 +477,7 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
             continue
 
         item_text = item.data.get("text", "")
-        score = _jaccard(query, item_text)
+        score = lexical_score(query, item_text)
         scored.append((score, item_id, item_text))
 
     # Sort by score descending
@@ -513,7 +494,7 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
                 retrieval_id=retrieval_id,
                 item_id=item_id,
                 score=round(score, 4),
-                reason=f"Keyword overlap score {score:.2f} with query.",
+                reason=f"Lexical relevance {score:.2f} (keyword overlap/coverage) with query.",
                 rank=rank,
             ).model_dump(),
         )

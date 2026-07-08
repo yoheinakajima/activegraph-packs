@@ -4,6 +4,17 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ---
 
+## Unreleased
+
+- **Memory retrieval quality + pluggable backends** (memory_gateway v0.3.0):
+  hybrid recall scoring fixes the July 2026 readiness-report §5.1 failures
+  (short/keyword queries and rephrased questions now recall; every verified
+  failure case is a regression test); the store is a first-class seam
+  (`MemoryBackend` protocol + URL-scheme registry) with a working mem0
+  adapter; bundled `OpenAIEmbedder`/`HashEmbedder` and a default factory the
+  demo server wires at startup (`OPENAI_API_KEY` → hybrid recall, no key →
+  lexical, never errors). See `packs/memory_gateway/CHANGELOG.md`.
+
 ## v0.2.0 — Personal-assistant upgrade (2026-07-08)
 
 The six-phase upgrade from `activegraph-assistant-upgrade-plan.md`: the

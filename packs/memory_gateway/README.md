@@ -74,7 +74,25 @@ For persistence, set `backend_url` to a file path:
 MemoryGatewaySettings(backend_url="memory.db")
 ```
 
-v0.2 will add Postgres/pgvector, Mem0, and Supermemory backends.
+**Retrieval scoring is hybrid.** Every item gets a lexical score —
+`max(Jaccard overlap, query-term coverage)`, robust to short queries against
+long stored sentences — and, when an embedder is registered (see
+`embedders.py`), a cosine signal blended as `max(cosine, lexical)`: a memory
+is as relevant as its strongest signal. No key → pure lexical, never errors.
+
+**External stores plug in via URL scheme.** `mem0` ships as a working adapter:
+
+```python
+from packs.memory_gateway.adapters import register_mem0_backend
+
+register_mem0_backend()                                  # pip install mem0ai
+MemoryGatewaySettings(backend_url="mem0://default")      # whole lifecycle switches
+```
+
+Other services (Zep, Supermemory, pgvector, …) subclass
+`ExternalMemoryBackend`, implement `store_item` + `retrieve_by_query`, and
+register a scheme with `backend.register_backend()`. See
+`docs/long-term-memory.md` for the full integration guide.
 
 ## Usage
 
@@ -114,7 +132,7 @@ for r in results:
 |-------|---------|-------------|
 | `acceptance_threshold` | `0.6` | Minimum confidence for candidate acceptance |
 | `max_items` | `1000` | Max stored items (LRU eviction when exceeded) |
-| `backend_url` | `":memory:"` | SQLite database URL |
+| `backend_url` | `":memory:"` | Backend URL: SQLite path, or a registered `scheme://` (e.g. `mem0://default`) |
 | `retrieval_top_k` | `10` | Max results per retrieval |
 | `min_retrieval_score` | `0.2` | Minimum similarity score for results |
 | `auto_accept_categories` | `["preference", "instruction", "decision"]` | Categories that bypass confidence check |

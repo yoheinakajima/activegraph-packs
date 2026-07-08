@@ -280,6 +280,23 @@ def _build_runtime():
     print(f"[demo_server] Chat LLM: mode={info['mode']} "
           f"provider={info['provider']} model={info.get('model')}", flush=True)
 
+    # Memory recall quality: switch the memory backend to hybrid
+    # lexical+embedding scoring when an embedding provider is configured in
+    # the environment (OPENAI_API_KEY). With no key this is a no-op and
+    # recall stays lexical — the demo must never require a key. Memories
+    # stored before an embedder existed have no vector and keep scoring
+    # lexically; new writes are embedded from here on.
+    from packs.memory_gateway.backend import (
+        auto_configure_embedder,
+        set_embedder_factory,
+    )
+    from packs.memory_gateway.embedders import default_embedder_factory
+    set_embedder_factory(default_embedder_factory)
+    _embedder = auto_configure_embedder()
+    print(f"[demo_server] Memory recall: "
+          f"{'hybrid (lexical + embeddings)' if _embedder else 'lexical'}",
+          flush=True)
+
     if resuming:
         rt = Runtime.load(db, llm_provider=provider)
         load_messaging_packs(

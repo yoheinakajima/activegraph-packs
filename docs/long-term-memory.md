@@ -156,71 +156,86 @@ chat_settings           = ChatSettings(memory_backend_url="data/memory.sqlite")
 The demo server already wires this (`packs/demo_server.py`), so memories written
 in one chat session are recalled in the next — even after the server restarts.
 
-### Plugging in an external backend (mem0, pgvector, Supermemory, …)
+### Plugging in an external backend (mem0, Zep, pgvector, Supermemory, …)
 
-The backend interface is intentionally tiny (see the docstring in
-`packs/memory_gateway/backend.py`):
+The store is a first-class seam. The contract is the `MemoryBackend` protocol
+(`packs/memory_gateway/backend.py`); only two methods carry real semantics —
+`store_item` (the service's "add memory") and `retrieve_by_query` (its
+"search"). Subclass `ExternalMemoryBackend` and the rest (write-path dedup,
+LRU eviction, retrieval stats) defaults to safe no-ops, since external stores
+handle retention and dedup themselves.
 
+Switching store is one registration plus one settings value — nothing else in
+the lifecycle changes:
+
+```python
+from packs.memory_gateway.backend import register_backend
+
+register_backend("myscheme", lambda url: MyBackend(url))
+
+MemoryGatewaySettings(backend_url="myscheme://default")
+ChatSettings(memory_backend_url="myscheme://default")   # must match
 ```
-store_item(item_id, text, category, confidence, metadata)
-retrieve_by_query(query, top_k, min_score, category) -> list[dict]
-find_by_text(text) -> Optional[str]
-enforce_limit(max_items)
-clear()
+
+**mem0 ships as a working adapter** (`packs/memory_gateway/adapters.py`). It
+maps `subject_ref` → mem0 `user_id` (so subject scoping keeps isolating
+users), carries `category`/`frame_id`/`item_id` in mem0 metadata (so category
+filtering and same-frame exclusion keep working), and clamps mem0's relevance
+score onto the shared `[0, 1]` / `min_score` scale:
+
+```python
+from packs.memory_gateway.adapters import register_mem0_backend
+
+register_mem0_backend()          # pip install mem0ai; or pass client=...
+MemoryGatewaySettings(backend_url="mem0://default")
+ChatSettings(memory_backend_url="mem0://default")
 ```
 
-To integrate an external store (for example **mem0**), implement these methods
-against that service and have `get_backend()` return your implementation for the
-configured `backend_url`. `store_item` maps to the service's "add memory" call,
-`retrieve_by_query` to its "search", and `find_by_text` to a dedup lookup (or a
-no-op returning `None` if the service dedups itself). Nothing else in the
-lifecycle changes — candidates, evaluation, and the chat behaviors all stay the
-same.
+The adapter accepts any client with the mem0 `add`/`search` surface (OSS
+`Memory`, platform `MemoryClient`, or your own), which is also how it is
+tested deterministically — `tests/test_memory_backend_registry.py` runs the
+full mapping against a fake client, no service required. Use it as the
+template for other services.
 
 ---
 
-## 3. Enabling embedding-based recall
+## 3. Recall scoring: hybrid lexical + embeddings
 
-Lexical Jaccard overlap is the default: dependency-free, never errors, and works
-with no API key. It needs **keyword overlap** between the query and the stored
-text, so natural-language questions ("what theme do I like?" vs. a stored "I
-prefer dark mode") recall better with embeddings.
+Every item always gets a **lexical score**: `max(Jaccard overlap, query-term
+coverage)`. Coverage — the fraction of the *query's* content words present in
+the stored text — is what makes short and natural queries work: `"teal"`
+against *"my favorite color is teal and I run a bakery called Crumbtown"*
+scores 1.0 (Jaccard alone gives ~0.14 and misses the default threshold — the
+exact failure the July 2026 evaluation caught). Interrogative words ("what",
+"how", "should", …) are treated as stopwords so questions don't dilute their
+own coverage. Dependency-free, never errors, no API key.
 
-Embeddings are a drop-in. Register an embedder — any object with
-`embed(texts) -> list[list[float]]` — and the backend automatically embeds new
-items at write time and ranks by cosine similarity at recall time, falling back
-to lexical for any item without a vector or if embedding fails:
+With an embedder registered, items are embedded at write time and recall adds
+a **cosine signal**; an item's score is the **max of the two signals** — a
+memory is as relevant as its strongest signal. Embeddings add rephrasing
+recall ("what theme do I like?" → *"I prefer dark mode"*) without ever
+costing exact-keyword recall, and items without a vector (stored before the
+embedder existed, or if embedding fails) simply keep scoring lexically. Both
+signals share the `[0, 1]` scale, so one `min_score` governs everything.
 
-```python
-from packs.memory_gateway.backend import set_embedder
-
-class OpenAIEmbedder:
-    def embed(self, texts):
-        # call your provider; return one vector per input text
-        ...
-
-set_embedder(OpenAIEmbedder())   # recall is now embedding-based
-```
-
-For automatic activation when a key is present, register a factory and call the
-switch once at startup (it never raises — no key means it stays lexical):
+Enabling embeddings is one call at startup, using the bundled
+environment-driven factory (`packs/memory_gateway/embedders.py`):
 
 ```python
 from packs.memory_gateway.backend import set_embedder_factory, auto_configure_embedder
+from packs.memory_gateway.embedders import default_embedder_factory
 
-def make_embedder():
-    import os
-    if not os.environ.get("OPENAI_API_KEY"):
-        return None            # no key → stay lexical
-    return OpenAIEmbedder()
-
-set_embedder_factory(make_embedder)
-auto_configure_embedder()
+set_embedder_factory(default_embedder_factory)
+auto_configure_embedder()   # embedding recall iff OPENAI_API_KEY is set
 ```
 
-We deliberately **do not bundle** an embedding provider, so the library stays
-installable and testable with zero dependencies. The seam — `set_embedder` /
-`set_embedder_factory` — is all you need to wire one in.
+The demo server does exactly this — with a key, memory recall is hybrid; with
+no key it stays lexical and nothing errors. `OpenAIEmbedder` is implemented
+with stdlib HTTP (honors `OPENAI_BASE_URL`, model via
+`ACTIVEGRAPH_EMBEDDING_MODEL`), so the pack still has **zero embedding
+dependencies**. Any object with `embed(texts) -> list[list[float]]` works via
+`set_embedder(...)` — and `HashEmbedder` (deterministic, no network) is what
+fixtures and tests use to exercise the vector path.
 
 ---
 
@@ -228,5 +243,11 @@ installable and testable with zero dependencies. The seam — `set_embedder` /
 
 - `python packs/fixtures/chat_memory_cross_session.py` — proves a preference
   written in session 1 is recalled in a fresh session 2 sharing a memory file.
+- `pytest tests/test_memory_retrieval_quality.py` — the regression suite built
+  from the July 2026 evaluation's verified recall failures ("teal", "bakery",
+  rephrased questions), plus the hybrid-scoring guarantees.
+- `pytest tests/test_memory_backend_registry.py` — proves the external-backend
+  seam: scheme registration, the tools path against a custom store, and the
+  mem0 adapter mapping (against a fake client, no service needed).
 - `pytest tests/test_memory_embedding_seam.py` — proves the embedding seam
   (vector recall, lexical fallback, no-key safety).
