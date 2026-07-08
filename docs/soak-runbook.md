@@ -35,9 +35,35 @@ nothing reads an API key. If the machine has keys anyway, the soak
 neither needs nor touches them, and the harness is where that claim
 is tested daily.
 
+## Environment constraint (read this before you start)
+
+The soak runs the full loop, and the loop runs candidate code in the
+runtime's subprocess trial child. That child spawns with a deliberately
+minimal environment whitelist (a security control: no ambient parent
+env leaks into a process running candidate code), so the box has to be
+one where `sys.executable` can `import activegraph` in a subprocess
+under that whitelist. A standard `pip install` into the system Python
+or a venv satisfies this. Some managed environments do NOT: Replit, for
+example, makes packages importable through a non-standard
+`REPLIT_PYTHONPATH` var read by a Nix `sitecustomize.py` at startup, and
+that var is stripped by the whitelist, so the child cannot find
+`activegraph` and dies before it starts. Making such an environment
+work is a runtime concern (the sandbox needs package discoverability as
+an explicit input), not something the soak papers over by forwarding
+platform env.
+
+You do not have to check this by hand: the soak runs a **preflight**
+before the first rotation that launches one real minimal trial child.
+On a capable box it prints `preflight: trial child OK`. On an incapable
+one it refuses to run (exit 2) with `this box cannot run subprocess
+trials; activegraph not importable in the trial child` rather than
+producing a digest full of identical silent crashes. If you see that
+refusal, the box cannot host the soak; move it to a standard pip/venv
+machine.
+
 ## Starting it
 
-Fresh machine or Replit, from the repo root:
+Fresh machine (standard pip or venv), from the repo root:
 
 ```bash
 pip install -e ".[dev]"
@@ -86,8 +112,12 @@ log; the console prints one line per rotation.
 Any of these means stop the harness and bring me the digest plus the
 anomaly log; do not restart over them:
 
-- `status: **RED**`, or any nonzero `anomalies` cell. The traceback in
-  the digest's anomaly section says which invariant broke.
+- `status: **RED**`, or any nonzero `anomalies` cell. The digest's
+  anomaly section now carries both halves: the trial child's own
+  failure detail (the real error, when a child failed) and the
+  soak-side traceback (which invariant broke). A crash is never opaque
+  here anymore; if an anomaly names a child failure, that detail is the
+  report, not the soak assertion above it.
 - More than one `active` promotion, or an `active` count that grows
   across rotations. The governed-disable path is failing quietly.
 - A `suspended` count that ever DECREASES, or a parked `needs_owner`

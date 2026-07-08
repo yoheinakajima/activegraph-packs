@@ -20,6 +20,13 @@ nothing here reads an API key. Deterministic where feasible: candidate
 content is a pure function of the rotation index; only timestamps and
 scheduling touch the clock.
 
+A preflight runs once before rotation 1: it launches one real minimal
+trial child and refuses to run (exit 2) if the child cannot start on
+this box, so an incapable environment gets one clear message instead of
+a digest full of identical silent crashes. Trial-child failures are
+never opaque: their outcome and detail are surfaced in the digest and
+the anomaly log, not just the soak-side assertion.
+
 Run it:
     python -m packs.evolution.soak --root data/soak --interval 600
     python -m packs.evolution.soak --root data/soak --once   # one rotation
@@ -33,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 import traceback
 from datetime import datetime, timezone
@@ -396,6 +404,69 @@ class SoakHarness:
             "the sweep must not touch a suspended proposal")
         return {"proposal": name, "flags": data["injection_flags"]}
 
+    # -------------------------------------------------------- preflight
+
+    def preflight(self) -> tuple[bool, str]:
+        """Probe that a trial child can actually START on this box, once,
+        before rotation 1 (Defect 2).
+
+        Runs one real, minimal `run_forked_trial` against a throwaway
+        store: a trivial candidate pack, an empty scenario (load + settle
+        only). This exercises the EXACT subprocess and environment path
+        the real trials use, so it fails the same way they would. On an
+        incapable box (the trial child cannot import activegraph under
+        the sandbox's env whitelist), the child dies before reporting and
+        the outcome is `crashed`; the soak then refuses to run rather
+        than accumulating identical silent crashes.
+
+        Returns (ok, message). ok=False means do not run the soak here."""
+        import tempfile
+
+        from activegraph import Graph, Runtime
+        from activegraph.packs.manifest import compute_bundle_hash
+        from activegraph.sandbox import (
+            PackSource,
+            TrialLimits,
+            run_forked_trial,
+        )
+
+        from packs.evolution.fixtures.candidates import author_pack
+        from packs.evolution.materialize import write_files
+
+        tmp = tempfile.mkdtemp(prefix="soak_preflight_")
+        db = os.path.join(tmp, "preflight.sqlite")
+        rt = Runtime(Graph(), persist_to=db)
+        rt.graph.add_object("source", {"kind": "probe", "content": "preflight"})
+        rt.run_until_idle()
+        root = write_files(
+            author_pack(name="preflight_pack", log_type="preflight_log"),
+            pack_name="preflight_pack")
+        try:
+            report = run_forked_trial(
+                db, parent_run_id=rt.run_id,
+                at_event=rt.graph.events[-1].id,
+                pack_source=PackSource(
+                    root_dir=str(root),
+                    expected_bundle_hash=compute_bundle_hash(root)),
+                scenario="",  # load + settle only: the lightest real probe
+                limits=TrialLimits(
+                    wall_clock_seconds=self.settings.trial_fixture_timeout_seconds),
+                label="soak-preflight")
+        except Exception as exc:
+            return False, (f"this box cannot run subprocess trials; the trial "
+                           f"child could not be launched: {type(exc).__name__}: "
+                           f"{exc}")
+        if report.outcome == "crashed":
+            return False, (
+                "this box cannot run subprocess trials; activegraph not "
+                "importable in the trial child (the child crashed before "
+                f"reporting). Child detail: {report.detail}. The soak needs a "
+                "box where sys.executable can import activegraph in a "
+                "subprocess under the sandbox env whitelist (standard "
+                "pip/venv satisfies this; Replit does not without help). See "
+                "docs/soak-runbook.md.")
+        return True, f"trial child OK (probe outcome: {report.outcome})"
+
     # --------------------------------------------------------- rotation
 
     def run_rotation(self) -> dict:
@@ -420,12 +491,19 @@ class SoakHarness:
                 results.append({"path": path, "ok": True, "detail": detail})
             except Exception:
                 tb = traceback.format_exc(limit=8)
+                # Defect 1: never let a child crash read as opaque. Pull
+                # the trial child's outcome + detail (TrialReport.detail,
+                # which now carries the stderr tail the runtime surfaces)
+                # from the graph, so the digest and anomaly log name the
+                # real error and not just the soak-side AssertionError.
+                child = self._latest_child_failure_detail()
                 self.state["paths"][path]["anomalies"] += 1
                 self.state["anomaly_log"].append({
                     "rotation": idx, "path": path, "at": _now(),
-                    "traceback": tb[-2000:],
+                    "child_detail": child, "traceback": tb[-2000:],
                 })
-                results.append({"path": path, "ok": False, "detail": tb})
+                results.append({"path": path, "ok": False,
+                                "child_detail": child, "detail": tb})
 
         self.state["rotations"] = idx
         self._save_state()
@@ -433,6 +511,38 @@ class SoakHarness:
         self.teardown()
         return {"rotation": idx, "results": results,
                 "digest": str(digest_path)}
+
+    def _latest_child_failure_detail(self) -> str:
+        """The most recent trial-child failure detail from the graph
+        (Defect 1). A crashing child records its outcome and detail on
+        the `fixtures`/`in_sample`/`held_out` gate_result it fails, and
+        on mod_trial.eval_summary.child_detail; this returns the newest
+        such note so a crash is never opaque in the digest. Empty string
+        when nothing failed at the child boundary (the anomaly was a
+        soak-logic assertion, not a child crash)."""
+        if self.rt is None:
+            return ""
+        candidates: list[tuple[str, str]] = []
+        try:
+            for g in self.rt.graph.objects(type="gate_result"):
+                data = g.data or {}
+                if (data.get("gate") in ("fixtures", "in_sample", "held_out")
+                        and data.get("verdict") == "fail"):
+                    candidates.append((str(data.get("at", "")),
+                                       f"{data.get('gate')}: {data.get('details', '')}"))
+            for t in self.rt.graph.objects(type="mod_trial"):
+                summary = (t.data or {}).get("eval_summary") or {}
+                outcome = summary.get("child_outcome")
+                if outcome and outcome != "completed":
+                    candidates.append((
+                        str((t.data or {}).get("at", "")),
+                        f"child_outcome={outcome}: {summary.get('child_detail', '')}"))
+        except Exception:
+            return ""
+        if not candidates:
+            return ""
+        candidates.sort(key=lambda c: c[0])
+        return candidates[-1][1][:800]
 
     # ----------------------------------------------------------- digest
 
@@ -514,14 +624,25 @@ class SoakHarness:
             "",
         ]
         for r in results:
-            mark = "OK " if r["ok"] else "ANOMALY"
-            detail = r["detail"] if r["ok"] else "see anomaly log below"
-            lines.append(f"- [{mark}] {r['path']}: {detail}")
+            if r["ok"]:
+                lines.append(f"- [OK ] {r['path']}: {r['detail']}")
+            else:
+                # Defect 1: the per-path line names the child failure
+                # directly when there is one, so the digest is never
+                # opaque even before you read the anomaly log.
+                child = r.get("child_detail") or ""
+                summary = (f"child failure: {child}" if child
+                           else "soak-logic assertion (see anomaly log)")
+                lines.append(f"- [ANOMALY] {r['path']}: {summary}")
         if self.state["anomaly_log"]:
             lines += ["", "## Anomaly log (stop-and-report material)", ""]
             for a in self.state["anomaly_log"][-10:]:
                 lines += [f"### rotation {a['rotation']} / {a['path']} "
-                          f"at {a['at']}", "", "```",
+                          f"at {a['at']}", ""]
+                if a.get("child_detail"):
+                    lines += ["Trial child failure detail (the real error):",
+                              "", "```", a["child_detail"], "```", ""]
+                lines += ["Soak-side traceback:", "", "```",
                           a["traceback"], "```", ""]
         path.write_text("\n".join(lines) + "\n")
         return path
@@ -537,9 +658,23 @@ def main() -> int:
                         help="Stop after N rotations (0 = run until stopped)")
     parser.add_argument("--once", action="store_true",
                         help="Run exactly one rotation and exit")
+    parser.add_argument("--skip-preflight", action="store_true",
+                        help="Skip the subprocess-trial capability probe "
+                             "(not recommended; the probe is cheap)")
     args = parser.parse_args()
 
     harness = SoakHarness(args.root)
+
+    # Defect 2: probe that this box can run subprocess trials at all,
+    # before rotation 1, so an incapable box gets ONE clear refusal
+    # instead of a digest full of identical silent crashes.
+    if not args.skip_preflight:
+        ok, message = harness.preflight()
+        print(f"[soak] preflight: {message}", flush=True)
+        if not ok:
+            print("[soak] REFUSING TO RUN. " + message, flush=True)
+            return 2
+
     ran = 0
     while True:
         outcome = harness.run_rotation()

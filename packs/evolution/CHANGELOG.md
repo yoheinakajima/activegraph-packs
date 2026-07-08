@@ -1,5 +1,35 @@
 # Evolution Pack Changelog
 
+## v0.5.1 — Soak preflight and never-opaque crash detail (2026-07-08)
+
+Two defects surfaced by a Replit soak RED (root cause environmental:
+the runtime's trial-child env whitelist strips REPLIT_PYTHONPATH, so
+the child cannot import activegraph on Replit). The whitelist itself is
+a runtime security boundary and is NOT touched here; the fix is
+soak-side surfacing plus a preflight, with the whitelist question
+couriered to the runtime.
+
+### Added
+- Soak preflight (soak.py, Defect 2): before rotation 1, one real
+  minimal `run_forked_trial` probes that a trial child can start on this
+  box. If it cannot (the child cannot import activegraph under the
+  sandbox env whitelist), the soak refuses to run with a clear message
+  and exit 2, instead of accumulating identical silent crashes.
+  `--skip-preflight` opts out. Runbook documents the environment
+  constraint.
+- Fixture 24: the preflight passes on a capable box and refuses (naming
+  the real cause) on a patched incapable one; a trial-child failure is
+  surfaced in the digest and anomaly log, never opaque.
+
+### Changed
+- Trial-child failures are never opaque in the digest (Defect 1): the
+  child's outcome and detail (TrialReport.detail, the stderr tail the
+  runtime surfaces) reach the digest per-path line and the anomaly log,
+  alongside the soak-side traceback rather than replacing it.
+  `trial.run_trial` now returns `detail` on the fixture-gate-fail path
+  and records `child_detail` on mod_trial.eval_summary.
+
+
 ## v0.5.0 — Author-frame enforced boundaries (2026-07-08)
 
 The LLM-author design passed review (build gate 2). The four required

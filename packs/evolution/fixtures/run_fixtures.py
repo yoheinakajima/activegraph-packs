@@ -987,6 +987,74 @@ def fx_23_structured_field_charset(tmp) -> dict:
             "clean_fields": "accepted"}
 
 
+def fx_24_soak_preflight_and_crash_detail(tmp) -> dict:
+    """The soak's two Replit-surfaced defects, fixed soak-side:
+
+    Defect 2 (preflight): before rotation 1 the soak probes that a trial
+    child can actually start; on a capable box the probe passes, and on
+    an incapable one (child cannot import activegraph) it refuses with a
+    clear message instead of accumulating identical silent crashes.
+
+    Defect 1 (crash detail): a trial-child failure is never opaque in
+    the digest. The child's outcome and detail (TrialReport.detail, the
+    stderr tail the runtime surfaces) reach the digest per-path line and
+    the anomaly log, not just the soak-side AssertionError."""
+    import activegraph.sandbox as sb
+
+    from packs.evolution.soak import SoakHarness
+
+    settings = EvolutionSettings(enabled=True,
+                                 trial_fixture_timeout_seconds=8.0)
+    harness = SoakHarness(os.path.join(tmp, "soak"), settings=settings)
+
+    # Defect 2, positive: a real minimal trial child runs on this box.
+    ok, msg = harness.preflight()
+    assert ok, msg
+    assert "trial child OK" in msg
+
+    # Defect 2, refusal: an incapable child (patched to crash before
+    # reporting) makes the preflight refuse, naming the real cause.
+    original = sb.run_forked_trial
+    sb.run_forked_trial = lambda *a, **k: sb.TrialReport(
+        outcome="crashed", fork_run_id="", events_appended=0,
+        behavior_failures=0,
+        detail="ModuleNotFoundError: No module named 'activegraph'",
+        exit_code=1)
+    try:
+        refused_ok, refused_msg = harness.preflight()
+    finally:
+        sb.run_forked_trial = original
+    assert not refused_ok
+    assert "cannot run subprocess trials" in refused_msg
+    assert "ModuleNotFoundError" in refused_msg
+    assert "soak-runbook" in refused_msg
+
+    # Defect 1: a trial-child failure recorded in the graph is surfaced
+    # by the helper and rendered into the digest, never opaque.
+    harness.boot()
+    harness.rt.graph.add_object("gate_result", {
+        "proposal_id": "p1", "gate": "fixtures", "verdict": "fail",
+        "details": "crashed: ModuleNotFoundError: No module named 'activegraph'",
+        "at": "2026-07-08T23:00:00Z"})
+    surfaced = harness._latest_child_failure_detail()
+    assert "ModuleNotFoundError" in surfaced, surfaced
+
+    # Render a digest for a synthetic anomaly carrying that child detail
+    # and prove the crash detail is on the page (not "opaque").
+    harness.state["anomaly_log"].append({
+        "rotation": 1, "path": "happy", "at": "2026-07-08T23:00:01Z",
+        "child_detail": surfaced, "traceback": "AssertionError: verdict != pass"})
+    digest = harness.write_digest(1, {"fresh": True, "reloaded": {}}, [
+        {"path": "happy", "ok": False, "child_detail": surfaced,
+         "detail": "AssertionError"}])
+    text = digest.read_text()
+    assert "ModuleNotFoundError" in text, "digest must not be opaque"
+    assert "child failure:" in text
+    assert "Trial child failure detail (the real error)" in text
+    return {"preflight": "ok + refusal both proven",
+            "crash_detail": "surfaced in helper and digest"}
+
+
 SCENARIOS = [
     ("01 happy path: gap -> gates -> trial -> approval -> promote -> live",
      fx_01_happy_path),
@@ -1032,6 +1100,8 @@ SCENARIOS = [
      fx_22_drafting_taint_not_launderable),
     ("23 structured-field charset: prose-shaped fields refused at submission",
      fx_23_structured_field_charset),
+    ("24 soak preflight + crash detail: incapable box refused, crashes never opaque",
+     fx_24_soak_preflight_and_crash_detail),
 ]
 
 

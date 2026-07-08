@@ -6,6 +6,20 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.5.1: soak preflight + never-opaque crash detail.**
+  A Replit soak RED (root cause environmental: the runtime's trial-child
+  env whitelist strips `REPLIT_PYTHONPATH`, so the child cannot import
+  activegraph there) surfaced two soak-side defects. The soak now runs a
+  preflight before rotation 1 that launches one real minimal trial child
+  and refuses to run (exit 2, clear message) on a box that cannot host
+  subprocess trials, instead of accumulating silent crashes. And a
+  trial-child failure is never opaque: its outcome and
+  `TrialReport.detail` reach the digest and anomaly log, not just the
+  soak-side assertion. The whitelist itself is a runtime security
+  boundary and is untouched; the fix for legit-but-incapable
+  environments is couriered to the runtime (make the child's package
+  discoverability an explicit input, do not forward arbitrary platform
+  env). Runbook documents the environment constraint. Fixture 24.
 - **Evolution pack v0.5.0: author-frame enforced boundaries** (LLM-author
   build gate 2 met). The design review passed; its four required
   changes turn asserted trust boundaries into enforced ones, built
