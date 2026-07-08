@@ -42,7 +42,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], composes_with=["entity", "memory_gateway"]
 pack = Pack(
     name="research",
-    version="0.1.1",
+    version="0.1.2",
     description=(
         "Research paper ingestion, claim extraction, idea atom distillation, "
         "and hypothesis generation. All behaviors deterministic in v0.1 (mock LLM stubs). "

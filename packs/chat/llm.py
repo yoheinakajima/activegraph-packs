@@ -179,152 +179,15 @@ class MockChatProvider:
         return True
 
 
-# ================================================================ Provider compatibility
+# ================================================================ Provider construction
 #
-# The framework's canonical values are not always what a provider's wire API
-# accepts. ProviderCompat absorbs those mismatches AT THE PROVIDER BOUNDARY —
-# canonical names/params everywhere inside the graph and trace, provider-legal
-# values on the wire, translated back on the way in. Nothing outside this
-# seam ever sees a sanitized name.
-
-# Canonical pack-scoped tool names are 'pack_name.tool_name'. OpenAI and
-# Anthropic both reject '.' in function/tool names (^[a-zA-Z0-9_-]+$), so the
-# dot becomes a double underscore on the wire and is reverse-mapped on the
-# way back.
-_SCOPED_NAME_SEP = "__"
-
-
-def _safe_tool_name(name: str) -> str:
-    return name.replace(".", _SCOPED_NAME_SEP)
-
-
-class ProviderCompat:
-    """Sanitize pack-scoped tool names at the provider boundary.
-
-    Outbound: tool definitions and prior-turn assistant ``tool_calls`` get
-    wire-legal names ('pack.tool' → 'pack__tool'). Inbound: tool calls in the
-    response are mapped back to their canonical names, so the runtime's tool
-    registry (which validates canonical names at registration) matches.
-
-    A response tool name with no mapping (a hallucinated tool) passes through
-    untouched — the runtime's own unknown-tool handling is the right place
-    for that error, not a guess here.
-
-    Wraps any ``LLMProvider``; a call with no ``tools`` is pure passthrough.
-    """
-
-    def __init__(self, inner: Any) -> None:
-        self._inner = inner
-        # @llm_behavior(model=None) reads default_model off the provider.
-        self.default_model = getattr(inner, "default_model", None)
-
-    @staticmethod
-    def _sanitize_message(message: Any) -> Any:
-        """Return *message* with tool-call names sanitized (copy, not mutate —
-        the runtime owns the message objects)."""
-        calls = getattr(message, "tool_calls", None)
-        if not calls:
-            return message
-        import dataclasses
-
-        return dataclasses.replace(
-            message,
-            tool_calls=[
-                dataclasses.replace(c, name=_safe_tool_name(c.name)) for c in calls
-            ],
-        )
-
-    def complete(self, **kwargs: Any) -> LLMResponse:
-        tools = kwargs.get("tools")
-        if not tools:
-            return self._inner.complete(**kwargs)
-
-        name_map: dict[str, str] = {}  # wire-safe → canonical
-        safe_tools = []
-        for t in tools:
-            t2 = dict(t)
-            name = t2.get("name", "")
-            safe = _safe_tool_name(name)
-            if safe != name:
-                name_map[safe] = name
-                t2["name"] = safe
-            safe_tools.append(t2)
-
-        kwargs = dict(kwargs)
-        kwargs["tools"] = safe_tools
-        if name_map:
-            kwargs["messages"] = [
-                self._sanitize_message(m) for m in (kwargs.get("messages") or [])
-            ]
-
-        resp = self._inner.complete(**kwargs)
-        if resp.tool_calls:
-            resp.tool_calls = [
-                ToolCall(id=c.id, name=name_map.get(c.name, c.name), args=c.args)
-                for c in resp.tool_calls
-            ]
-        return resp
-
-    def estimate_cost(self, **kwargs: Any) -> Decimal:
-        return self._inner.estimate_cost(**kwargs)
-
-    def count_tokens(self, **kwargs: Any) -> int:
-        return self._inner.count_tokens(**kwargs)
-
-    def recognizes_model(self, name: str) -> bool:
-        return self._inner.recognizes_model(name)
-
-
-# OpenAI's reasoning-model families reject `max_tokens` (they want
-# `max_completion_tokens`) and non-default `temperature`/`top_p`. The
-# framework provider sends all three unconditionally, so the translation
-# happens one level down — on the OpenAI *client* payload.
-_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
-
-
-def _is_reasoning_family(model: str) -> bool:
-    return str(model).lower().startswith(_REASONING_MODEL_PREFIXES)
-
-
-class _OpenAIParamShim:
-    """Payload-rewriting facade over an OpenAI SDK client.
-
-    Exposes just the ``chat.completions.create`` surface OpenAIProvider
-    uses. For reasoning-family models: ``max_tokens`` →
-    ``max_completion_tokens``, and ``temperature``/``top_p`` are dropped
-    (those models accept only their defaults). Other models pass through
-    byte-identical.
-    """
-
-    def __init__(self, inner_client: Any) -> None:
-        self._inner = inner_client
-
-        import types as _types
-
-        self.chat = _types.SimpleNamespace(
-            completions=_types.SimpleNamespace(create=self._create)
-        )
-
-    def _create(self, **kwargs: Any) -> Any:
-        if _is_reasoning_family(kwargs.get("model", "")):
-            kwargs = dict(kwargs)
-            if "max_tokens" in kwargs:
-                kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
-            kwargs.pop("temperature", None)
-            kwargs.pop("top_p", None)
-        return self._inner.chat.completions.create(**kwargs)
-
-
-class OpenAICompatProvider(OpenAIProvider):
-    """OpenAIProvider with the reasoning-family parameter shim applied.
-
-    Overrides the lazy ``_client()`` seam so the SDK import, env-var check,
-    and client caching all stay exactly as the base provider implements
-    them — the shim only wraps the returned client.
-    """
-
-    def _client(self) -> Any:
-        return _OpenAIParamShim(super()._client())
+# SHIMS RETIRED (v0.4.0, activegraph >=1.3): the ProviderCompat tool-name
+# wire sanitizer and the OpenAI reasoning-family parameter shim both lived
+# here while the runtime lacked them. CONTRACT v1.3 #3 moved both to the
+# runtime's provider boundary (activegraph.llm.wire sanitize/restore with a
+# per-request reverse map, in BOTH providers; per-family request params in
+# OpenAIProvider). tests/test_provider_compat.py now points at the runtime
+# surfaces and is the proof of retirement.
 
 
 def _make_native_provider(provider: str, model: Optional[str]):
@@ -336,7 +199,7 @@ def _make_native_provider(provider: str, model: Optional[str]):
     behavior pinning a provider-specific name at import time.
     """
     if provider == "openai":
-        inst: Any = OpenAICompatProvider()
+        inst: Any = OpenAIProvider()
     elif provider == "anthropic":
         inst = AnthropicProvider()
     else:  # pragma: no cover - guarded by callers
@@ -478,12 +341,12 @@ def select_chat_provider(
     info = resolve_chat_config(provider_pref=provider_pref, model=model)
     if info["mode"] == "live":
         native = _make_native_provider(info["provider"], info["model"])
-        # Order matters: Fallback(Compat(native)). ProviderCompat translates
-        # names at the wire boundary; FallbackChatProvider sits outermost so
-        # any failure (including inside the compat layer) still degrades to
-        # an instructive reply on plain chat turns.
+        # Wire-boundary concerns (tool-name sanitization, per-family request
+        # params) live in the runtime provider itself since v1.3.
+        # FallbackChatProvider wraps outermost so a provider failure still
+        # degrades to an instructive reply on plain chat turns.
         provider: Any = FallbackChatProvider(
-            ProviderCompat(native), provider=info["provider"], key_env=info["key_env"]
+            native, provider=info["provider"], key_env=info["key_env"]
         )
     else:
         provider = MockChatProvider()

@@ -470,3 +470,11 @@ machinery, identity_auth approver verification, artifacts (core),
 schedule (reflection ticks). Runtime fast-follow asks, in priority
 order: subprocess trial isolation (T5), pack disable/unload (§7.1),
 compaction pinning for promoted-from forks (§7.5).
+
+Strict-replay note (CONTRACT v1.3 #4.4b): strict replay diverges on runs
+that combine `replay_strict=True` with behaviors subscribed to
+`promote.applied`, because marker-derived events are recorded but never
+re-derived. This pack IS that subscriber (`mod_promotion` recording), so
+its fixtures never assert under strict replay across a promoted block,
+and any host enabling strict replay on a store with adoptions must
+expect divergence there. Ordinary replay (projection) is unaffected.

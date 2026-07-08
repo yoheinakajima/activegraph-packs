@@ -66,7 +66,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["communication", "tool_gateway"]
 pack = Pack(
     name="schedule",
-    version="0.1.0",
+    version="0.1.1",
     description=(
         "Graph-native scheduling: schedules declare when to fire and what to "
         "emit; ticks are event-first records of due moments; a host driver "

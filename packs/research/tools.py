@@ -102,7 +102,7 @@ def create_idea_atom(
 
 
 @tool(name="create_experiment", description="Create a research experiment linked to a direction.")
-def create_experiment(graph: Graph, title: str, hypothesis: str, direction_id: str | None = None) -> object:
+def create_experiment(graph: Graph, title: str, hypothesis: str = "", direction_id: str | None = None) -> object:
     return create_experiment_fn(graph, title, hypothesis, direction_id)
 
 

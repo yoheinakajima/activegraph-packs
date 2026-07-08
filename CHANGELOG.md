@@ -6,6 +6,36 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **activegraph pin: >=1.3,<2.0** (task #10). Everything the packs waited
+  for is in this runtime release; the migration in full:
+  - `@tool` signatures across 12 packs satisfy v1.3 registration-time
+    validation (defaults beyond the `(args, ctx)` contract; patch bumps
+    per pack). No behavior change.
+  - **Shims retired with proof** (chat v0.4.0): `ProviderCompat`
+    (tool-name wire sanitization) and the OpenAI reasoning-family
+    parameter shim are deleted; the runtime owns the wire boundary
+    (CONTRACT v1.3 #3). `tests/test_provider_compat.py` is now the
+    retirement proof, pointed at `activegraph.llm.wire` and
+    `OpenAIProvider` — including the taxonomy split (auth/request errors
+    terminal, no longer retried as network flakes).
+  - **Kept, with reason**: chat's `FallbackChatProvider` (mock-mode UX,
+    never a runtime workaround).
+  - **EmbeddingProvider seam adopted** (memory_gateway v0.4.0): both
+    pack embedders implement the runtime protocol; the backend accepts
+    runtime providers and the legacy seam; the runtime's
+    `HashEmbeddingProvider` works behind `set_embedder()` unmodified.
+  - **Trace surface**: audited; no pack read around the old surface, so
+    nothing to retire. `rt.trace.events()/failures()` are available to
+    the evolution pack as designed.
+  - **Strict-replay audit (CONTRACT v1.3 #4.4b)**: no pack uses
+    `replay_strict=True` and none subscribes to `promote.applied` today,
+    so no current pack is affected. The one FUTURE subscriber is the
+    evolution pack (by design); the limitation is recorded in
+    `docs/evolution-design.md` §9 so its fixtures and any host enabling
+    strict replay know marker-derived events do not re-derive.
+
+## v0.3.0 — Library era: MCP, catalog, managed auth, design docs (2026-07-08)
+
 - **Capability catalog** (tool_gateway v0.5.0, mcp v0.2.0): every
   registered capability queryable with risk class, origin (native vs
   MCP-derived), LLM-exposability, and live allow-list status. The agent

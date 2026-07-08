@@ -139,7 +139,7 @@ def register_entity(
 def decide_merge(
     graph: Any,
     merge_candidate_id: str,
-    decision: str,
+    decision: str = "",
     surviving_entity_id: Optional[str] = None,
     rationale: str = "",
 ) -> Any:

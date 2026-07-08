@@ -104,7 +104,7 @@ def add_deal_risk_fn(
 
 @tool(name="ingest_founder_email", description="Ingest a founder fundraising email as a comm_message.")
 def ingest_founder_email(
-    graph: Graph, sender_ref: str, content: str, subject: str = "", channel: str = "email"
+    graph: Graph, sender_ref: str, content: str = "", subject: str = "", channel: str = "email"
 ) -> object:
     return ingest_founder_email_fn(graph, sender_ref, content, subject, channel)
 
@@ -120,7 +120,7 @@ def create_deal_round(
 
 @tool(name="add_traction_metric", description="Add a traction metric (ARR, MRR, DAU, etc.) to a company.")
 def add_traction_metric(
-    graph: Graph, company_id: str, metric_name: str, value: float,
+    graph: Graph, company_id: str, metric_name: str = "", value: float = None,
     unit: str = "USD", period: str | None = None, growth_rate: float | None = None,
 ) -> object:
     return add_traction_metric_fn(graph, company_id, metric_name, value, unit, period, growth_rate)
@@ -128,7 +128,7 @@ def add_traction_metric(
 
 @tool(name="add_deal_risk", description="Record a risk identified during deal evaluation.")
 def add_deal_risk(
-    graph: Graph, company_id: str, risk_text: str,
+    graph: Graph, company_id: str, risk_text: str = "",
     category: str = "other", severity: str = "medium", mitigation: str = "",
 ) -> object:
     return add_deal_risk_fn(graph, company_id, risk_text, category, severity, mitigation)

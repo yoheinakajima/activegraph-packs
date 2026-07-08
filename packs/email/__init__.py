@@ -87,7 +87,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core", "communication"], composes_with=["identity_auth", "tool_gateway"]
 pack = Pack(
     name="email",
-    version="0.1.1",
+    version="0.1.2",
     description=(
         "Email adapter pack. Translates inbound emails into CommMessage(channel=email). "
         "email_ingester handles dedup, threading (In-Reply-To / References), and produces "

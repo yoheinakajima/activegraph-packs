@@ -1,5 +1,13 @@
 # Tool Gateway Pack Changelog
 
+## v0.5.1 — activegraph 1.3 compatibility (2026-07-08)
+
+### Fixed
+- `@tool` wrapper signatures satisfy the runtime's v1.3 registration-time
+  validation: every parameter beyond the `(args, ctx)` invocation contract
+  now has a default. No behavior change (behaviors call the `_fn`
+  variants directly).
+
 ## v0.5.0 — Capability catalog (2026-07-08)
 
 ### Added

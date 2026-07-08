@@ -131,7 +131,7 @@ def create_project(
 
 @tool(name="create_milestone", description="Create a milestone within a project.")
 def create_milestone(
-    graph: Graph, project_id: str, title: str,
+    graph: Graph, project_id: str, title: str = "",
     description: str = "", target_date: str | None = None,
 ) -> object:
     return create_milestone_fn(graph, project_id, title, description, target_date)
@@ -146,13 +146,13 @@ def submit_task_candidate(
 
 
 @tool(name="assign_task", description="Assign a task to a team member.")
-def assign_task(graph: Graph, task_id: str, principal_ref: str, role: str = "assignee") -> object:
+def assign_task(graph: Graph, task_id: str, principal_ref: str = "", role: str = "assignee") -> object:
     return assign_task_fn(graph, task_id, principal_ref, role)
 
 
 @tool(name="mark_task_done", description="Mark a task as done with completion evidence.")
 def mark_task_done(
-    graph: Graph, task_id: str, evidence_text: str, completed_by_ref: str | None = None
+    graph: Graph, task_id: str, evidence_text: str = "", completed_by_ref: str | None = None
 ) -> object:
     return mark_task_done_fn(graph, task_id, evidence_text, completed_by_ref)
 

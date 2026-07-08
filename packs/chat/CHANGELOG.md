@@ -1,5 +1,24 @@
 # Chat Pack Changelog
 
+## v0.4.0 — Provider shims retired (activegraph >=1.3) (2026-07-08)
+
+### Removed
+- `ProviderCompat` (pack-scoped tool-name wire sanitization + reverse map)
+  and the OpenAI reasoning-family parameter shim (`_OpenAIParamShim`,
+  `OpenAICompatProvider`). CONTRACT v1.3 #3 moved both concerns into the
+  runtime's provider boundary (`activegraph.llm.wire`, per-family request
+  params in `OpenAIProvider`, for BOTH providers including echoed
+  assistant turns). Retirement proof: `tests/test_provider_compat.py` now
+  points at the runtime surfaces and must keep passing.
+- `@tool` signature defaults for v1.3 registration-time validation
+  (`submit_chat_input`).
+
+### Kept, with reason
+- `FallbackChatProvider` stays: it is mock-mode UX (a plain chat failure
+  degrades to an instructive reply naming the fix), never a runtime
+  workaround. The v1.3 error-taxonomy split (`llm.auth_error` /
+  `llm.request_error` terminal) makes its messages more accurate for free.
+
 ## v0.3.0 — Agentic chat + provider-boundary compatibility (2026-07-08)
 
 ### Added

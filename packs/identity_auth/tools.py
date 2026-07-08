@@ -150,7 +150,7 @@ def lookup_principal(graph: Any, sender_ref: str) -> Optional[dict]:
 def check_principal_permission(
     graph: Any,
     principal_id: str,
-    action: str,
+    action: str = "",
     risk_class: str = "medium",
 ) -> dict:
     """Registered tool wrapper — delegates to check_principal_permission_fn."""
@@ -168,7 +168,7 @@ def check_principal_permission(
 def register_principal(
     graph: Any,
     sender_ref: str,
-    role: str,
+    role: str = "",
     name: Optional[str] = None,
     channel: str = "unknown",
 ) -> dict:
