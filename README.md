@@ -9,14 +9,14 @@ on the runtime compose from, plus the conventions that keep a multi-pack
 assistant coherent — the layering model, the coordination style, the
 fixture discipline, and the pack format itself
 ([docs/manifest-spec.md](docs/manifest-spec.md), draft). Specialized
-domain packs (the `vc` pack first) are being extracted to their own
-repos, establishing the pattern for third-party pack libraries; the
-bundles and demo server here are the reference assistant chassis, and
+domain packs belong in their own repos once the manifest's multi-repo
+loading lands, establishing the pattern for third-party pack libraries;
+the bundles and demo server here are the reference assistant chassis, and
 products built on this library ship their own. [CONTRIBUTING.md](CONTRIBUTING.md)
 is the canonical pack-author guide — the same bar every pack in this
 library meets, human-authored or otherwise.
 
-ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 19 packs plus a bridge pack (20 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
+ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 18 packs plus a bridge pack (19 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
 
 > **New here? Read [docs/concepts.md](docs/concepts.md) first** — it explains the
 > event-sourced graph model and the central idea of this repo: the split between the
@@ -41,8 +41,8 @@ pip install -e ".[dev]"          # activegraph + all packs (editable install)
 python packs/demo_server.py
 
 # Option B: build a runtime in your own code
-python -c "from bundles import build_vc_assistant; \
-  build_vc_assistant().run_goal('Diligence: Northwind Robotics')"
+python -c "from bundles import build_assistant; \
+  build_assistant().run_goal('Summarize what you can do')"
 ```
 
 ### Path 2 — Run the full demo locally (UI + API + runtime)
@@ -174,7 +174,6 @@ Full explanation, dependency graph, and the invariants that hold it together:
 | `mcp` | Bidirectional MCP: outbound servers' tools become governed capabilities; inbound, the assistant is an MCP server other agents can use (token auth, role-scoped exposure, full audit) |
 | `email` | Email adapter — threading, deduplication, draft formatting, approval-gated outbound sends |
 | `research` | Knowledge tracking for academic and applied research: papers, claims, hypotheses |
-| `vc` | Venture capital deal flow: founder outreach, company profiling, memo drafting, followup tracking |
 | `codebase` | Engineering workflow tracking: repos, issues, PRs, architecture decisions, dependency auditing |
 | `team_ops` | Project management layer extending Core tasks with assignments, milestones, workload estimation |
 | `meeting` | Meeting processing: decision extraction, action item tracking, automated summarization |
@@ -188,16 +187,15 @@ Plus `packs/bridges/` — a Diligence-Core bridge that maps the bundled ActiveGr
 | `assistant` | core, tool_gateway, secrets, memory_gateway, agent_profile, identity_auth, communication, schedule, chat |
 | `messaging_assistant` | assistant bundle + telegram, whatsapp |
 | `email_assistant` | assistant bundle + email, entity |
-| `vc_bundle` | email_assistant bundle + diligence_core_bridge, vc, meeting |
 | `research_bundle` | core, tool_gateway, memory_gateway, research |
 
 A bundle is a preset list of packs with a factory function — not a new pack with its own ontology.
 
 ```python
-from bundles import build_vc_assistant
+from bundles import build_email_assistant
 
-rt = build_vc_assistant()
-rt.run_goal("Diligence: Northwind Robotics")
+rt = build_email_assistant()
+rt.run_goal("Triage today's inbox")
 ```
 
 ---

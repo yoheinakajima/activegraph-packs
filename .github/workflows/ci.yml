@@ -56,9 +56,6 @@ jobs:
       - name: research fixtures
         run: python packs/research/fixtures/run_fixtures.py
 
-      - name: vc fixtures
-        run: python packs/vc/fixtures/run_fixtures.py
-
       - name: codebase fixtures
         run: python packs/codebase/fixtures/run_fixtures.py
 

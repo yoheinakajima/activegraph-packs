@@ -42,7 +42,6 @@ whatsapp = "packs.whatsapp:pack"
 mcp = "packs.mcp:pack"
 
 research = "packs.research:pack"
-vc = "packs.vc:pack"
 codebase = "packs.codebase:pack"
 team_ops = "packs.team_ops:pack"
 meeting = "packs.meeting:pack"

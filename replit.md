@@ -29,7 +29,6 @@ packs/                    # All ActiveGraph packs (Python)
 bundles/                  # Pre-assembled pack collections
   assistant.py            # Base assistant bundle
   email_assistant.py      # Email-capable assistant
-  vc_bundle.py            # VC/investor assistant
   research_bundle.py      # Research assistant
 artifacts/
   api-server/             # Express API server (TypeScript)
@@ -51,7 +50,7 @@ These rules are **non-negotiable** for all packs in this repo. They encode the d
 6. **Memory is candidate-first** — Durable memory must be proposed, evaluated, accepted, and then written/synced. Never write memory directly.
 7. **Core stays small** — Core Pack defines universal primitives only: source, observation, task, action, artifact, memory_candidate, evaluation. Nothing else.
 8. **Packs degrade gracefully** — Packs require only what they truly need and optionally integrate with others via `integrates_with`.
-9. **Domain packs are channel-agnostic** — Research, VC, Codebase, Meeting, and Team/Ops must not own communication, identity, or tool execution. They consume those capabilities if available.
+9. **Domain packs are channel-agnostic** — Research, Codebase, Meeting, and Team/Ops must not own communication, identity, or tool execution. They consume those capabilities if available.
 10. **Behavior maps make packs understandable** — Every pack must expose a behavior map: event/object → behavior → output objects/actions → downstream behavior.
 
 ### 2. Pack Naming Conventions

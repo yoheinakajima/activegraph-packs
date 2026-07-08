@@ -1,11 +1,13 @@
 # Pack Manifest Specification
 
-**Status: DRAFT for review. This spec stays DRAFT until two consumers
-have actually consumed it: the vc pack extraction (multi-repo loading)
-and the evolution pack (agent-authored packs). Expect breaking edits
-until then. Loader-side validation belongs to the activegraph runtime
-(`packs/loader.py`); this document is written so that team can build
-against it, and it ends with the questions they need to answer.**
+**Status: DRAFT. The freeze condition: the runtime's Q1-Q8 answers
+folded in, plus the evolution pack consuming this spec in its static
+gates. §5 (sources, resolution, pins) is PROVISIONAL beyond that freeze:
+its planned first consumer (the vc pack extraction) was cancelled when
+the vc pack was deleted, so §5 stays provisional until a real multi-repo
+consumer (a host pack-sources config) builds against it. Loader-side
+validation belongs to the activegraph runtime (`packs/loader.py`); this
+document is written so that team can build against it.**
 
 ## 1. Why a manifest
 
@@ -18,8 +20,8 @@ for everything now arriving:
   machine-readable declaration to check code against, and an approval
   surface needs a stable identity (name, version, content hash) to pin
   what the owner reviewed.
-- **Multi-repo loading** (vc extraction, third-party pack repos,
-  BabyAGI's pack-sources config): an installer needs dependencies and
+- **Multi-repo loading** (third-party pack repos, a host's
+  pack-sources config): an installer needs dependencies and
   compatibility ranges before it imports anything.
 - **The runtime loader**: fail-loud validation at load time instead of
   import-time surprises.
@@ -27,6 +29,11 @@ for everything now arriving:
 The manifest is the static, declarative half of a pack. The `Pack(...)`
 object remains the runtime artifact. The loader's job is to verify the
 two agree.
+
+Section 5 note: with the vc extraction cancelled, §5 currently has no
+consuming implementation. It stays in the spec as the designed shape,
+marked provisional, so a future pack-sources host starts from reviewed
+rules instead of a blank page.
 
 ## 2. File format and location
 
@@ -241,17 +248,17 @@ location = "../activegraph-packs"
 subdir = "packs"                 # pack root = <source>/<subdir>/<pack name>
 
 [[sources]]
-name = "activegraph-packs-vc"
+name = "activegraph-packs-research"
 kind = "git"
-location = "https://github.com/yoheinakajima/activegraph-packs-vc"
+location = "https://github.com/example/activegraph-packs-research"
 ref = "9f2c41d..."               # commit SHA required unless pinned below
 subdir = "packs"                 # default "packs"; "." for repo-root packs
 
 [load]
-packs = ["core", "tool_gateway", "chat", "vc"]
+packs = ["core", "tool_gateway", "chat", "research"]
 
 [load.pins]                      # optional per-pack expected hashes
-vc = "sha256:ab12..."
+research = "sha256:ab12..."
 ```
 
 Resolution rules, in order, all before anything imports:
@@ -284,7 +291,7 @@ Resolution rules, in order, all before anything imports:
 | Runtime loader | machine-checkable schema, two-way surface check, structured errors | §3, Q1, Q3 |
 | This repo's CI | validate 20 existing manifests, enforce fixtures promise | §3 fixtures, Q2 migration |
 | Evolution pack | stable identity + hash pin, declared-vs-actual for static gates, risk classes visible pre-import, `authored_by` disclosure | §3 surface/integrity/provenance, §4 |
-| vc extraction (#8) | dependency ranges resolvable cross-repo, source declarations | §3 dependencies, §5 |
+| future multi-repo host (§5, provisional) | dependency ranges resolvable cross-repo, source declarations | §3 dependencies, §5 |
 | BabyAGI pack-sources | the §5 shape, trust tiers host-side, catalog metadata without import | §5, §3 provenance note, capabilities table |
 
 The hardest consumer is the evolution pack, and it drove three

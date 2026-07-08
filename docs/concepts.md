@@ -83,7 +83,7 @@ Layered packs split further by intent:
 | **Core** | `core` | The 7 universal primitives. Depends on nothing. |
 | **Infrastructure** | `tool_gateway`, `secrets`, `memory_gateway`, `identity_auth`, `agent_profile`, `entity`, `schedule` | Cross-cutting capabilities every assistant needs: tool execution, credentials, memory lifecycle, identity, agent persona, entity dedupe. |
 | **Communication** | `communication`, `chat`, `telegram`, `whatsapp`, `email` | Channel-neutral messaging plus channel adapters (`chat` is the conversation engine the messenger adapters reuse). |
-| **Domain** | `research`, `vc`, `codebase`, `team_ops`, `meeting` | Specific verticals. Channel-agnostic — they consume infrastructure and communication, never own them. |
+| **Domain** | `research`, `codebase`, `team_ops`, `meeting` | Specific verticals. Channel-agnostic — they consume infrastructure and communication, never own them. |
 | **Bridge** | `bridges` (diligence_core_bridge) | Zero-ontology pack mapping a third-party pack's outputs onto Core types. |
 
 The dependency picture:
@@ -101,7 +101,7 @@ kernel (activegraph runtime)
     │   ├── chat                  # requires: core, communication
     │   └── email                 # requires: core, communication
     ├── research                  # integrates_with: entity, memory_gateway
-    ├── vc                        # requires: core, communication
+    ├── meeting                   # requires: core, communication
     ├── codebase                  # integrates_with: identity_auth, team_ops
     ├── team_ops                  # integrates_with: identity_auth, codebase, meeting
     └── meeting                   # integrates_with: team_ops, identity_auth, communication
@@ -112,14 +112,14 @@ kernel (activegraph runtime)
 ## Why domain packs map back to Core
 
 The reason layering works is that domain packs **bridge their outputs to Core
-primitives**. A `vc` pack might create a domain object for a founder email, but it
+primitives**. A `meeting` pack might create a domain object for a transcript, but it
 also creates Core `observation`s and `artifact`s connected by relations like
 `derived_from`. That has two payoffs:
 
 1. **Auditability** — anything in the system, regardless of which pack produced it,
    is reachable through the same seven Core types and the same event log.
 2. **Composition** — an infrastructure pack like `memory_gateway` only has to
-   understand Core `memory_candidate`s. It never needs to know `vc` exists. New
+   understand Core `memory_candidate`s. It never needs to know `meeting` exists. New
    domain packs get memory, tools, and identity *for free* by speaking Core.
 
 The `bridges` pack is the purest illustration: it has **no object types of its

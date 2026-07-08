@@ -74,23 +74,9 @@ rt.run_goal("Diligence: Northwind Robotics")
 # → Each document, claim, memo, and risk also appears as a Core primitive
 ```
 
-Or use the pre-built VC Bundle which handles load order and the `derived_from` conflict resolution automatically:
-
-```python
-from bundles import build_vc_assistant
-rt = build_vc_assistant()
-```
-
 #### The `derived_from` conflict
 
-Both Core Pack and the Diligence pack declare a `derived_from` relation type. Loading them both without a shim causes a `PackConflictError`. The `vc_bundle.py` factory function strips the Diligence pack's copy before loading it:
-
-```python
-# vc_bundle.py strips Diligence's derived_from declaration automatically
-rt = build_vc_assistant()   # conflict resolved for you
-```
-
-If you load the packs manually, apply the same pattern:
+Both Core Pack and the Diligence pack declare a `derived_from` relation type. Loading them both without a shim causes a `PackConflictError`. Strip the Diligence pack's copy before loading it:
 
 ```python
 from activegraph.packs import load_by_name

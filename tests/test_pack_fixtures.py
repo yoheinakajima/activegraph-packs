@@ -34,7 +34,6 @@ PACKS = [
     "secrets",
     "team_ops",
     "tool_gateway",
-    "vc",
 ]
 
 

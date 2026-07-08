@@ -6,6 +6,16 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **vc pack DELETED** (replaces the extraction plan, task #8). The pack
+  was not well designed, and its extraction was only ever a dogfood for
+  the manifest's multi-repo loading. Removed: `packs/vc`, `vc_bundle`
+  (+ its example and `build_vc_assistant`), the pyproject entry point,
+  the CI step, and every doc reference. The bundle count drops to 4 and
+  the pack count to 18 + bridge. Consequence for the manifest spec: §5
+  (sources, resolution, pins) loses its first consumer and is marked
+  PROVISIONAL until a real pack-sources host builds against it; the
+  spec's freeze condition is now "runtime Q1-Q8 answers folded + the
+  evolution pack consuming the spec in its gates" (see the spec header).
 - **activegraph pin: >=1.3,<2.0** (task #10). Everything the packs waited
   for is in this runtime release; the migration in full:
   - `@tool` signatures across 12 packs satisfy v1.3 registration-time
