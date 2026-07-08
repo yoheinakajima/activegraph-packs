@@ -1,12 +1,14 @@
 # Evolution Pack: design
 
-**Status: IMPLEMENTED (packs/evolution, activegraph >=1.4). This
+**Status: IMPLEMENTED (packs/evolution, activegraph >=1.5). This
 document is the design of record; implementation-forced decisions were
 folded back in the same commits that made them (per the house rule that
-an uncovered decision is a doc bug). The v1.4 runtime deliveries this
-consumes: promote with apply-time delta validation (CONTRACT v1.3 #4
-addendum 4c), `disable_pack`, and the manifest reference
-implementation.**
+an uncovered decision is a doc bug). Runtime deliveries consumed: v1.4
+promote with apply-time delta validation (CONTRACT v1.3 #4 addendum
+4c), `disable_pack`, the manifest reference implementation; v1.5
+subprocess trial isolation (`activegraph.sandbox.run_forked_trial`,
+closing §7.2/T5's process edge) and enforced retention pins
+(`activegraph.store.retention`, closing §7.5).**
 
 The evolution pack lets the assistant author new packs for itself, trial
 them in isolation against its own history, and adopt them only after the
@@ -42,6 +44,8 @@ v1.3.0 (promote per the amended promote design in promote-design.md):
 | `rt.diff(fork)` | The structural summary on the owner's decision surface |
 | `parent_rt.promote(fork)` | Adopt the trial's net state delta, atomically, quiescently |
 | `promote.applied` marker event | The single event behaviors may react to post-adoption |
+| `activegraph.sandbox.run_forked_trial` (v1.5) | Stage 3's process boundary: candidate execution in a fresh-interpreter child, pin-verified, three nets |
+| `activegraph.store.retention` `pins`/`retire` (v1.5) | §7.5: promoted-from fork logs refuse retirement; disposable trial forks archive at boot |
 
 Consumption pattern for adoption, in order, inside one governed
 executor. This is the single canonical order; §3 stage 5 restates it
@@ -205,15 +209,34 @@ mistakes; they do not stop a determined adversary who controls the
 model. The containment that holds is §6's structure: nothing loads
 without a verified owner approval of the exact reviewed bytes.
 
-### Stage 3: fork trial
+### Stage 3: fork trial (subprocess, v1.5)
 
 ```python
-fork = parent_rt.fork(at_event=parent_tip)
-fork.load_pack(candidate, settings=proposal_settings)
-run_scenarios(fork)          # see below
-failures = fork.trace.failures()
-diff = parent_rt.diff(fork)
+report = run_forked_trial(              # activegraph.sandbox
+    store_path, parent_run_id=rt.run_id, at_event=parent_tip,
+    pack_source=PackSource(root, expected_bundle_hash=proposal_pin),
+    scenario="fixtures/trial_scenario.py::main", limits=TrialLimits(...))
+fork = Runtime.load(store_path, run_id=report.fork_run_id, behaviors=[])
 ```
+
+The parent forks; the child is a fresh interpreter that verifies the
+bundle-hash pin BEFORE importing anything, loads the fork by run id,
+and runs the scenario under the runtime's three nets (rlimits,
+parent-side wall-clock kill, event budget). The parent never imports
+candidate code at trial time. Two child runs per trial: the
+candidate's own fixtures (the sandbox smoke), then the chassis trial
+driver. The driver is an interface-forced design decision folded back
+per the house rule: `run_forked_trial` requires the scenario file to
+live inside the bundle-hashed pack root, so
+`fixtures/trial_scenario.py` joined the authored file set. Authors
+include the canonical render verbatim (`trial_driver.py`), gate 0b
+refuses any proposal whose copy differs byte for byte, and the
+held-out split is thereby decided at proposal creation and frozen
+under the same pin the owner approves, which is what this design
+wanted the split to do anyway. The store is the record: the driver
+leaves untyped stage markers in the fork; the parent reads them,
+records gate_result objects, and removes the markers so the promote
+delta stays clean.
 
 Scenario discipline, stolen from the regimes repo (static -> sandbox ->
 in-sample -> held-out):
@@ -240,11 +263,12 @@ scenarios produce no regressions in existing packs' fixtures run inside
 the same fork, budget respected. `mod_trial.verdict` records it; the
 fork run id is kept for audit and for the promote step.
 
-A passing fork then sweeps its own bench (§7.3): every object and
-relation CREATED in the fork after the candidate loaded (the replayed
-input copies and everything derived from them) is removed before the
-fork is handed to adoption, so the promote delta carries measurements
-out and adoptable state only. Patches to pre-existing shared objects
+A passing fork then sweeps its own bench (§7.3), inside the child (the
+trial driver owns the sweep): every object and relation CREATED in the
+fork after the candidate loaded (the replayed input copies and
+everything derived from them) is removed before the fork is handed to
+adoption, so the promote delta carries measurements out and adoptable
+state only. Patches to pre-existing shared objects
 stay, deliberately: they are the candidate's claim about desired state,
 and exactly what the conflict check and the decision surface's diff
 counts exist to scrutinize. `mod_trial.eval_summary` records the sweep
@@ -299,6 +323,16 @@ browsers, so the owner's path of least resistance is the readable page
 and never a raw JSON blob. Agent-authored text is escaped everywhere it
 appears. Fixture 14 renders a real proposal end to end and asserts
 every section is on the page.
+
+The decision CHANNEL is authenticated separately from the decision
+itself: the demo server requires a bearer token
+(`ACTIVEGRAPH_APPROVAL_TOKEN`, constant-time compare, 401 without it,
+refusals audited as approval_auth_denial objects) on approval posts,
+and refuses decisions outright when evolution is on with no token
+configured. The principal check on the approver ref remains the
+decision underneath. Stated plainly: this is demo-server hardening of
+the transport; binding an HTTP session to a verified principal is the
+product chassis's job, and this token does not pretend to be that.
 
 ### Stage 5: adoption (the governed executor, two-phase)
 
@@ -411,6 +445,8 @@ class EvolutionSettings(BaseModel):
     gap_failure_threshold: int = 3
     trial_max_events: int = 2_000
     trial_max_llm_calls: int = 20
+    trial_wall_clock_seconds: float = 120.0   # child kill net (v1.5)
+    trial_max_rss_bytes: int = 512 * 2**20    # child RLIMIT_AS (v1.5)
     max_conflict_retries: int = 2      # then needs_owner, terminal
     heldout_segment_events: int = 200
     watch_window_events: int = 500
@@ -468,15 +504,25 @@ adoption, and at every boot re-materialization via the runtime's
 `compute_bundle_hash`.
 
 **T5: the trial itself as attack surface.** Candidate code runs inside
-the fork during stage 3, before any approval. This is the sharpest
-honest edge in the design: the fork isolates *graph state*, never
-process state. A malicious candidate could attempt process-level harm
-from inside the trial. Mitigation: static gates run BEFORE any load
-(import allow-list plus banned constructs is exactly the anti-process
-filter), trials run with budgets, and the roadmap asks the runtime for
-subprocess trial isolation as a fast-follow. Until then, stage 2 is the
-only wall before stage 3, and the design treats any stage-2 bypass as a
-critical bug, tested adversarially in the acceptance fixtures.
+the fork during stage 3, before any approval. The v1.5 runtime softened
+this edge from "static gates are the only wall" to "static gates
+filter, the process boundary contains": ALL candidate execution now
+happens in the runtime's trial child (`activegraph.sandbox`), a fresh
+interpreter with an allow-list environment (no API keys by
+construction), rlimits, a parent-side wall-clock kill, and the event
+budget as a third net. The parent never imports candidate code at
+trial time; the import happens at adoption, after gates re-run and a
+verified approval. Fixture 17 proves the containment: a candidate that
+spins forever at module import used to be able to hang the parent
+runtime at materialization, and now dies in the child at the wall
+clock while the parent records the rejection. The honest limits are
+the runtime's, restated: this is crash and state isolation, never a
+security sandbox. The child can still open sockets or read the
+filesystem; syscall and network confinement remain host territory
+(containers, seccomp), the import allow-list and banned-constructs
+gates remain the pre-execution filter for exactly that reason, and a
+verified owner reading the full diff remains the containment for a
+malicious candidate that behaves politely in the trial.
 
 **T6: gate erosion.** Future contributors relax a gate default or
 auto-approve `critical`. Containment: registration-time refusal (§3
@@ -488,8 +534,17 @@ shipped default.
 1. **RESOLVED in v1.4: `disable_pack`.** Deregistration is live
    (behaviors stop firing immediately); memory eviction still needs a
    restart, which the runtime states plainly and this design accepts.
-2. **Trial process isolation.** Fork isolates state, not the process
-   (T5). Runtime ask: optional subprocess execution for fork trials.
+2. **RESOLVED in v1.5: trial process isolation.** Stage 3 runs on the
+   runtime's `run_forked_trial`: fixture gate, in-sample replay, and
+   held-out replay all execute in a fresh-interpreter child that
+   verifies the bundle-hash pin before importing anything. The fork
+   persists in the store, so a restart between trial and adoption no
+   longer forces a re-trial (adoption reloads the fork by run id). One
+   scoping consequence, stated plainly: the child loads ONLY the
+   candidate pack, so replay exercises the candidate against recorded
+   inputs in isolation from other packs' behaviors. The v1 comparator
+   was candidate-only failures anyway; cross-pack interaction trials
+   are future work alongside §7.4.
 3. **RESOLVED in v0.2: trial replay residue.** Promote's three-way
    diff treats every fork-only create as adoptable state, so the
    replayed input copies (and everything the candidate derived from
@@ -509,10 +564,16 @@ shipped default.
 4. **Behavioral regression depth.** v1's comparator is failures plus
    fixture assertions. Graph-state diffing against expected shapes is
    future work.
-5. **Fork log retention.** Two-hop provenance (promoted entity ->
-   marker -> fork log) requires the fork's log to outlive the trial.
-   The runtime's future compaction design must treat promoted-from
-   fork runs as pinned.
+5. **RESOLVED in v1.5: fork log retention.** The runtime's retention
+   API enforces the pin this design asked for: `pins()` lists why a
+   run cannot be compacted or retired, promoted-from fork logs head
+   the pin set, and `retire`/`compact` refuse with
+   `RetentionPinnedError`. The pack consumes it in
+   `boot.retire_unpinned_trial_forks`: disposable trial forks (
+   rejected candidates, fixture-gate runs) are archived at boot,
+   in-flight forks are kept by proposal status, and promoted-from
+   forks are refused by the runtime itself, which fixture 18 asserts.
+   The pin set dominates any policy here, unconditionally.
 6. **Re-homing.** Full undo by forking pre-promote exists structurally;
    making that fork the primary run is unowned. Out of scope v1.
 7. **Concurrent authorship.** One proposal in flight per pack name at
@@ -581,6 +642,15 @@ scripted generator, never a live LLM:
     exactly `max_conflict_retries` times, then parked at `needs_owner`;
     idle sweeps do nothing further and a hand-opened ticket is refused
     without touching the parked status.
+17. **Subprocess isolation** (fixture 3's twin, v1.5): a candidate that
+    spins forever at module import passes every static gate, dies in
+    the trial child at the wall clock (`limits_exceeded`), and the
+    parent stays alive, records the rejection, and keeps processing
+    events.
+18. **Retention pins**: after a full adopt, retiring the promoted-from
+    fork raises `RetentionPinnedError` with the promoted-from reason; a
+    rejected candidate's forks retire clean; the boot housekeeping
+    helper makes the same calls and reports every decision.
 
 ## 9. Dependencies and sequencing
 
@@ -588,9 +658,10 @@ Blocked by: manifest spec (#4) locked and consumed; runtime v1.3.0 with
 promote and the DX items (#10). Consumes: task #6 posture
 (`injection_flag`, `NEVER_LLM_CALLABLE`), tool_gateway approval
 machinery, identity_auth approver verification, artifacts (core),
-schedule (reflection ticks). Runtime fast-follow asks, in priority
-order: subprocess trial isolation (T5), pack disable/unload (§7.1),
-compaction pinning for promoted-from forks (§7.5).
+schedule (reflection ticks). The three runtime fast-follow asks all
+shipped and are consumed: pack disable/unload landed in v1.4 (§7.1),
+subprocess trial isolation (T5, §7.2) and retention pinning for
+promoted-from forks (§7.5) both landed in v1.5.
 
 Strict-replay note (CONTRACT v1.3 #4.4b): strict replay diverges on runs
 that combine `replay_strict=True` with behaviors subscribed to

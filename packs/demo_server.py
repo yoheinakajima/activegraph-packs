@@ -256,6 +256,57 @@ def _evolution_enabled() -> bool:
     return os.environ.get("ACTIVEGRAPH_EVOLUTION", "").strip() == "1"
 
 
+def _approval_token() -> str:
+    return os.environ.get("ACTIVEGRAPH_APPROVAL_TOKEN", "").strip()
+
+
+def check_approval_auth(graph, auth_header: str, *, evolution_on: bool,
+                        token: str) -> tuple[bool, str]:
+    """The CHANNEL gate on approval decisions (gate 4, scoped honestly).
+
+    The bearer token authenticates the HTTP channel; the principal
+    check on approver_ref (identity_auth, inside approve_capability_fn)
+    stays the DECISION. This is demo-server hardening: binding an HTTP
+    session to a verified principal is BabyAGI chassis territory, per
+    the gate list, and this token does not pretend to be that.
+
+    Posture: with ACTIVEGRAPH_APPROVAL_TOKEN set, decisions require
+    `Authorization: Bearer <token>` (constant-time compare). With no
+    token AND evolution enabled, decisions refuse outright:
+    self-modification approvals over an unauthenticated channel must
+    not exist (the registration-refusal principle, applied to the
+    transport). With no token and no evolution, the plain demo stays
+    open, stated at boot. Every refusal is audited into the graph as
+    an approval_auth_denial object."""
+    import hmac
+
+    reason = ""
+    if token:
+        presented = ""
+        if auth_header.startswith("Bearer "):
+            presented = auth_header[len("Bearer "):].strip()
+        if presented and hmac.compare_digest(presented.encode(),
+                                             token.encode()):
+            return True, ""
+        reason = ("missing bearer token" if not presented
+                  else "bearer token mismatch")
+    elif evolution_on:
+        reason = ("no approval token configured while evolution is ON; "
+                  "self-modification approvals over an unauthenticated "
+                  "channel must not exist (set ACTIVEGRAPH_APPROVAL_TOKEN)")
+    else:
+        return True, ""
+    try:
+        graph.add_object("approval_auth_denial", {
+            "reason": reason,
+            "path": "/approvals",
+            "at": _ts(),
+        })
+    except Exception:
+        pass
+    return False, reason
+
+
 def _store_has_run(path: str) -> bool:
     """True if `path` is an existing SQLite store with at least one run."""
     if not os.path.exists(path):
@@ -377,6 +428,23 @@ def _build_runtime():
     from packs.chat.llm import select_chat_provider
 
     db = _db_path()
+    # Retention housekeeping BEFORE the runtime attaches (retire/compact
+    # are offline operations per the runtime's contract): archive trial
+    # forks nothing wants anymore. Promoted-from forks are pinned by the
+    # runtime's retention API and stay, as provenance.
+    if _evolution_enabled() and os.path.exists(db):
+        from packs.evolution.boot import retire_unpinned_trial_forks
+        try:
+            housekeeping = retire_unpinned_trial_forks(db)
+            retired = sum(1 for v in housekeeping.values()
+                          if v.startswith("retired"))
+            if housekeeping:
+                print(f"[demo_server] Evolution retention: {retired} trial "
+                      f"fork(s) retired, "
+                      f"{len(housekeeping) - retired} kept", flush=True)
+        except Exception as exc:
+            print(f"[demo_server] Evolution retention skipped: {exc}",
+                  flush=True)
     mem_settings = MemoryGatewaySettings(backend_url=_memory_db_path())
     # Long-term memory recall (chat_memory_context) must query the SAME backend
     # memory_writer persists to, so point ChatSettings.memory_backend_url at the
@@ -582,6 +650,29 @@ def _build_runtime():
               flush=True)
 
     rt.run_until_idle()
+
+    # Arm the gateway's registration enforcement LAST: every trusted
+    # boot registration above is done, and from here on any native
+    # register_local_capability call (including from a hot-loaded,
+    # agent-authored pack) is checked against graph-derived pack
+    # declarations: undeclared pairs, risk drift, and disabled packs'
+    # surfaces all refuse (Q8 chain step 3).
+    from packs.tool_gateway.registration_check import (
+        arm_registration_enforcement,
+    )
+    arm_registration_enforcement(rt.graph)
+
+    if _approval_token():
+        print("[demo_server] Approval channel: bearer token required "
+              "(ACTIVEGRAPH_APPROVAL_TOKEN set)", flush=True)
+    elif _evolution_enabled():
+        print("[demo_server] Approval channel: NO TOKEN + evolution ON — "
+              "approval decisions will refuse until "
+              "ACTIVEGRAPH_APPROVAL_TOKEN is set", flush=True)
+    else:
+        print("[demo_server] Approval channel: open (demo posture; set "
+              "ACTIVEGRAPH_APPROVAL_TOKEN to require a bearer token)",
+              flush=True)
     return rt
 
 
@@ -1579,6 +1670,16 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_approvals_post(self, body: dict):
         rt = _get_rt()
         from packs.tool_gateway.tools import approve_capability_fn, deny_capability_fn
+
+        # Channel auth first (gate 4): the token authenticates the HTTP
+        # channel; the principal check below stays the decision.
+        ok, reason = check_approval_auth(
+            rt.graph, self.headers.get("Authorization", "") or "",
+            evolution_on=_evolution_enabled(), token=_approval_token())
+        if not ok:
+            self._send_json({"error": f"approval channel unauthorized: "
+                                      f"{reason}"}, 401)
+            return
 
         call_id = (body.get("call_id") or "").strip()
         decision = (body.get("decision") or "").strip().lower()

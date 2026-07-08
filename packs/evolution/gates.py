@@ -52,11 +52,27 @@ def run_static_gates(graph, proposal, settings: EvolutionSettings) -> bool:
         })
         return False
 
-    # Gate 0: file set (implicit in the design's stage-1 constraints).
-    violations = analysis.check_file_set(files, settings.allowed_files)
+    # Gate 0: file set (implicit in the design's stage-1 constraints),
+    # including the trial-child entrypoint contract on the fixture file.
+    violations = (analysis.check_file_set(files, settings.allowed_files)
+                  + analysis.check_fixture_entrypoint(files))
     if violations:
         return fail("static:file_set", violations)
     _record(graph, proposal_id, "static:file_set", "pass", "")
+
+    # Gate 0b: the chassis trial driver, byte for byte. The driver runs
+    # candidate-adjacent inside the trial child under the bundle pin, so
+    # the only acceptable copy is the canonical render for the active
+    # settings (design §3 stage 3; the split freezes at proposal time).
+    from .trial_driver import TRIAL_DRIVER_PATH, render_trial_driver
+
+    canonical = render_trial_driver(settings)
+    if files.get(TRIAL_DRIVER_PATH, "") != canonical:
+        return fail("static:trial_driver", [
+            f"{TRIAL_DRIVER_PATH} differs from the canonical chassis "
+            "driver for the active settings (include "
+            "render_trial_driver(settings) verbatim)"])
+    _record(graph, proposal_id, "static:trial_driver", "pass", "")
 
     # Gate 1: manifest validity.
     root = write_files(files)

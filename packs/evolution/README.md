@@ -1,4 +1,4 @@
-# Evolution Pack — v0.2
+# Evolution Pack — v0.3
 
 Self-modification with provenance. The assistant authors candidate packs;
 static gates check them without executing anything; fork trials run them
@@ -42,17 +42,24 @@ review index and API clients the same JSON as before.
 | Function | Job |
 |---|---|
 | `tools.submit_proposal_fn` | The one authoring entry point (scripted, owner, or LLM author) |
-| `trial.run_trial(rt, proposal_id, settings)` | Fixture gate + fork replay (in-sample, then held-out once) |
+| `trial.run_trial(rt, proposal_id, settings)` | Two sandbox children (runtime `run_forked_trial`): fixture gate, then pinned-driver replay |
 | `tools.request_adoption_fn` | Propose adoption; critical always holds |
 | `adopt.register_adoption_capabilities` | Registers the governed capabilities; refuses unsafe configs |
 | `chassis.sweep_evolution(rt, settings)` | The sweep hosts should call: tickets + capped conflict retries |
 | `adopt.process_adoption_tickets(rt, settings)` | Phase two: the canonical adopt order (wrapped by the chassis) |
 | `review.build_review` / `render_review_html` | The decision surface, from graph state alone |
 | `boot.reload_adopted_packs(rt)` | Boot persistence, bundle-hash checked |
+| `boot.retire_unpinned_trial_forks(path)` | Offline retention housekeeping; promoted-from forks refuse (runtime pins) |
 
 Demo server wiring: `ACTIVEGRAPH_EVOLUTION=1` (plus `ACTIVEGRAPH_OWNER`,
-required by the registration refusal). Tickets are processed by the
-schedule tick driver on the runtime-executor thread.
+required by the registration refusal, and
+`ACTIVEGRAPH_APPROVAL_TOKEN`, required by the approval channel:
+decisions over an unauthenticated HTTP channel refuse while evolution
+is on). The token authenticates the CHANNEL; the principal check on
+the approver ref stays the DECISION. Binding an HTTP session to a
+verified principal is chassis territory beyond this demo server, per
+the gate list. Tickets are processed by the schedule tick driver on
+the runtime-executor thread.
 
 ## The pins
 
@@ -67,12 +74,14 @@ mismatch aborts with nothing loaded.
 python packs/evolution/fixtures/run_fixtures.py
 ```
 
-Fifteen acceptance scenarios (design §8): happy path, the six-way static
+Seventeen acceptance scenarios (design §8): happy path, the six-way static
 gate matrix, trial isolation, held-out discipline, conflict-then-retry,
 deterministic taint inheritance, self-approval blocked twice,
 approve-then-swap dead for source AND manifest-only swaps, restart
 persistence with corruption handling, both registration refusals,
 loading-state tracking, the apply-time validation ordering proof, the
 decision surface rendered end to end, zero trial residue after adoption,
-and the conflict retry cap parking at needs_owner.
+the conflict retry cap parking at needs_owner, subprocess isolation
+(a runaway import dies in the child, the parent survives), and
+retention pins (promoted-from fork logs refuse retirement).
 Scripted author only; no LLM, no keys, no network.

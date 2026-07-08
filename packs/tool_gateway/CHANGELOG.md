@@ -1,5 +1,25 @@
 # Tool Gateway Pack Changelog
 
+## v0.6.0 — Registration enforcement (2026-07-08)
+
+The Q8 chain closes: declaration (manifest / Pack.capabilities),
+emission (pack.loaded payload), and now the registry check.
+
+### Added
+- registration_check.py: once the host arms enforcement with the live
+  graph (`arm_registration_enforcement`), every NATIVE
+  `register_local_capability` call is resolved against graph-derived
+  pack declarations (pack.loaded / pack.disabled events) and refuses
+  three things: undeclared (provider, capability) pairs, risk-class
+  drift between declaration and registration call, and registrations
+  claiming a disabled pack's surface. A hostile late-loaded pack
+  cannot opt out by omitting a kwarg. MCP-origin registrations are
+  exempt from the declared-pair requirement (host-mediated, governed
+  by exposure rules). The CI AST check stays as review-time
+  defense-in-depth. The demo server arms after boot loads finish; the
+  evolution fixtures run armed end to end (fixture 7 now proves three
+  independent walls against self-approval).
+
 ## v0.5.2 — Declarative capability surface (2026-07-08)
 
 ### Added

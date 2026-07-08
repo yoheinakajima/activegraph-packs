@@ -11,13 +11,13 @@ requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 
 dependencies = [
-    "activegraph[llm]>=1.4,<2.0",
+    "activegraph[llm]>=1.5,<2.0",
     "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "activegraph[llm]>=1.4,<2.0",
+    "activegraph[llm]>=1.5,<2.0",
     "pydantic>=2.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

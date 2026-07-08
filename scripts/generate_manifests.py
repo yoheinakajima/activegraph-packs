@@ -40,7 +40,7 @@ from manifest_tools import (  # noqa: E402
 CREATED_AT = "2026-07-08T00:00:00Z"
 AUTHOR = "Yohei Nakajima"
 SOURCE_URL = "https://github.com/yoheinakajima/activegraph-packs"
-RUNTIME_RANGE = ">=1.4,<2.0"
+RUNTIME_RANGE = ">=1.5,<2.0"
 PYTHON_RANGE = ">=3.11"
 DEP_RANGE = ">=0.1"  # honest floor for intra-repo pack deps
 

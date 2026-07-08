@@ -143,6 +143,12 @@ def run_all() -> bool:
     return True
 
 
+def main(rt):
+    """Trial-child entrypoint (chassis contract): raise on failure.
+    These fixtures are self-contained; the fork runtime is unused."""
+    assert run_all()
+
+
 if __name__ == "__main__":
     sys.exit(0 if run_all() else 1)
 '''
@@ -193,8 +199,15 @@ def author_pack(
     reserved_capability: bool = False,
     oversize: bool = False,
     break_content_hash: bool = False,
+    hang_on_import: bool = False,
 ) -> dict[str, str]:
-    """Produce the candidate's file dict; each flag twists one gate."""
+    """Produce the candidate's file dict; each flag twists one gate.
+
+    `hang_on_import` passes every static gate and then spins forever at
+    module import: the fixture-3 subprocess twin. In the in-process era
+    this would have hung the parent runtime at trial materialization;
+    under the v1.5 sandbox the child gets killed at the wall clock and
+    the parent records the rejection."""
     behaviors_src = BEHAVIOR_TEMPLATE.format(
         name=name, body=behavior_body, trigger=trigger)
     if banned_import:
@@ -203,6 +216,8 @@ def author_pack(
         behaviors_src += "\n_x = eval('1 + 1')\n"
     if extra_behavior_src:
         behaviors_src += extra_behavior_src
+    if hang_on_import:
+        behaviors_src += "\nwhile True:\n    pass\n"
 
     declared_behaviors = '["greeter", "config_toucher"]'
     if extra_behavior_src and not undeclared_extra:
@@ -222,6 +237,11 @@ def author_pack(
     if oversize:
         settings_src += "\n# " + ("x" * 30_000) + "\n"
 
+    from packs.evolution.trial_driver import (
+        TRIAL_DRIVER_PATH,
+        render_trial_driver,
+    )
+
     files = {
         "__init__.py": INIT_TEMPLATE.format(name=name),
         "object_types.py": OBJECT_TYPES_SRC,
@@ -229,6 +249,8 @@ def author_pack(
         "settings.py": settings_src,
         "tools.py": TOOLS_SRC,
         "fixtures/run_fixtures.py": FIXTURES_TEMPLATE.format(name=name),
+        # The chassis driver, included verbatim (gate 0b verifies bytes).
+        TRIAL_DRIVER_PATH: render_trial_driver(),
     }
 
     if reserved_capability:

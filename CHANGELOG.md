@@ -6,6 +6,42 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Runtime floor raised to activegraph >=1.5,<2.0** (honest: this
+  cycle imports `activegraph.sandbox.run_forked_trial` and the
+  `activegraph.store.retention` API). The 1.5 compat pass was quiet:
+  183 tests and all 20 fixture suites green before any consumption.
+- **Evolution pack v0.3.0: subprocess trials** (gate 1 flips). Stage 3
+  runs on the runtime's sandbox: ALL candidate execution in a
+  fresh-interpreter child (fixture gate, in-sample, held-out),
+  bundle-hash-verified before any import, under the runtime's three
+  nets. The chassis trial driver joins the authored file set
+  (`fixtures/trial_scenario.py`, gate-verified byte for byte) because
+  the sandbox requires scenarios inside the pinned root; the held-out
+  split now freezes at proposal creation under the approval pin. Trial
+  forks persist in the store (the in-process registry is gone;
+  restarts no longer force re-trials). Fixture 17: a candidate that
+  spins forever at import dies in the child; the parent survives.
+- **Retention pins consumed** (evolution §7.5 closes): boot
+  housekeeping retires disposable trial forks through the runtime
+  retention API; promoted-from fork logs refuse with
+  `RetentionPinnedError` (fixture 18); the demo server runs the
+  housekeeping offline, before the runtime attaches.
+- **Tool Gateway v0.6.0: registration enforcement** (the Q8 chain
+  closes). Armed once by the host, every native
+  `register_local_capability` call checks graph-derived pack
+  declarations and refuses undeclared pairs, risk-class drift, and
+  disabled packs' surfaces. Fixture 7 now proves three independent
+  walls against self-approval.
+- **Approval channel auth** (gate 4, the demo-server half): approval
+  decisions require `Authorization: Bearer $ACTIVEGRAPH_APPROVAL_TOKEN`
+  (constant-time compare, 401 without it, refusals audited into the
+  graph), and refuse outright when evolution is on with no token
+  configured. The token authenticates the channel; the principal check
+  stays the decision. Session-to-principal binding remains product
+  chassis territory, stated in the docs.
+
+## v0.5.0 — Evolution hardening: decision surface, residue, retry cap (2026-07-08)
+
 - **Evolution pack v0.2.0: the adoption decision surface** (scare-list
   #3, the launch blocker). `packs/evolution/review.py` renders one
   proposal as one readable page from graph state alone: author banner

@@ -38,9 +38,18 @@ class EvolutionSettings(BaseModel):
 
     trial_max_new_events: int = Field(
         default=2_000, ge=10,
-        description="Fork trial budget: max events the trial may add.",
+        description="Fork trial budget: max events the trial may add "
+                    "(enforced by the runtime's budget net inside the child).",
     )
-    trial_fixture_timeout_seconds: float = Field(default=30.0, gt=0)
+    trial_fixture_timeout_seconds: float = Field(
+        default=30.0, gt=0,
+        description="Wall clock for the fixture-gate child.")
+    trial_wall_clock_seconds: float = Field(
+        default=120.0, gt=0,
+        description="Wall clock for the replay-trial child.")
+    trial_max_rss_bytes: int = Field(
+        default=536_870_912, ge=64_000_000,
+        description="Address-space cap (RLIMIT_AS) for trial children.")
     max_conflict_retries: int = Field(
         default=2, ge=0,
         description=(
@@ -69,6 +78,9 @@ class EvolutionSettings(BaseModel):
         default=[
             "manifest.toml", "__init__.py", "object_types.py", "behaviors.py",
             "tools.py", "settings.py", "fixtures/run_fixtures.py",
+            "fixtures/trial_scenario.py",
         ],
-        description="The fixed authored file set (design §3 stage 1).",
+        description="The fixed authored file set (design §3 stage 1). "
+                    "trial_scenario.py is the chassis driver, included "
+                    "verbatim and gate-verified byte for byte.",
     )

@@ -1,5 +1,45 @@
 # Evolution Pack Changelog
 
+## v0.3.0 — Subprocess trials + retention pins (2026-07-08)
+
+Consumes activegraph v1.5.0; both remaining runtime blockers close.
+Gate 1 of the LLM-author gate list flips to shipped-and-consumed.
+
+### Changed
+- Stage 3 rewritten onto the runtime's sandbox
+  (activegraph.sandbox.run_forked_trial): ALL candidate execution now
+  happens in a fresh-interpreter child (fixture gate, in-sample replay,
+  held-out replay), pin-verified before any import, under the runtime's
+  three nets (rlimits, wall-clock kill, event budget). The parent never
+  imports candidate code at trial time. Budgets map onto the runtime
+  nets; the pack double-enforces nothing.
+- The chassis trial driver (trial_driver.py) joins the authored file
+  set as fixtures/trial_scenario.py: the sandbox requires the scenario
+  inside the bundle-hashed root, so the driver is included verbatim by
+  authors, verified byte for byte by the new static:trial_driver gate,
+  and the held-out split freezes at proposal creation under the same
+  pin the owner approves. The residue sweep (design 7.3) now runs
+  inside the child, driver-owned.
+- Authored fixture contract: fixtures/run_fixtures.py must expose
+  `def main(rt)` (the trial-child entrypoint); checked statically in
+  the file_set gate.
+- Trial forks persist in the store: the in-process fork registry is
+  deleted, adoption reloads the fork by run id, and a restart between
+  trial and adoption no longer forces a re-trial.
+
+### Added
+- Retention housekeeping (boot.retire_unpinned_trial_forks): disposable
+  trial forks archive at boot through the runtime retention API;
+  promoted-from forks refuse with RetentionPinnedError (the pin set
+  dominates unconditionally); in-flight forks are kept by proposal
+  status. Demo server runs it before the runtime attaches.
+- Settings: trial_wall_clock_seconds, trial_max_rss_bytes.
+- Fixtures 17 (subprocess isolation: a runaway import dies in the
+  child, the parent stays alive) and 18 (retention pins). Seventeen
+  scenarios total.
+
+
+
 ## v0.2.0 — Decision surface, residue policy, retry cap (2026-07-08)
 
 Closes three scare-list items before any product wires an author in.
