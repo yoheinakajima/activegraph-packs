@@ -40,6 +40,10 @@ from packs.identity_auth import pack as identity_pack, IdentitySettings
 from packs.identity_auth.behaviors import clear_principal_registry
 from packs.identity_auth.tools import register_principal_fn
 from packs.tool_gateway import pack as tg_pack, ToolGatewaySettings
+from packs.tool_gateway.registration_check import (
+    arm_registration_enforcement,
+    disarm_registration_enforcement,
+)
 from packs.tool_gateway.tools import approve_capability_fn, clear_local_registry
 
 OWNER = "owner@example.com"
@@ -49,12 +53,18 @@ SETTINGS = EvolutionSettings(enabled=True, heldout_fraction=0.5)
 def _build_parent(tmp: str, tag: str) -> Runtime:
     clear_local_registry()
     clear_principal_registry()
+    disarm_registration_enforcement()
     rt = Runtime(Graph(), persist_to=os.path.join(tmp, f"{tag}.sqlite"))
     rt.load_pack(core_pack)
     rt.load_pack(tg_pack, settings=ToolGatewaySettings())
     rt.load_pack(identity_pack, settings=IdentitySettings())
     rt.load_pack(evolution_pack, settings=SETTINGS)
     register_principal_fn(rt.graph, OWNER, "owner", name="Owner")
+    # Armed BEFORE the adoption capabilities register: the fixtures run
+    # the same enforcement posture as the demo server, and the two
+    # governed capabilities pass because the evolution pack declares
+    # them (Q8 chain step 3).
+    arm_registration_enforcement(rt.graph)
     register_adoption_capabilities(gateway_settings=ToolGatewaySettings(),
                                    graph=rt.graph)
     # Shared state the conflict fixtures patch from both sides, plus the
@@ -234,8 +244,10 @@ def fx_06_taint_suspends(tmp) -> dict:
 
 
 def fx_07_self_approval_blocked(tmp) -> dict:
-    """A pack declaring approve_capability dies at the reserved gate, and
-    the proxy layer refuses the same name independently."""
+    """A pack declaring approve_capability dies at the reserved gate;
+    forcing the registration dies at the ARMED gateway registry (Q8
+    chain step 3: undeclared pair); and even a forced registry entry is
+    refused by the proxy layer. Three independent walls."""
     rt = _build_parent(tmp, "selfapprove")
     proposal = _submit_and_gate(rt, author_pack(reserved_capability=True))
     assert proposal.data["status"] == "rejected"
@@ -244,7 +256,6 @@ def fx_07_self_approval_blocked(tmp) -> dict:
                and g.data["verdict"] == "fail"]
     assert fail.data["gate"] == "static:reserved"
 
-    # Belt and braces: the gateway proxy refuses the name regardless.
     from packs.tool_gateway.llm_tools import as_llm_tool
     from packs.tool_gateway.tools import register_local_capability
     from pydantic import BaseModel
@@ -252,14 +263,27 @@ def fx_07_self_approval_blocked(tmp) -> dict:
     class X(BaseModel):
         pass
 
+    # Wall 2: the armed registry refuses the undeclared registration.
+    try:
+        register_local_capability("helper", "approve_capability",
+                                  lambda: None, input_schema=X)
+        raise AssertionError("armed registry must refuse undeclared pairs")
+    except ValueError as exc:
+        assert "no loaded pack declares" in str(exc)
+
+    # Wall 3: force the entry past the registry (unarmed) and the proxy
+    # still refuses the never-LLM-callable name.
+    disarm_registration_enforcement()
     spec = register_local_capability("helper", "approve_capability",
                                      lambda: None, input_schema=X)
+    arm_registration_enforcement(rt.graph)
     try:
         as_llm_tool(rt.graph, spec)
         raise AssertionError("as_llm_tool must refuse")
     except ValueError:
         pass
-    return {"gate": fail.data["gate"], "proxy_refusal": True}
+    return {"gate": fail.data["gate"], "registry_refusal": True,
+            "proxy_refusal": True}
 
 
 def fx_08_hash_pins(tmp) -> dict:

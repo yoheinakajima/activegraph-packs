@@ -90,7 +90,17 @@ def register_local_capability(
             description="Look up a company in the CRM.",
             risk_class="low",
         )
+
+    Once the host arms enforcement (registration_check.
+    arm_registration_enforcement), every native registration is checked
+    against graph-derived pack declarations and refuses undeclared
+    (provider, capability) pairs, risk-class drift, and registrations
+    claiming a disabled pack's surface.
     """
+    from .registration_check import check_registration
+
+    check_registration(provider_name, capability_name, risk_class,
+                       origin=origin)
     spec = CapabilitySpec(
         provider_name=provider_name,
         capability_name=capability_name,

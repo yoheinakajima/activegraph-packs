@@ -599,6 +599,17 @@ def _build_runtime():
               flush=True)
 
     rt.run_until_idle()
+
+    # Arm the gateway's registration enforcement LAST: every trusted
+    # boot registration above is done, and from here on any native
+    # register_local_capability call (including from a hot-loaded,
+    # agent-authored pack) is checked against graph-derived pack
+    # declarations: undeclared pairs, risk drift, and disabled packs'
+    # surfaces all refuse (Q8 chain step 3).
+    from packs.tool_gateway.registration_check import (
+        arm_registration_enforcement,
+    )
+    arm_registration_enforcement(rt.graph)
     return rt
 
 
