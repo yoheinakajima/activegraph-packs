@@ -74,7 +74,13 @@ def execute_approved_call(
     # in any field of CapabilityResult.
     credential_ref_name = call_data.get("credential_ref_name")
     credential_ref_id = call_data.get("credential_ref_id")
-    execution_context: dict = {}
+    # The gateway is the mediator: capabilities that declare an
+    # execution_context parameter receive what the gateway provides — the
+    # resolved credential (below) and the graph handle, so graph-writing
+    # capabilities (e.g. schedule.create_reminder) need no construction-time
+    # closure. Handlers that don't declare it get neither (see
+    # execute_capability_fn's TypeError fallback).
+    execution_context: dict = {"graph": graph, "call_id": call_id}
 
     if settings.inject_credentials and credential_ref_name:
         try:

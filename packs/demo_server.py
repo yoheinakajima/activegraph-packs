@@ -155,13 +155,17 @@ def _seed_demo(rt) -> None:
 def _register_demo_capabilities():
     """Register the demo's gateway capabilities (idempotent).
 
-    web.fetch_url is the demo's one agentic tool: read-only, low-risk,
-    auto-approvable — enough for live chat to ground answers in a real page
-    while every fetch is still a recorded, policy-checked capability call.
+    web.fetch_url — read-only page fetch: live chat grounds answers in a
+    real page while every fetch is a recorded, policy-checked call.
+    schedule.create_reminder — "remind me tomorrow at 9am" as a one-turn,
+    policy-governed chat tool call (the gateway hands the handler the graph
+    via execution_context at execution time).
     """
+    from packs.schedule.capabilities import register_reminder_capability
     from packs.tool_gateway.capabilities import register_web_fetch_capability
 
     register_web_fetch_capability()
+    register_reminder_capability()
 
 
 def _build_runtime():
@@ -205,7 +209,7 @@ def _build_runtime():
     identity_settings = IdentitySettings(owner_identifiers=owner_refs)
     chat_settings = ChatSettings(
         memory_backend_url=_memory_db_path(),
-        tool_allow_list=["web.fetch_url"],
+        tool_allow_list=["web.fetch_url", "schedule.create_reminder"],
         reply_policy=os.environ.get("ACTIVEGRAPH_REPLY_POLICY", "open"),
     )
     resuming = _store_has_run(db)
@@ -944,18 +948,21 @@ class Handler(BaseHTTPRequestHandler):
         session_id = body.get("session_id")
         frame_id = str(uuid.uuid4())
 
-        objects_before = set(o.id for o in rt.graph.all_objects())
-        events_before = len(rt.graph.events)
+        # Serialized against the schedule tick driver (and any other writer):
+        # one runtime, one writer at a time.
+        with _runtime_lock:
+            objects_before = set(o.id for o in rt.graph.all_objects())
+            events_before = len(rt.graph.events)
 
-        inp = submit_chat_input_fn(
-            rt.graph,
-            user_ref=user_ref,
-            content=content,
-            session_id=session_id,
-            frame_id=frame_id,
-        )
+            inp = submit_chat_input_fn(
+                rt.graph,
+                user_ref=user_ref,
+                content=content,
+                session_id=session_id,
+                frame_id=frame_id,
+            )
 
-        rt.run_until_idle()
+            rt.run_until_idle()
 
         objects_after = rt.graph.all_objects()
         new_obj_ids = [str(o.id) for o in objects_after if o.id not in objects_before]
@@ -1049,24 +1056,26 @@ class Handler(BaseHTTPRequestHandler):
             self._send_error("decision must be 'approve' or 'deny'", 400)
             return
 
-        if decision == "approve":
-            outcome = approve_capability_fn(
-                rt.graph, call_id, approver_ref=approver_ref,
-                note=body.get("note", ""),
-            )
-        else:
-            outcome = deny_capability_fn(
-                rt.graph, call_id, approver_ref=approver_ref,
-                reason=body.get("reason", ""),
-            )
+        with _runtime_lock:
+            if decision == "approve":
+                outcome = approve_capability_fn(
+                    rt.graph, call_id, approver_ref=approver_ref,
+                    note=body.get("note", ""),
+                )
+            else:
+                outcome = deny_capability_fn(
+                    rt.graph, call_id, approver_ref=approver_ref,
+                    reason=body.get("reason", ""),
+                )
+
+            if outcome.get("ok"):
+                # Let call_executor react to the approval (denials settle
+                # instantly; running to idle is harmless and branch-free).
+                rt.run_until_idle()
 
         if not outcome.get("ok"):
             self._send_json({"ok": False, "reason": outcome.get("reason")}, 409)
             return
-
-        # Let call_executor react to the approval (denials settle instantly,
-        # but running to idle is harmless and keeps this branch-free).
-        rt.run_until_idle()
 
         try:
             call = rt.graph.get_object(call_id)
@@ -1448,6 +1457,48 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"success": True, "message": "Runtime reset to initial demo state."})
 
 
+# ─── Schedule tick driver ────────────────────────────────────────────────────
+#
+# The Schedule Pack owns no clock — THIS is the edge where wall-clock time
+# enters the graph, exactly the way chat input does. A daemon thread sweeps
+# every SCHEDULE_TICK_SECONDS: emit_due_ticks creates schedule_tick objects
+# for due schedules (idempotent), and run_until_idle lets tick_router /
+# schedule_bookkeeper — and everything they cascade into — react. All
+# runtime access is serialized through _runtime_lock, shared with the HTTP
+# handlers.
+
+def _tick_driver_loop(period_seconds: float):
+    import time as _time
+    from datetime import datetime, timezone
+
+    from packs.schedule.tools import emit_due_ticks_fn
+
+    while True:
+        _time.sleep(period_seconds)
+        try:
+            rt = _get_rt()
+            with _runtime_lock:
+                ticks = emit_due_ticks_fn(rt.graph, datetime.now(timezone.utc))
+                if ticks:
+                    rt.run_until_idle()
+        except Exception:
+            traceback.print_exc()
+
+
+def _start_tick_driver():
+    period = float(os.environ.get("SCHEDULE_TICK_SECONDS", "10"))
+    if period <= 0:
+        print("[demo_server] Schedule tick driver disabled "
+              "(SCHEDULE_TICK_SECONDS<=0)", flush=True)
+        return
+    t = threading.Thread(
+        target=_tick_driver_loop, args=(period,),
+        name="schedule-tick-driver", daemon=True,
+    )
+    t.start()
+    print(f"[demo_server] Schedule tick driver sweeping every {period:g}s", flush=True)
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 def main():
@@ -1459,6 +1510,8 @@ def main():
     print(f"[demo_server] Initialising ActiveGraph runtime...", flush=True)
     _get_rt()
     print(f"[demo_server] Runtime ready. Listening on :{port}", flush=True)
+
+    _start_tick_driver()
 
     server = HTTPServer(("0.0.0.0", port), Handler)
     try:

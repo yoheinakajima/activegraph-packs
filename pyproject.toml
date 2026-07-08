@@ -36,6 +36,7 @@ entity = "packs.entity:pack"
 communication = "packs.communication:pack"
 chat = "packs.chat:pack"
 email = "packs.email:pack"
+schedule = "packs.schedule:pack"
 
 research = "packs.research:pack"
 vc = "packs.vc:pack"

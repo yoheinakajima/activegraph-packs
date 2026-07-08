@@ -8,6 +8,7 @@ Packs included:
   agent_profile    — agent goals, personality, standing instructions, preferences
   identity_auth    — principal resolution, role-based permission checking
   communication    — channel-neutral messaging (CommThread, CommMessage, CommIntent)
+  schedule         — graph-native scheduling (schedules, ticks, heartbeats)
   chat             — chat adapter (chat_input → CommMessage → ChatTurn)
 """
 
@@ -22,6 +23,7 @@ from packs.memory_gateway import pack as memory_gateway_pack, MemoryGatewaySetti
 from packs.agent_profile import pack as agent_profile_pack, AgentProfileSettings
 from packs.identity_auth import pack as identity_auth_pack, IdentitySettings
 from packs.communication import pack as communication_pack, CommunicationSettings
+from packs.schedule import pack as schedule_pack, ScheduleSettings
 from packs.chat import build_pack as build_chat_pack, pack as chat_pack, ChatSettings
 
 
@@ -33,6 +35,7 @@ ASSISTANT_BUNDLE = [
     agent_profile_pack,
     identity_auth_pack,
     communication_pack,
+    schedule_pack,
     chat_pack,
 ]
 
@@ -50,6 +53,7 @@ def load_assistant_packs(
     agent_profile_settings: AgentProfileSettings | None = None,
     identity_settings: IdentitySettings | None = None,
     communication_settings: CommunicationSettings | None = None,
+    schedule_settings: ScheduleSettings | None = None,
     chat_settings: ChatSettings | None = None,
 ) -> Runtime:
     """Register the Assistant Bundle packs onto an existing Runtime.
@@ -68,6 +72,7 @@ def load_assistant_packs(
     rt.load_pack(agent_profile_pack, settings=agent_profile_settings or AgentProfileSettings())
     rt.load_pack(identity_auth_pack, settings=identity_settings or IdentitySettings())
     rt.load_pack(communication_pack, settings=communication_settings or CommunicationSettings())
+    rt.load_pack(schedule_pack, settings=schedule_settings or ScheduleSettings())
     rt.load_pack(
         _chat_pack_for(rt.graph, chat_settings, tool_gateway_settings),
         settings=chat_settings or ChatSettings(),
@@ -187,6 +192,7 @@ def build_assistant(
     agent_profile_settings: AgentProfileSettings | None = None,
     identity_settings: IdentitySettings | None = None,
     communication_settings: CommunicationSettings | None = None,
+    schedule_settings: ScheduleSettings | None = None,
     chat_settings: ChatSettings | None = None,
     llm_provider=None,
     persist_to: str | None = None,
@@ -240,6 +246,7 @@ def build_assistant(
         agent_profile_settings=agent_profile_settings,
         identity_settings=identity_settings,
         communication_settings=communication_settings,
+        schedule_settings=schedule_settings,
         chat_settings=chat_settings,
     )
 
