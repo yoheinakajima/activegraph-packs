@@ -1,4 +1,4 @@
-# Tool Gateway Pack v0.2
+# Tool Gateway Pack v0.3
 
 > The capability execution gateway. All external calls flow through here.
 
@@ -76,7 +76,8 @@ way it advances:
   call to `rejected` and records a `capability_denial` (who, why, when),
   linked via `denied_by`. Refusals are audit objects, not status flips.
 
-`pending_approvals(graph)` lists held calls, oldest first.
+`pending_approvals(graph)` lists held calls, oldest first. (The demo server
+exposes these as `GET/POST /approvals`.)
 
 **Approver verification.** When the Identity/Auth Pack is loaded and
 principals are registered, the `approver_ref` must resolve to a principal
@@ -193,6 +194,48 @@ rt.run_until_idle()                  # call_executor runs it now
 # deny_capability_fn(rt.graph, call.id, approver_ref="user:owner",
 #                    reason="Payment not recognized.")
 ```
+
+## LLM tool proxies (agentic chat)
+
+The runtime's native tool loop (`@llm_behavior(tools=[...])`) executes Tool
+functions directly — no policy check, no credential injection, no record.
+So the tools handed to a model are never raw capabilities; they are
+**proxies into this gateway** (`llm_tools.py`):
+
+```python
+from packs.tool_gateway.tools import register_local_capability
+from packs.tool_gateway.llm_tools import llm_tools_for
+
+register_local_capability(
+    "crm", "lookup_company", my_lookup,
+    input_schema=LookupInput,          # what the model sees as parameters
+    description="Look up a company.",  # what the model reads
+    risk_class="low",                  # what policy decides with
+)
+
+tools = llm_tools_for(graph, ["crm.lookup_company"])   # → [Tool]
+# hand these to @llm_behavior(tools=[...]) — e.g. via the Chat Pack's
+# ChatSettings.tool_allow_list (see packs/chat and bundles/assistant.py)
+```
+
+When the model calls a proxy:
+1. a `capability_call` is recorded **before anything runs** (audit before action);
+2. `decide_policy` — the same single implementation `policy_enforcer` uses —
+   classifies it;
+3. auto-approvable → executed inline via `execute_approved_call` (credential
+   injection, sanitization, `capability_result`, `produces_result`), the
+   sanitized result returns to the model in the same tool turn, and the
+   `capability_approval` is recorded;
+4. held → the call stays at `policy_checking` and the model is told
+   `held_for_approval`; the normal approve/deny path resolves it later.
+
+Double execution is impossible by construction: the inline path records its
+approval after the call is already `done`, and `call_executor` guards on
+`status == 'approved'`. One approval → at most one execution, on both paths.
+
+`capabilities.py` ships `register_web_fetch_capability()` — the runtime's
+stdlib `web_fetch` reference tool as the gateway capability `web.fetch_url`
+(read-only, low risk): the canonical first agentic tool.
 
 ## Settings
 

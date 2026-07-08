@@ -180,6 +180,76 @@ def intent_detector(event, graph, ctx, *, settings: CommunicationSettings):
 
 
 @behavior(
+    name="intent_router",
+    on=["object.created"],
+    where={"object.type": "comm_intent"},
+    creates=["capability_call"],
+)
+def intent_router(event, graph, ctx, *, settings: CommunicationSettings):
+    """Route actionable intents into the Tool Gateway as capability proposals.
+
+    On: object.created (comm_intent)
+    Creates: capability_call (status=proposed) + fulfills_intent relation
+
+    The deterministic half of "chat that can act": when an intent kind has a
+    configured route (settings.intent_routes) and the detection confidence
+    clears intent_route_min_confidence, this PROPOSES a capability call —
+    nothing more. The normal gateway lifecycle (policy_enforcer →
+    approval/hold → call_executor → result_sourcer) governs whether and how
+    it runs, so intent-triggered actions carry exactly the same audit and
+    approval weight as any other capability call.
+
+    Degrades gracefully: with no routes configured (the default) or without
+    the Tool Gateway Pack loaded (capability_call type absent → add_object
+    fails, swallowed) this is a no-op and intents stay informational.
+    """
+    routes = settings.intent_routes
+    if not routes:
+        return
+
+    obj = event.payload.get("object", {})
+    intent_id = obj.get("id")
+    data = obj.get("data", {})
+    intent_kind = data.get("intent")
+    route = routes.get(intent_kind)
+    if not route:
+        return
+    if float(data.get("confidence") or 0.0) < settings.intent_route_min_confidence:
+        return
+
+    # The intent records message_id; the message carries the text the
+    # capability receives. get_object(id) is the behavior-safe read.
+    message_id = data.get("message_id")
+    try:
+        msg = graph.get_object(message_id) if message_id else None
+    except Exception:
+        msg = None
+    content = (msg.data.get("content") if msg else "") or ""
+
+    content_field = route.get("content_field", "text")
+    input_data = {**route.get("input", {}), content_field: content}
+
+    try:
+        call = graph.add_object("capability_call", {
+            "provider_id": route.get("provider_id", ""),
+            "provider_name": route.get("provider_name", ""),
+            "capability_name": route.get("capability_name", ""),
+            "input_data": input_data,
+            "credential_ref_name": route.get("credential_ref_name"),
+            "risk_class": route.get("risk_class", "medium"),
+            "status": "proposed",
+            "proposed_by": "intent_router",
+            "frame_id": data.get("frame_id"),
+            "proposed_at": _now_iso(),
+            "metadata": {"intent_id": intent_id, "intent": intent_kind},
+        })
+        # NOTE: add_relation signature is (source, target, type).
+        graph.add_relation(call.id, intent_id, "fulfills_intent")
+    except Exception:
+        pass  # Tool Gateway not loaded — intents stay informational.
+
+
+@behavior(
     name="thread_tracker",
     on=["object.created"],
     where={"object.type": "comm_message"},
@@ -309,4 +379,4 @@ def response_dispatcher(event, graph, ctx, *, settings: CommunicationSettings):
 
 # ================================================================ BEHAVIORS registry
 
-BEHAVIORS = [intent_detector, thread_tracker, response_dispatcher]
+BEHAVIORS = [intent_detector, intent_router, thread_tracker, response_dispatcher]

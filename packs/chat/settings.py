@@ -32,6 +32,25 @@ class ChatSettings(BaseModel):
             "Useful for testing. Default: None (use AgentProfile context)."
         ),
     )
+    tool_allow_list: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Gateway capability keys ('provider.capability', as registered via "
+            "tool_gateway.register_local_capability) the chat responder may call "
+            "through the LLM tool loop. Empty (default) = conversational-only. "
+            "Each entry becomes a gateway PROXY tool: the model's call is recorded "
+            "as a capability_call, policy-checked, credential-injected, and "
+            "sanitized — chat never gets a raw capability. Applied at pack build "
+            "time (see packs.chat.build_pack); bundles read it from here."
+        ),
+    )
+    max_tool_turns: int = Field(
+        default=4,
+        description=(
+            "Maximum LLM↔tool round-trips per chat turn when tool_allow_list is "
+            "non-empty. Caps runaway loops and per-turn spend. Default: 4."
+        ),
+    )
     max_context_messages: int = Field(
         default=10,
         description=(

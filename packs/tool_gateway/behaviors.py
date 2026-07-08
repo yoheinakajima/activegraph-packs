@@ -36,8 +36,8 @@ from datetime import datetime, timezone
 
 from activegraph.packs import behavior
 
-from .object_types import CapabilityApproval, CapabilityResult
-from .sanitizer import sanitize_output
+from .gateway import decide_policy, execute_approved_call
+from .object_types import CapabilityApproval
 from .settings import ToolGatewaySettings
 
 
@@ -107,7 +107,7 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
 
     now = datetime.now(timezone.utc).isoformat()
 
-    if risk_class in settings.auto_approve_risk_classes:
+    if decide_policy(risk_class, settings) == "auto_approve":
         # Patch the call status
         try:
             graph.patch_object(call_id, {"status": "approved"})
@@ -165,105 +165,36 @@ def call_executor(event, graph, ctx, *, settings: ToolGatewaySettings):
     It fires ONLY when a CapabilityApproval exists — ensuring that every
     executed call was explicitly approved by policy_enforcer.
 
-    Dispatches to the local registry via execute_capability_fn.
+    Delegates to gateway.execute_approved_call — the single execution
+    implementation shared with the LLM tool proxies (llm_tools.py).
     """
-    from .tools import execute_capability_fn
-
     obj = event.payload.get("object", {})
     approval_data = obj.get("data", {})
 
     call_id = approval_data.get("call_id", "")
-    provider_name = approval_data.get("provider_name", "")
     capability_name = approval_data.get("capability_name", "")
-    input_data = approval_data.get("input_data", {})
-    frame_id = approval_data.get("frame_id")
 
     if not call_id or not capability_name:
         return
 
-    # Patch call status to 'executing'
+    # Idempotency guard: execute only calls sitting at 'approved'. An LLM
+    # tool proxy executes its call inline and records the approval afterward
+    # (the call is already 'done' when this fires); replayed approvals hit
+    # the same guard. One approval → at most one execution.
     try:
-        graph.patch_object(call_id, {"status": "executing"})
+        call = graph.get_object(call_id)
     except Exception:
-        pass
+        call = None
+    if call is None or call.data.get("status") != "approved":
+        return
 
-    # ------------------------------------------------------------------ credential injection
-    # If a credential reference is present and injection is enabled,
-    # resolve the secret via Secrets Pack NOW — before execution.
-    # The resolved value is injected into execution_context but NEVER
-    # stored in the graph or in any field of CapabilityResult.
-    credential_ref_name = approval_data.get("credential_ref_name")
-    credential_ref_id = approval_data.get("credential_ref_id")
-    execution_context: dict = {}
-
-    if settings.inject_credentials and credential_ref_name:
-        try:
-            from packs.secrets.tools import resolve_and_audit_fn
-
-            secret_value = resolve_and_audit_fn(
-                graph=graph,
-                credential_name=credential_ref_name,
-                behavior_name="call_executor",
-                frame_id=frame_id,
-                call_id=call_id,
-                credential_ref_id=credential_ref_id or "",
-            )
-            if secret_value is not None:
-                execution_context["credential"] = secret_value
-        except ImportError:
-            pass  # Secrets pack not loaded — skip injection silently
-
-    # Execute the capability (execution_context carries the resolved credential)
-    result_data = execute_capability_fn(
-        provider_name=provider_name,
-        capability_name=capability_name,
-        input_data=input_data,
-        call_id=call_id,
-        frame_id=frame_id,
-        execution_context=execution_context,
+    execute_approved_call(
+        graph,
+        call_id,
+        approval_data,
+        settings,
+        executed_by="call_executor",
     )
-
-    raw_output = result_data.get("output_data", "")[: settings.max_output_chars]
-
-    # ------------------------------------------------------------------ output sanitization
-    # Always sanitize before storing — prevents credentials or secrets that
-    # leak through tool output from being persisted in CapabilityResult
-    # or propagated to Core sources.
-    was_sanitized = False
-    if settings.sanitize_output and raw_output:
-        raw_output, was_sanitized = sanitize_output(raw_output)
-
-    stored_output = raw_output if settings.record_output_data else ""
-
-    # Create CapabilityResult — sanitized=True if any redactions occurred
-    result = graph.add_object(
-        "capability_result",
-        CapabilityResult(
-            call_id=call_id,
-            provider_name=provider_name,
-            capability_name=capability_name,
-            output_data=stored_output,
-            error=result_data.get("error"),
-            success=result_data.get("success", True),
-            executed_at=result_data.get("executed_at"),
-            sanitized=was_sanitized,
-            frame_id=frame_id,
-        ).model_dump(),
-    )
-
-    # Patch call status to 'done' or 'failed'
-    new_status = "done" if result_data.get("success") else "failed"
-    try:
-        graph.patch_object(call_id, {"status": new_status})
-    except Exception:
-        pass
-
-    # Create produces_result relation: capability_call → capability_result.
-    # NOTE: add_relation signature is (source, target, type).
-    try:
-        graph.add_relation(call_id, result.id, "produces_result")
-    except Exception:
-        pass
 
 
 @behavior(

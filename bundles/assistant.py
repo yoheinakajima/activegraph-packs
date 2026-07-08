@@ -22,7 +22,7 @@ from packs.memory_gateway import pack as memory_gateway_pack, MemoryGatewaySetti
 from packs.agent_profile import pack as agent_profile_pack, AgentProfileSettings
 from packs.identity_auth import pack as identity_auth_pack, IdentitySettings
 from packs.communication import pack as communication_pack, CommunicationSettings
-from packs.chat import pack as chat_pack, ChatSettings
+from packs.chat import build_pack as build_chat_pack, pack as chat_pack, ChatSettings
 
 
 ASSISTANT_BUNDLE = [
@@ -68,8 +68,38 @@ def load_assistant_packs(
     rt.load_pack(agent_profile_pack, settings=agent_profile_settings or AgentProfileSettings())
     rt.load_pack(identity_auth_pack, settings=identity_settings or IdentitySettings())
     rt.load_pack(communication_pack, settings=communication_settings or CommunicationSettings())
-    rt.load_pack(chat_pack, settings=chat_settings or ChatSettings())
+    rt.load_pack(
+        _chat_pack_for(rt.graph, chat_settings, tool_gateway_settings),
+        settings=chat_settings or ChatSettings(),
+    )
     return rt
+
+
+def _chat_pack_for(
+    graph,
+    chat_settings: ChatSettings | None,
+    tool_gateway_settings: ToolGatewaySettings | None,
+):
+    """Resolve which Chat Pack to load: plain, or agentic.
+
+    ChatSettings.tool_allow_list names gateway capabilities; @llm_behavior
+    binds its tool set at behavior construction, so the allow-list is
+    translated HERE — where the graph already exists for the proxies to
+    close over — into gateway proxy Tools and a rebuilt pack. Empty
+    allow-list → the ordinary module-level chat pack, unchanged.
+    """
+    cs = chat_settings or ChatSettings()
+    if not cs.tool_allow_list:
+        return chat_pack
+
+    from packs.tool_gateway.llm_tools import llm_tools_for
+
+    tools = llm_tools_for(
+        graph,
+        cs.tool_allow_list,
+        settings=tool_gateway_settings or ToolGatewaySettings(),
+    )
+    return build_chat_pack(llm_tools=tools, max_tool_turns=cs.max_tool_turns)
 
 
 def seed_default_profile(

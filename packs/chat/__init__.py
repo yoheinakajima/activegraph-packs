@@ -1,4 +1,4 @@
-"""activegraph.packs.chat — Chat Adapter Pack v0.1.
+"""activegraph.packs.chat — Chat Adapter Pack v0.3.
 
 Translates interactive chat input into channel-neutral CommMessage objects
 and delivers assistant responses back to the chat interface.
@@ -11,6 +11,8 @@ Object types:
 Behaviors:
   chat_ingester       — chat_input.created → Source + CommMessage + ChatSession + ChatTurn
   chat_llm_responder  — comm_message.created (channel=chat) → CommResponseCandidate
+                        (optionally agentic: gateway proxy tools in the native
+                        LLM tool loop — see build_pack / ChatSettings.tool_allow_list)
   chat_responder      — comm_response_candidate.created (channel=chat, approved) → ChatTurn updated
 
 Behavior map:
@@ -70,23 +72,51 @@ from .tools import TOOLS
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# requires=["core", "communication"], composes_with=["identity_auth", "agent_profile"]
-pack = Pack(
-    name="chat",
-    version="0.2.0",
-    description=(
-        "Chat adapter pack. Translates chat input into CommMessage(channel=chat). "
-        "chat_ingester maps raw {'role': 'user', 'content': '...'} input into "
-        "CommMessage + ChatSession + ChatTurn. chat_llm_responder assembles context "
-        "and produces CommResponseCandidate. chat_responder delivers the response."
-    ),
-    object_types=OBJECT_TYPES,
-    relation_types=RELATION_TYPES,
-    behaviors=BEHAVIORS,
-    tools=TOOLS,
-    policies=(),
-    prompts=load_prompts_from_dir(_PROMPTS_DIR) if _PROMPTS_DIR.exists() else (),
-    settings_schema=ChatSettings,
-)
 
-__all__ = ["pack", "ChatSettings"]
+def build_pack(*, llm_tools=None, max_tool_turns: int = 4) -> Pack:
+    """Construct the Chat Pack, optionally agentic.
+
+    *llm_tools* is a list of runtime ``Tool`` objects — gateway proxies from
+    ``packs.tool_gateway.llm_tools.llm_tools_for`` — that the responder may
+    call in the native LLM tool loop. A build-time argument (not a setting)
+    because @llm_behavior binds its tool set when the behavior object is
+    constructed; bundles translate ``ChatSettings.tool_allow_list`` into this
+    call (see bundles/assistant.py). With no tools this returns a pack
+    identical to the module-level ``pack``.
+    """
+    if llm_tools:
+        from .behaviors import make_llm_responder
+
+        responder = make_llm_responder(tools=llm_tools, max_tool_turns=max_tool_turns)
+        behaviors = [
+            responder if getattr(b, "name", "") == "chat_llm_responder" else b
+            for b in BEHAVIORS
+        ]
+    else:
+        behaviors = BEHAVIORS
+
+    # requires=["core", "communication"],
+    # composes_with=["identity_auth", "agent_profile", "tool_gateway"]
+    return Pack(
+        name="chat",
+        version="0.3.0",
+        description=(
+            "Chat adapter pack. Translates chat input into CommMessage(channel=chat). "
+            "chat_ingester maps raw {'role': 'user', 'content': '...'} input into "
+            "CommMessage + ChatSession + ChatTurn. chat_llm_responder assembles context "
+            "and produces CommResponseCandidate (optionally calling Tool Gateway "
+            "proxy tools in the native LLM loop). chat_responder delivers the response."
+        ),
+        object_types=OBJECT_TYPES,
+        relation_types=RELATION_TYPES,
+        behaviors=behaviors,
+        tools=TOOLS,
+        policies=(),
+        prompts=load_prompts_from_dir(_PROMPTS_DIR) if _PROMPTS_DIR.exists() else (),
+        settings_schema=ChatSettings,
+    )
+
+
+pack = build_pack()
+
+__all__ = ["pack", "build_pack", "ChatSettings"]

@@ -691,44 +691,74 @@ def chat_memory_context(event, graph, ctx, *, settings: ChatSettings):
         pass
 
 
-@llm_behavior(
-    name="chat_llm_responder",
-    on=["object.created"],
-    # Scoped precisely so the (potentially paid) LLM call fires only for
-    # inbound chat messages — never for outbound/email/other comm traffic.
-    where={
-        "object.type": "comm_message",
-        "object.data.channel": "chat",
-        "object.data.direction": "inbound",
-    },
-    description=(
-        "You are the assistant in an ActiveGraph-powered chat. Read the user's "
-        "most recent message (the triggering comm_message) together with any "
-        "prior context in the graph view, then reply helpfully and concisely."
-    ),
-    output_schema=ChatReply,
-    # model=None → the runtime resolves the model from the active provider's
-    # default_model at call time (set via packs/chat/llm.py: select_chat_provider).
-    # This also skips cross-family model validation, which a static model name
-    # would trip when the configured provider differs.
-    model=None,
-    view={
-        "around": "event.payload.object.id",
-        "depth": 1,
-        # recent_events MUST stay 0. Prior conversation reaches the model on
-        # exactly one path: the ChatContext that chat_context_assembler linked to
-        # this message (captured by depth=1 above), whose transcript is already
-        # bounded to max_context_messages. A non-zero recent_events would fold
-        # raw prior-turn event payloads into the prompt as a second, UNBOUNDED
-        # memory channel — defeating max_context_messages and re-introducing a
-        # side-channel. Keep memory single-sourced through ChatContext.
-        "recent_events": 0,
-    },
-    creates=["comm_response_candidate"],
-    temperature=0.7,
-    max_tokens=1024,
+_RESPONDER_DESCRIPTION = (
+    "You are the assistant in an ActiveGraph-powered chat. Read the user's "
+    "most recent message (the triggering comm_message) together with any "
+    "prior context in the graph view, then reply helpfully and concisely."
 )
-def chat_llm_responder(event, graph, ctx, out, *, settings: ChatSettings):
+
+_AGENTIC_DESCRIPTION_SUFFIX = (
+    " You may call the provided tools to look things up or act on the user's "
+    "behalf; ground your reply in their results. If a tool reports "
+    "status='held_for_approval', the action was recorded but needs the "
+    "owner's sign-off — say so instead of pretending it ran."
+)
+
+
+def make_llm_responder(tools: Optional[list] = None, max_tool_turns: int = 4):
+    """Build the chat_llm_responder behavior, optionally with gateway tools.
+
+    The tool-free default (module-level ``chat_llm_responder`` below) is what
+    the plain Chat Pack ships. Passing *tools* — Tool objects from
+    ``packs.tool_gateway.llm_tools.llm_tools_for`` — produces the AGENTIC
+    responder: the runtime's native tool loop drives them, and because each
+    is a gateway proxy, every model-initiated action is still recorded,
+    policy-checked, credential-injected, and sanitized by the Tool Gateway.
+
+    A factory (not a settings flag) because @llm_behavior binds its tool set
+    when the behavior object is constructed; see packs/chat/__init__.py
+    build_pack for how ChatSettings.tool_allow_list reaches this.
+    """
+    return llm_behavior(
+        name="chat_llm_responder",
+        on=["object.created"],
+        # Scoped precisely so the (potentially paid) LLM call fires only for
+        # inbound chat messages — never for outbound/email/other comm traffic.
+        where={
+            "object.type": "comm_message",
+            "object.data.channel": "chat",
+            "object.data.direction": "inbound",
+        },
+        description=(
+            _RESPONDER_DESCRIPTION + (_AGENTIC_DESCRIPTION_SUFFIX if tools else "")
+        ),
+        output_schema=ChatReply,
+        # model=None → the runtime resolves the model from the active provider's
+        # default_model at call time (set via packs/chat/llm.py: select_chat_provider).
+        # This also skips cross-family model validation, which a static model name
+        # would trip when the configured provider differs.
+        model=None,
+        view={
+            "around": "event.payload.object.id",
+            "depth": 1,
+            # recent_events MUST stay 0. Prior conversation reaches the model on
+            # exactly one path: the ChatContext that chat_context_assembler linked to
+            # this message (captured by depth=1 above), whose transcript is already
+            # bounded to max_context_messages. A non-zero recent_events would fold
+            # raw prior-turn event payloads into the prompt as a second, UNBOUNDED
+            # memory channel — defeating max_context_messages and re-introducing a
+            # side-channel. Keep memory single-sourced through ChatContext.
+            "recent_events": 0,
+        },
+        creates=["comm_response_candidate"],
+        temperature=0.7,
+        max_tokens=1024,
+        tools=list(tools) if tools else [],
+        max_tool_turns=max_tool_turns,
+    )(_chat_llm_respond)
+
+
+def _chat_llm_respond(event, graph, ctx, out, *, settings: ChatSettings):
     """Produce a CommResponseCandidate for inbound chat messages (native LLM).
 
     On: object.created (comm_message, channel=chat, direction=inbound)
@@ -771,6 +801,11 @@ def chat_llm_responder(event, graph, ctx, out, *, settings: ChatSettings):
         graph.add_relation(candidate.id, msg_id, "response_to")
     except Exception:
         pass
+
+
+# The tool-free default responder. Agentic variants are built per-bundle via
+# make_llm_responder(tools=...) — see packs/chat/__init__.py build_pack.
+chat_llm_responder = make_llm_responder()
 
 
 @behavior(

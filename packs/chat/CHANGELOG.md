@@ -1,5 +1,33 @@
 # Chat Pack Changelog
 
+## v0.3.0 — Agentic chat + provider-boundary compatibility (2026-07-08)
+
+### Added
+- **Agentic responder.** `make_llm_responder(tools=..., max_tool_turns=...)`
+  builds `chat_llm_responder` with gateway proxy Tools wired into the
+  runtime's native LLM tool loop; `build_pack(llm_tools=...)` swaps it into
+  the pack. `ChatSettings.tool_allow_list` (capability keys) and
+  `ChatSettings.max_tool_turns` are the knobs — bundles translate the
+  allow-list into proxies (see bundles/assistant.py). Every model-initiated
+  action is still recorded, policy-checked, credential-injected, and
+  sanitized by the Tool Gateway; chat never touches a raw capability.
+  Empty allow-list (default) = conversational-only, unchanged.
+- **ProviderCompat** (llm.py): sanitizes pack-scoped tool names at the
+  provider wire boundary (`pack.tool` → `pack__tool`; OpenAI and Anthropic
+  both reject dots) and maps response tool calls back to canonical names.
+  Canonical names everywhere inside the graph and trace.
+- **OpenAICompatProvider** (llm.py): translates `max_tokens` →
+  `max_completion_tokens` and drops `temperature`/`top_p` for
+  reasoning-model families (gpt-5 / o-series), which reject them.
+- Tests: `tests/test_provider_compat.py`, `tests/test_agentic_chat.py`
+  (scripted-provider end-to-end: tool call → gateway → grounded reply).
+
+### Changed
+- `FallbackChatProvider` now names the actual underlying error in its
+  fallback reply (a 400 no longer reads like a network problem), degrades
+  gracefully on first-call failures even when tools are offered, and
+  re-raises MID tool-loop (canned text must not replace a grounded answer).
+
 ## v0.2.0 — Graph-native conversation memory (2026-06-04)
 
 ### Added

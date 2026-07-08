@@ -152,6 +152,18 @@ def _seed_demo(rt) -> None:
     })
 
 
+def _register_demo_capabilities():
+    """Register the demo's gateway capabilities (idempotent).
+
+    web.fetch_url is the demo's one agentic tool: read-only, low-risk,
+    auto-approvable — enough for live chat to ground answers in a real page
+    while every fetch is still a recorded, policy-checked capability call.
+    """
+    from packs.tool_gateway.capabilities import register_web_fetch_capability
+
+    register_web_fetch_capability()
+
+
 def _build_runtime():
     """Build the runtime, resuming from the SQLite event log if one exists.
 
@@ -177,7 +189,17 @@ def _build_runtime():
     # memory_writer persists to, so point ChatSettings.memory_backend_url at the
     # same SQLite file. This is what makes cross-session recall work: memories
     # written in one session are retrieved in the next, even across a restart.
-    chat_settings = ChatSettings(memory_backend_url=_memory_db_path())
+    #
+    # tool_allow_list makes demo chat AGENTIC: the responder may call the
+    # web.fetch_url gateway proxy (registered below) in the native LLM tool
+    # loop. Every such call is recorded/policy-checked/sanitized by the Tool
+    # Gateway. In mock mode the provider never requests tools, so this is
+    # inert without an API key.
+    _register_demo_capabilities()
+    chat_settings = ChatSettings(
+        memory_backend_url=_memory_db_path(),
+        tool_allow_list=["web.fetch_url"],
+    )
     resuming = _store_has_run(db)
 
     # Resolve the chat LLM provider from the environment (live if a provider

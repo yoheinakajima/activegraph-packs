@@ -15,6 +15,8 @@ Object types: capability_provider, capability_call, capability_approval,
 Behaviors:    call_recorder, policy_enforcer, call_executor, result_sourcer
 Tools:        execute_capability, pending_approvals, approve_capability,
               deny_capability
+LLM proxies:  llm_tools.as_llm_tool / llm_tools_for — registered capabilities
+              as policy-checked Tools for @llm_behavior(tools=[...])
 
 Usage:
     from activegraph import Runtime, Graph
@@ -44,7 +46,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["secrets", "identity_auth"]
 pack = Pack(
     name="tool_gateway",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Capability execution gateway. All external calls (APIs, MCP, local tools) "
         "flow through here for policy checks, credential injection by reference, "

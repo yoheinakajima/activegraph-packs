@@ -251,16 +251,47 @@ def test_fallback_names_the_real_error_on_plain_chat():
     assert "nope-9" in resp.raw_text
 
 
-def test_fallback_reraises_on_tool_loops():
+def test_fallback_degrades_on_first_call_even_with_tools_offered():
+    # No tool interaction has happened yet — a canned reply is safe and
+    # better UX than a dead turn.
+    fallback = FallbackChatProvider(
+        _ExplodingProvider(response=_response()), provider="openai", key_env="OPENAI_API_KEY"
+    )
+    resp = fallback.complete(
+        system="",
+        messages=[LLMMessage(role="user", content="hi")],
+        model="nope-9",
+        max_tokens=100,
+        temperature=0.7,
+        top_p=1.0,
+        output_schema=None,
+        timeout_seconds=30.0,
+        tools=[{"name": "t", "description": "", "input_schema": {}}],
+    )
+    assert "ValueError" in resp.raw_text
+
+
+def test_fallback_reraises_mid_tool_loop():
+    # Prior tool activity exists — canned text would silently replace a
+    # grounded answer, so the error must surface.
     fallback = FallbackChatProvider(
         _ExplodingProvider(response=_response()), provider="openai", key_env="OPENAI_API_KEY"
     )
     import pytest
 
+    mid_loop_messages = [
+        LLMMessage(role="user", content="hi"),
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c1", name="t", args={})],
+        ),
+        LLMMessage(role="tool", content="{}", tool_use_id="c1"),
+    ]
     with pytest.raises(ValueError):
         fallback.complete(
             system="",
-            messages=[],
+            messages=mid_loop_messages,
             model="nope-9",
             max_tokens=100,
             temperature=0.7,

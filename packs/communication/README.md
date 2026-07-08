@@ -1,4 +1,4 @@
-# Communication Pack v0.1
+# Communication Pack v0.2
 
 Channel-neutral communication semantic layer for all ActiveGraph packs.
 
@@ -44,6 +44,13 @@ comm_message.created [direction=inbound]
       creates: thread_contains relation, comm_participant (sender)
       uses: _THREAD_REGISTRY (no graph.objects() scan)
 
+comm_intent.created
+  → intent_router
+      when settings.intent_routes has a route for the intent kind AND
+      confidence ≥ intent_route_min_confidence:
+      creates: capability_call(status=proposed) + fulfills_intent relation
+      [Tool Gateway policy/approval/execution governs it from there]
+
 comm_response_candidate.created [status=approved]
   → response_dispatcher
       creates: dispatched_to relation (candidate → thread)
@@ -72,6 +79,8 @@ CommunicationSettings(
     auto_create_threads=True,             # Auto-create CommThread on first message
     default_channel="chat",              # Default channel
     low_confidence_intent_threshold=0.5, # Below this → intent="unknown"
+    intent_routes={},                    # intent kind → capability route (see below)
+    intent_route_min_confidence=0.6,     # Min confidence to propose an action
     auto_dispatch_approved_responses=True,
     max_thread_participants=50,
 )
@@ -108,3 +117,26 @@ rt.run_until_idle()
 - `intent_detector` is deterministic (no LLM) — suitable for production without API keys
 - `response_dispatcher` does not perform actual HTTP delivery — channel pack responders handle that
 - Call `clear_thread_registry()` between test fixtures
+
+## Intent routing (deterministic action path)
+
+`intent_router` turns detected intents into Tool Gateway proposals — the
+zero-LLM half of "chat that can act". Configure a route per intent kind:
+
+```python
+CommunicationSettings(intent_routes={
+    "request": {
+        "provider_name": "helpdesk",
+        "capability_name": "file_ticket",
+        "risk_class": "low",            # default "medium"
+        "input": {"queue": "inbox"},    # static kwargs (optional)
+        "content_field": "text",        # message text lands here (default)
+    },
+})
+```
+
+The router only PROPOSES (`capability_call`, status=proposed, linked
+`fulfills_intent` → the comm_intent). The gateway's policy check, approval
+hold, credential injection, and audit govern everything after. With no
+routes configured (default) or without the Tool Gateway loaded, intents
+stay informational — no coupling.

@@ -39,6 +39,32 @@ class CommunicationSettings(BaseModel):
             "and intent is set to 'unknown'. Default: 0.5."
         ),
     )
+    intent_routes: dict[str, dict] = Field(
+        default_factory=dict,
+        description=(
+            "Deterministic intent → Tool Gateway routing. Keys are intent kinds "
+            "('request', 'approval_request', ...); values describe the capability "
+            "call to propose: {'provider_name': ..., 'capability_name': ..., "
+            "'risk_class': 'low'|'medium'|'high'|'critical' (default 'medium'), "
+            "'input': {static kwargs}, 'content_field': name the message text is "
+            "passed under (default 'text')}. Empty (default) = no routing — "
+            "intents are informational only. Routed calls enter the normal "
+            "gateway lifecycle (policy check, approval, execution, audit); this "
+            "pack only PROPOSES. Requires the Tool Gateway Pack to act on the "
+            "proposal; without it the capability_call object type does not exist "
+            "and the router no-ops."
+        ),
+    )
+    intent_route_min_confidence: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum detected-intent confidence for intent_router to propose a "
+            "capability call. Low-confidence guesses must not trigger actions. "
+            "Default: 0.6."
+        ),
+    )
     auto_dispatch_approved_responses: bool = Field(
         default=True,
         description=(

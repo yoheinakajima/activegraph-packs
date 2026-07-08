@@ -1,4 +1,4 @@
-# Chat Adapter Pack v0.2
+# Chat Adapter Pack v0.3
 
 Translates interactive chat input into channel-neutral CommMessage objects, with
 **graph-native conversation memory**.
@@ -165,12 +165,49 @@ ChatSettings(
     llm_provider="mock",           # "mock" | "openai" | "anthropic"
     model="gpt-4o-mini",           # Ignored for mock
     system_prompt_override=None,   # Override AgentProfile system prompt
+    tool_allow_list=[],            # Gateway capability keys the LLM may call
+    max_tool_turns=4,              # Cap on LLM↔tool round-trips per turn
     max_context_messages=10,       # Prior turns in LLM context
     include_memory=True,           # Include Memory Gateway context (if loaded)
     include_profile=True,          # Include AgentProfile context (if loaded)
     auto_approve_responses=True,   # Auto-approve chat responses (no owner gate)
 )
 ```
+
+## Agentic chat (tools in the reply loop)
+
+With a non-empty `tool_allow_list`, the responder runs the runtime's native
+LLM tool loop — but never with raw capabilities. Each allow-list entry is a
+gateway capability key ("provider.capability"), translated at pack build
+time into a Tool Gateway PROXY (`packs.tool_gateway.llm_tools`): the model's
+call is recorded as a `capability_call`, policy-checked, credential-injected
+and sanitized by the gateway. Auto-approvable calls return their result to
+the model in the same turn; higher-risk calls are held and the model reports
+`held_for_approval` instead of pretending they ran.
+
+```python
+from bundles import build_assistant
+from packs.chat import ChatSettings
+from packs.tool_gateway.capabilities import register_web_fetch_capability
+
+register_web_fetch_capability()          # gateway capability web.fetch_url
+rt = build_assistant(chat_settings=ChatSettings(
+    tool_allow_list=["web.fetch_url"],
+))
+```
+
+Because @llm_behavior binds its tool set at behavior construction, the
+allow-list is applied by `packs.chat.build_pack(llm_tools=...)` — bundles do
+this translation (see `bundles/assistant.py:_chat_pack_for`). An empty
+allow-list (the default) is today's conversational-only pack, unchanged.
+
+Provider boundary (`llm.py`): `ProviderCompat` sanitizes pack-scoped tool
+names on the wire ('pack.tool' → 'pack__tool'; OpenAI/Anthropic reject
+dots) and maps response tool calls back to canonical names;
+`OpenAICompatProvider` translates params for reasoning-model families.
+`FallbackChatProvider` degrades plain-chat failures to an instructive reply
+that names the real error, and re-raises mid-tool-loop failures rather than
+corrupting the loop with canned text.
 
 ## Demo: 3-Turn Conversation
 

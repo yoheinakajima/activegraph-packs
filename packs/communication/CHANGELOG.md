@@ -1,5 +1,25 @@
 # Communication Pack Changelog
 
+## v0.2.0 — Intent routing: detection is no longer decorative (2026-07-08)
+
+### Added
+- `intent_router` behavior — on `comm_intent.created`, proposes a Tool
+  Gateway `capability_call` (status=proposed) when the intent kind has a
+  configured route and detection confidence clears
+  `intent_route_min_confidence`. The proposal enters the normal gateway
+  lifecycle (policy check → approval/hold → execution → audit); this pack
+  only proposes. Before this, nothing consumed `comm_intent` objects.
+- `fulfills_intent` relation (capability_call → comm_intent) linking the
+  proposed action back to the intent that motivated it.
+- Settings: `intent_routes` (default `{}` — no routing) and
+  `intent_route_min_confidence` (default 0.6).
+- Fixture: `run_intent_router_fixture` (routed 'request' executes through
+  the gateway; unrouted 'query' proposes nothing).
+
+### Design decisions
+- Degrades gracefully: without the Tool Gateway Pack the `capability_call`
+  type does not exist and the router no-ops — intents stay informational.
+
 ## v0.1.1 — Relation integrity fix (2026-07-08)
 
 ### Fixed

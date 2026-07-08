@@ -324,4 +324,17 @@ RELATION_TYPES = [
         target_types=("comm_thread",),
         description="A CommResponseCandidate was dispatched to a channel via its thread.",
     ),
+    RelationType(
+        name="fulfills_intent",
+        # Source left open (empty = any): the fulfilling object is a
+        # capability_call, a type owned by the OPTIONAL Tool Gateway Pack —
+        # this pack must not hard-couple its relation constraints to a type
+        # it degrades gracefully without.
+        source_types=(),
+        target_types=("comm_intent",),
+        description=(
+            "An object (typically a Tool Gateway capability_call proposed by "
+            "intent_router) fulfills a detected CommIntent."
+        ),
+    ),
 ]

@@ -1,5 +1,33 @@
 # Tool Gateway Pack Changelog
 
+## v0.3.0 — LLM tool proxies: chat that can act (2026-07-08)
+
+### Added
+- `llm_tools.py` — `as_llm_tool` / `llm_tools_for` wrap registered
+  capabilities as runtime `Tool` objects for `@llm_behavior(tools=[...])`.
+  Each is a PROXY into the gateway: the model's call is recorded as a
+  `capability_call` before anything runs, policy-checked via the same
+  `decide_policy` the enforcer uses, executed inline with credential
+  injection + sanitization when auto-approvable, or held at
+  `policy_checking` (the model is told `held_for_approval`) for the normal
+  approve/deny path. Double execution is impossible by construction: the
+  approval is recorded after the inline call is done, and `call_executor`
+  now guards on `status == 'approved'`.
+- `gateway.py` — the single shared implementation of the policy decision
+  (`decide_policy`) and the execution path (`execute_approved_call`);
+  `policy_enforcer` and `call_executor` now delegate to it, so the reactive
+  and synchronous paths cannot drift.
+- `capabilities.py` — `register_web_fetch_capability()`: the runtime's
+  stdlib `web_fetch` reference tool re-exposed as the gateway capability
+  `web.fetch_url` (read-only, low risk), the canonical first agentic tool.
+- Capability registry metadata: `register_local_capability` now records
+  `input_schema`, `description`, `risk_class`, `credential_ref_name`
+  (`CapabilitySpec`), which is what makes a capability LLM-exposable.
+  Plus `get_capability_spec`, `registered_capability_keys`,
+  `clear_local_registry` (test isolation).
+- Tests: `tests/test_llm_tool_proxies.py` (inline execution exactly-once,
+  held→approve, held→deny, loud failures for unknown keys / missing schemas).
+
 ## v0.2.0 — Approval resolution: closing the trust loop (2026-07-07)
 
 ### Added

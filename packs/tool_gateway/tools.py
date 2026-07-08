@@ -16,6 +16,7 @@ graph-visible and policy-gated.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -24,24 +25,93 @@ from activegraph.packs import tool
 
 # ------------------------------------------------------------------ registry
 
-# Registered local capability handlers:
-#   "{provider_name}.{capability_name}" -> Callable
-_LOCAL_REGISTRY: dict[str, Callable] = {}
+
+@dataclass(frozen=True)
+class CapabilitySpec:
+    """A registered local capability: the handler plus the metadata that
+    lets the gateway expose it safely — as a policy-checked call and,
+    via llm_tools.as_llm_tool, as an LLM-callable tool.
+
+    input_schema (a Pydantic model) is what the LLM sees as the tool's
+    parameter schema; without it a capability can still be executed
+    graph-side but cannot be offered to a model (an empty schema would
+    make the model call it with {}).
+    """
+
+    provider_name: str
+    capability_name: str
+    fn: Callable
+    input_schema: Optional[type] = None
+    description: str = ""
+    risk_class: str = "low"
+    credential_ref_name: Optional[str] = None
+
+    @property
+    def key(self) -> str:
+        return f"{self.provider_name}.{self.capability_name}"
 
 
-def register_local_capability(provider_name: str, capability_name: str, fn: Callable):
+# Registered local capabilities: "{provider_name}.{capability_name}" -> CapabilitySpec
+_LOCAL_REGISTRY: dict[str, CapabilitySpec] = {}
+
+
+def register_local_capability(
+    provider_name: str,
+    capability_name: str,
+    fn: Callable,
+    *,
+    input_schema: Optional[type] = None,
+    description: str = "",
+    risk_class: str = "low",
+    credential_ref_name: Optional[str] = None,
+) -> CapabilitySpec:
     """Register a local Python function as a capability.
 
     The key is "{provider_name}.{capability_name}" (case-sensitive).
+    The keyword metadata is what makes the capability LLM-exposable via
+    llm_tools_for / as_llm_tool — see llm_tools.py.
 
     Example:
+        class LookupInput(BaseModel):
+            company_name: str
+
         def my_lookup(company_name: str) -> dict:
             return {"company": company_name, "founded": 2021}
 
-        register_local_capability("crm", "lookup_company", my_lookup)
+        register_local_capability(
+            "crm", "lookup_company", my_lookup,
+            input_schema=LookupInput,
+            description="Look up a company in the CRM.",
+            risk_class="low",
+        )
     """
-    key = f"{provider_name}.{capability_name}"
-    _LOCAL_REGISTRY[key] = fn
+    spec = CapabilitySpec(
+        provider_name=provider_name,
+        capability_name=capability_name,
+        fn=fn,
+        input_schema=input_schema,
+        description=description,
+        risk_class=risk_class,
+        credential_ref_name=credential_ref_name,
+    )
+    _LOCAL_REGISTRY[spec.key] = spec
+    return spec
+
+
+def get_capability_spec(key: str) -> Optional[CapabilitySpec]:
+    """Look up a registered capability by its "provider.capability" key."""
+    return _LOCAL_REGISTRY.get(key)
+
+
+def clear_local_registry() -> None:
+    """Empty the local capability registry — call between test fixtures
+    (mirrors clear_session_registry / clear_thread_registry elsewhere)."""
+    _LOCAL_REGISTRY.clear()
+
+
+def registered_capability_keys() -> list[str]:
+    """All registered capability keys, in registration order."""
+    return list(_LOCAL_REGISTRY.keys())
 
 
 # ------------------------------------------------------------------ raw function (callable directly)
@@ -88,7 +158,7 @@ def execute_capability_fn(
             # Registered handlers receive input_data kwargs.
             # They may also receive execution_context if they accept it,
             # but most handlers are simple and do not need it.
-            handler = _LOCAL_REGISTRY[key]
+            handler = _LOCAL_REGISTRY[key].fn
             try:
                 result = handler(**input_data, execution_context=ctx)
             except TypeError:

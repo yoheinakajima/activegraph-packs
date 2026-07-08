@@ -358,11 +358,20 @@ class FallbackChatProvider:
     lifecycle (it is itself an ``LLMProvider``) and only intercepts
     exceptions from the inner provider's ``complete``.
 
-    EXCEPTION: calls with ``tools`` re-raise instead of degrading. A canned
-    reply cannot participate in a tool loop, and swallowing the error there
-    would corrupt the loop silently — the runtime's llm-error events are the
-    correct surface for tool-loop failures.
+    EXCEPTION: a failure MID tool-loop (prior tool calls/results already in
+    the message history) re-raises instead of degrading. A canned reply there
+    would terminate the loop with an answer not grounded in the tool results —
+    silent corruption. On the FIRST call of a turn no tool interaction exists
+    yet, so degrading to the instructive reply is safe even when tools are
+    offered.
     """
+
+    @staticmethod
+    def _in_tool_loop(messages: list) -> bool:
+        return any(
+            getattr(m, "role", None) == "tool" or getattr(m, "tool_calls", None)
+            for m in messages
+        )
 
     def __init__(self, inner: Any, *, provider: str, key_env: Optional[str]) -> None:
         self._inner = inner
@@ -375,11 +384,10 @@ class FallbackChatProvider:
         try:
             return self._inner.complete(**kwargs)
         except Exception as exc:
-            # A tool loop cannot be served by canned text — the runtime is
-            # waiting on tool calls or a grounded answer, and a mock reply
-            # would silently corrupt the loop. Fail loud; the runtime's
-            # llm-error handling owns that path.
-            if kwargs.get("tools"):
+            # Mid tool-loop, canned text cannot stand in for a grounded
+            # answer — fail loud; the runtime's llm-error handling owns
+            # that path. Before any tool interaction, degrade gracefully.
+            if kwargs.get("tools") and self._in_tool_loop(kwargs.get("messages") or []):
                 raise
             note = _live_error_note(self._provider, self._key_env, exc)
             return MockChatProvider(note=note).complete(**kwargs)

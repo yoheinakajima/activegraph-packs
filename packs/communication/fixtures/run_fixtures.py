@@ -108,6 +108,72 @@ def run_thread_tracker_fixture() -> dict:
     }
 
 
+def run_intent_router_fixture() -> dict:
+    """Test intent_router proposes a gateway capability call for a routed intent.
+
+    Loads the Tool Gateway alongside Communication, routes 'request' intents to
+    a mock capability, sends an inbound request message, and asserts:
+      - a capability_call exists and was run by the gateway lifecycle
+      - it links back to the comm_intent via fulfills_intent
+      - an unrouted intent kind ('query') proposes nothing
+    """
+    clear_thread_registry()
+
+    from packs.tool_gateway import pack as tg_pack, ToolGatewaySettings
+    from packs.tool_gateway.tools import register_local_capability
+
+    register_local_capability(
+        "helpdesk", "file_ticket",
+        lambda text="": {"ticket_id": "T-1", "text": text},
+    )
+
+    g = Graph()
+    rt = Runtime(g)
+    rt.load_pack(core_pack, settings=CoreSettings())
+    rt.load_pack(tg_pack, settings=ToolGatewaySettings(
+        auto_approve_risk_classes=["low", "medium"],
+    ))
+    rt.load_pack(comm_pack, settings=CommunicationSettings(
+        intent_routes={
+            "request": {
+                "provider_name": "helpdesk",
+                "capability_name": "file_ticket",
+                "risk_class": "low",
+            },
+        },
+    ))
+
+    # A clear 'request' → routed.
+    create_comm_message_fn(g, channel="chat",
+                           content="Please draft a summary of the meeting notes.",
+                           sender_ref="user@example.com", direction="inbound")
+    # A clear 'query' → NOT routed (no route configured for it).
+    create_comm_message_fn(g, channel="chat",
+                           content="What is the status of the deal?",
+                           sender_ref="user@example.com", direction="inbound")
+    rt.run_until_idle()
+
+    calls = list(g.objects(type="capability_call"))
+    assert len(calls) == 1, f"Expected exactly 1 routed capability_call, got {len(calls)}"
+    call = calls[0]
+    assert call.data.get("proposed_by") == "intent_router"
+    assert call.data.get("capability_name") == "file_ticket"
+    assert "Please draft" in call.data.get("input_data", {}).get("text", "")
+    # The gateway lifecycle ran it (low risk → auto-approved → executed).
+    assert call.data.get("status") == "done", f"got {call.data.get('status')}"
+
+    fulfil = [r for r in g.relations() if r.type == "fulfills_intent"]
+    assert len(fulfil) == 1, "Expected fulfills_intent relation"
+    intent = g.get_object(fulfil[0].target)
+    assert intent.type == "comm_intent" and intent.data.get("intent") == "request"
+
+    return {
+        "routed_calls": len(calls),
+        "final_status": call.data.get("status"),
+        "fulfills_intent_relations": len(fulfil),
+    }
+
+
 def run_response_dispatcher_fixture() -> dict:
     """Test response_dispatcher fires on approved candidate and marks sent."""
     clear_thread_registry()
@@ -173,6 +239,12 @@ def run_all() -> bool:
     result = run_response_dispatcher_fixture()
     print(f"  PASS: final_status={result['candidate_final_status']}, "
           f"dispatched_to_rels={result['dispatched_to_relations']}")
+
+    print("\n[4] intent_router fixture")
+    result = run_intent_router_fixture()
+    print(f"  PASS: routed_calls={result['routed_calls']}, "
+          f"final_status={result['final_status']}, "
+          f"fulfills_intent_rels={result['fulfills_intent_relations']}")
 
     print(f"\n{'ALL PASS' if all_pass else 'SOME FAILURES'}")
     return all_pass

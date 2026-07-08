@@ -66,7 +66,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], composes_with=["identity_auth", "agent_profile", "memory_gateway"]
 pack = Pack(
     name="communication",
-    version="0.1.1",
+    version="0.2.0",
     description=(
         "Channel-neutral communication semantic layer. "
         "Provides CommThread, CommMessage, CommIntent, CommResponseCandidate, CommParticipant. "
