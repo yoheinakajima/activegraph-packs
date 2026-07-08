@@ -692,12 +692,23 @@ def fx_18_retention_pins(tmp) -> dict:
     """§7.5 closes on the runtime retention API: a promoted-from fork
     log refuses retirement (RetentionPinnedError, the pin set dominates
     unconditionally), a rejected trial's fork retires clean, and the
-    boot housekeeping helper makes the same calls."""
+    boot housekeeping helper makes the same calls.
+
+    This also exercises the sanctioned per-run concurrency (CONTRACT
+    v1.5 #2 addendum 2b): `rt` stays a LIVE runtime attached to the
+    parent run on `db` for the whole fixture, while pins()/retire() and
+    the housekeeping helper operate on OTHER runs (the fork runs) in the
+    same SQLite file. The runtime pins this exact shape with
+    test_retire_fork_per_run_while_parent_runtime_is_live; "no runtime
+    attached" is per-RUN, so this is correct as written and needs no
+    teardown. The one thing the fixture never does, per the ruling's
+    stricter caveat, is retire the parent run out from under its own
+    live runtime."""
     from activegraph.store.retention import RetentionPinnedError, pins, retire
 
     from packs.evolution.boot import retire_unpinned_trial_forks
 
-    rt = _build_parent(tmp, "retention")
+    rt = _build_parent(tmp, "retention")  # live on the parent run throughout
     db = os.path.join(tmp, "retention.sqlite")
     proposal = _submit_and_gate(rt, author_pack())
     trial = run_trial(rt, proposal.id, SETTINGS)
@@ -706,6 +717,8 @@ def fx_18_retention_pins(tmp) -> dict:
     rt.run_until_idle()
     promoted_fork = trial["fork_run_id"]
 
+    # pins()/retire() below run against fork runs while rt is still live
+    # on the parent run in the same file: the sanctioned per-run case.
     reasons = pins(db, promoted_fork)
     assert reasons and "promoted-from" in reasons[0], reasons
     try:
@@ -714,7 +727,9 @@ def fx_18_retention_pins(tmp) -> dict:
     except RetentionPinnedError as exc:
         assert exc.reasons and "promoted-from" in exc.reasons[0]
 
-    # A rejected candidate's forks are disposable.
+    # A rejected candidate's forks are disposable. Retiring only after
+    # the verdict is final satisfies the no-racing-a-pin condition: no
+    # promote from this fork is or ever will be in flight.
     bad = _submit_and_gate(rt, author_pack(
         trigger='    raise RuntimeError("regression")'))
     trial2 = run_trial(rt, bad.id, SETTINGS)
@@ -722,15 +737,22 @@ def fx_18_retention_pins(tmp) -> dict:
     rejected_fork = trial2["fork_run_id"]
     assert pins(db, rejected_fork) == [], "nothing pins a rejected fork"
 
+    # rt is STILL live on the parent here; the helper retires fork runs.
+    assert rt.graph.events, "parent runtime is live during retirement"
     outcomes = retire_unpinned_trial_forks(db)
     assert outcomes[promoted_fork].startswith("pinned"), outcomes
     assert outcomes[rejected_fork].startswith("retired"), outcomes
     retired = sum(1 for v in outcomes.values() if v.startswith("retired"))
     assert retired >= 2, (
         f"the fixture-gate forks are disposable too: {outcomes}")
+
+    # The parent run is untouched by all of this: still live, still
+    # readable, still the run the promoted-from pin protects.
+    assert rt.graph.get_object(str(proposal.id)) is not None
     return {"promoted_fork": "pinned (provenance)",
             "rejected_fork": "retired",
-            "total_retired": retired}
+            "total_retired": retired,
+            "parent_runtime": "live throughout (per-run concurrency)"}
 
 
 def fx_19_soak_rotation(tmp) -> dict:

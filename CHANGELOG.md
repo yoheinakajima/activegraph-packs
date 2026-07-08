@@ -20,6 +20,13 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
   page shows what the author READ beside what it wrote. Fixture 20:
   tainted record suspends, loud banner, no approve button. When the
   author lands, gate 3 is a wiring step.
+- **Evolution pack v0.4.1: retention concurrency verdict folded.** The
+  runtime ruled the retention offline requirement per-RUN (CONTRACT
+  v1.5 #2 addendum 2b): retiring a fork run is sanctioned while a live
+  runtime is attached to other runs in the same store. Docs in
+  `boot.retire_unpinned_trial_forks`, the demo server, design §7.2/§7.5,
+  and fixture 18 now record the ruling and the two operator conditions
+  the pack keeps. No behavior change; the pattern was already correct.
 
 ## v0.6.0 — v1.5 consumption: subprocess trials, retention pins, enforcement (2026-07-08)
 

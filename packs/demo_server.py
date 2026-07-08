@@ -428,10 +428,14 @@ def _build_runtime():
     from packs.chat.llm import select_chat_provider
 
     db = _db_path()
-    # Retention housekeeping BEFORE the runtime attaches (retire/compact
-    # are offline operations per the runtime's contract): archive trial
+    # Retention housekeeping BEFORE the runtime attaches: archive trial
     # forks nothing wants anymore. Promoted-from forks are pinned by the
-    # runtime's retention API and stay, as provenance.
+    # runtime's retention API and stay, as provenance. Per CONTRACT v1.5
+    # #2 addendum 2b the offline requirement is per-RUN, so retiring fork
+    # runs while a runtime is attached to OTHER runs would be sanctioned;
+    # this pre-boot placement is the simplest way to also honor the
+    # stricter caveat that binds the run being operated on itself (never
+    # retire a run this process holds a live runtime on).
     if _evolution_enabled() and os.path.exists(db):
         from packs.evolution.boot import retire_unpinned_trial_forks
         try:
