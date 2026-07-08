@@ -117,6 +117,30 @@ def _manifest_view(files: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def _drafting_view(graph, record_id: str) -> Optional[dict[str, Any]]:
+    """The drafting record (llm-author-design §4): what the author READ.
+    Rendered beside the diff so 'the owner approved it' covers input
+    and output alike."""
+    if not record_id:
+        return None
+    record = graph.get_object(record_id)
+    if record is None or record.type != "drafting_context":
+        return {"id": record_id, "missing": True}
+    data = record.data or {}
+    return {
+        "id": str(record.id),
+        "missing": False,
+        "model": data.get("model", ""),
+        "charter_hash": data.get("charter_hash", ""),
+        "gap_id": data.get("gap_id", ""),
+        "structured_fields": list(data.get("structured_fields") or []),
+        "surface_sources": list(data.get("surface_sources") or []),
+        "owner_input_ids": list(data.get("owner_input_ids") or []),
+        "injection_flags": list(data.get("injection_flags") or []),
+        "at": data.get("at", ""),
+    }
+
+
 def _pending_call(graph, proposal_id: str) -> Optional[dict[str, Any]]:
     for call in graph.objects(type="capability_call"):
         data = call.data or {}
@@ -178,8 +202,11 @@ def build_review(graph, proposal_id: str) -> dict[str, Any]:
         if p.data.get("proposal_id") == proposal_id
     ]
 
+    drafting = _drafting_view(graph, data.get("drafting_context_id", ""))
+
     flags = sorted(set(data.get("injection_flags") or [])
-                   | set((gap or {}).get("injection_flags") or []))
+                   | set((gap or {}).get("injection_flags") or [])
+                   | set((drafting or {}).get("injection_flags") or []))
 
     return {
         "proposal": {
@@ -194,6 +221,7 @@ def build_review(graph, proposal_id: str) -> dict[str, Any]:
             "auto_retries": int((data.get("metadata") or {}).get("auto_retries", 0)),
         },
         "gap": gap,
+        "drafting": drafting,
         "files_error": files_error,
         "baseline_label": baseline_label,
         "diff": _unified_diff(baseline, files),
@@ -336,6 +364,39 @@ def render_review_html(review: dict[str, Any]) -> str:
         ("automatic conflict retries so far", p["auto_retries"]),
     ]))
     parts.append("</table>")
+
+    drafting = review["drafting"]
+    parts.append("<h2>What the author read (drafting record)</h2>")
+    if drafting is None:
+        parts.append("<p class='muted'>No drafting record: a pre-record "
+                     "scripted or owner submission. An LLM-authored "
+                     "proposal MUST carry one.</p>")
+    elif drafting.get("missing"):
+        parts.append(f"<p class='verdict-fail'>Drafting record "
+                     f"{_esc(drafting['id'])} is referenced but absent "
+                     "from the graph. Do not approve a draft whose "
+                     "context cannot be inspected.</p>")
+    else:
+        d_flags = drafting["injection_flags"]
+        parts.append("<table>" + _kv_rows([
+            ("record id", drafting["id"]),
+            ("author", drafting["model"]),
+            ("charter hash (the author's pinned instructions)",
+             drafting["charter_hash"] or "(missing)"),
+            ("structured gap fields admitted (section b)",
+             ", ".join(drafting["structured_fields"]) or "none"),
+            ("surface sources admitted (section c)",
+             ", ".join(drafting["surface_sources"]) or "none"),
+            ("owner inputs admitted (section d)",
+             ", ".join(drafting["owner_input_ids"]) or "none"),
+            ("taint union over admitted objects",
+             ", ".join(d_flags) or "none"),
+            ("at", drafting["at"]),
+        ]) + "</table>")
+        parts.append("<p class='muted'>Memory, profile, and tool text are "
+                     "excluded from the author frame by origin "
+                     "(llm-author-design §3); this record lists everything "
+                     "that crossed.</p>")
 
     gap = review["gap"]
     parts.append("<h2>Gap this claims to fix</h2>")

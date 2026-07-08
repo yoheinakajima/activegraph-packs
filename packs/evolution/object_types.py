@@ -24,10 +24,50 @@ class CapabilityGap(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class DraftingContext(BaseModel):
+    """What an author READ before it wrote (llm-author-design §4).
+
+    Written BEFORE the model call by the author frame's assembly code;
+    the proposal inherits `injection_flags` as the union over every
+    admitted object, computed from this record and never from anything
+    the model reports. The decision surface renders it next to the
+    diff, so the owner sees what the author read alongside what it
+    wrote. The scripted author writes one too (model="scripted"), so
+    the render path is exercised long before an LLM author exists."""
+
+    charter_hash: str = Field(
+        default="", description="sha256 of the author's system prompt.")
+    gap_id: str = Field(default="")
+    structured_fields: list[str] = Field(
+        default_factory=list,
+        description="Section (b): object-id:field-path entries admitted "
+                    "as structured gap evidence.")
+    surface_sources: list[str] = Field(
+        default_factory=list,
+        description="Section (c): manifests, schemas, contract excerpts "
+                    "(repo-shipped or loader-introspected).")
+    owner_input_ids: list[str] = Field(
+        default_factory=list,
+        description="Section (d): verified-owner chat_input ids, the one "
+                    "free-text origin.")
+    injection_flags: list[str] = Field(
+        default_factory=list,
+        description="Union of flags found on any admitted object.")
+    model: str = Field(
+        default="scripted",
+        description="Author identity: 'scripted', 'owner', or an LLM id.")
+    at: str = Field(default="")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ModProposal(BaseModel):
     """One candidate pack version."""
 
     gap_id: str = Field(default="")
+    drafting_context_id: str = Field(
+        default="",
+        description="The drafting_context record behind this draft "
+                    "(empty for pre-record scripted submissions).")
     pack_name: str
     pack_version: str = Field(default="0.1.0")
     source_artifact_ids: list[str] = Field(default_factory=list)
@@ -121,6 +161,10 @@ class AdoptionTicket(BaseModel):
 OBJECT_TYPES = [
     ObjectType(name="capability_gap", schema=CapabilityGap,
                description="A detected capability gap (evolution loop stage 0)."),
+    ObjectType(name="drafting_context", schema=DraftingContext,
+               description="What an author read before it wrote: origins, "
+                           "charter hash, deterministic taint union "
+                           "(llm-author-design §4)."),
     ObjectType(name="mod_proposal", schema=ModProposal,
                description="A candidate agent-authored pack, pinned by bundle hash."),
     ObjectType(name="gate_result", schema=GateResult,

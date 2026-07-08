@@ -169,7 +169,13 @@ so the owner sees what the author read, never just what it wrote.
 2. This design reviewed by someone who did not write it, with the
    review recorded in this file's history.
 3. The decision surface renders drafting records (§4), so LLM-authored
-   proposals are reviewable to the same depth as their diffs.
+   proposals are reviewable to the same depth as their diffs. BUILT
+   AHEAD of the author: the drafting_context schema is registered, the
+   review page renders it as its own section (what the author read,
+   origin classes, taint union, charter hash), submission inherits the
+   record's flags deterministically, and fixture 20 proves a tainted
+   record suspends with a loud banner and no approve button. When the
+   author lands, this gate is a wiring step.
 4. Acceptance fixtures for the author frame itself, deterministic,
    with a mock model: context assembly admits exactly the §3 set, a
    flagged owner input taints the proposal, a memory object in the
