@@ -134,7 +134,7 @@ def _resolve_principal(
 
         # Still create the resolves_to relation from this new source
         try:
-            graph.add_relation("resolves_to", source_id, existing_id)
+            graph.add_relation(source_id, existing_id, "resolves_to")
         except Exception:
             pass
 
@@ -175,7 +175,7 @@ def _resolve_principal(
 
     # Create resolves_to relation: source → principal
     try:
-        graph.add_relation("resolves_to", source_id, principal.id)
+        graph.add_relation(source_id, principal.id, "resolves_to")
     except Exception:
         pass
 
@@ -299,7 +299,7 @@ def auth_context_builder(event, graph, ctx, *, settings: IdentitySettings):
 
     # Create authenticated_by relation: principal → auth_context
     try:
-        graph.add_relation("authenticated_by", principal_id, auth_ctx.id)
+        graph.add_relation(principal_id, auth_ctx.id, "authenticated_by")
     except Exception:
         pass
 
@@ -490,7 +490,7 @@ def principal_entity_linker(event, graph, ctx, *, settings: IdentitySettings):
             pass
         # Create linked_to_entity relation: principal → entity
         try:
-            graph.add_relation("linked_to_entity", principal_id, best_entity_id)
+            graph.add_relation(principal_id, best_entity_id, "linked_to_entity")
         except Exception:
             pass
 

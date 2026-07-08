@@ -133,7 +133,7 @@ For CPU fallback, we use standard scaled dot-product attention.
 
     # Check relations
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []
@@ -224,7 +224,7 @@ def run_code_change_tracking() -> bool:
         print(f"    sha={c.data.get('commit_sha')} author={c.data.get('author_ref')}")
 
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []

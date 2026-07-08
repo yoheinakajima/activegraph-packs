@@ -1,4 +1,4 @@
-# Tool Gateway Pack v0.1
+# Tool Gateway Pack v0.2
 
 > The capability execution gateway. All external calls flow through here.
 
@@ -6,11 +6,17 @@
 
 Tool Gateway Pack ensures every external capability call (API, local function, MCP server, SDK) is:
 - **Policy-checked** before execution (risk class vs. auto-approve list)
-- **Graph-visible** (CapabilityCall and CapabilityResult as graph objects)
-- **Auditable** (full call record with inputs, outputs, timestamps)
+- **Graph-visible** (CapabilityCall, CapabilityApproval, CapabilityDenial, CapabilityResult are all graph objects)
+- **Auditable** (full call record with inputs, outputs, decisions, timestamps)
+- **Credential-hygienic** (secrets injected at execution time via the Secrets Pack; never stored)
 - **Bridged to Core** (results become Core `source` objects for observation extraction)
 
 Secrets never enter model context — `credential_ref_name` is a name reference only.
+
+**The graph is the single source of truth for approval state.** A pending
+approval *is* a `capability_call` at `status='policy_checking'`; a decision
+*is* a `capability_approval` or `capability_denial` object. There is no
+side-channel queue to poll or lose on restart.
 
 ## Behavior Map
 
@@ -20,7 +26,19 @@ capability_call.created (status=proposed)
       creates calls(capability_call → capability_provider) relation
 
   → policy_enforcer
-      patches capability_call.status → "approved" | "policy_checking"
+      risk_class auto-approvable:
+        patches status → "approved", creates capability_approval
+      otherwise:
+        patches status → "policy_checking"  [held — see Approval resolution]
+
+capability_approval.created                  ← the ONLY execution trigger
+  → call_executor
+      patches status → "executing"
+      resolves + injects credential via Secrets Pack (value never stored)
+      executes via the local capability registry
+      sanitizes output, creates capability_result
+      patches status → "done" | "failed"
+      creates produces_result relation
 
 capability_result.created
   → result_sourcer
@@ -33,13 +51,40 @@ capability_result.created
 graph LR
     CC[capability_call.created] --> CR[call_recorder]
     CC --> PE[policy_enforcer]
-    CR --> REL[calls relation]
-    PE --> ST[status: approved / policy_checking]
-    RES[capability_result.created] --> RS[result_sourcer]
-    RS --> SRC[source created]
-    RS --> SREL[sourced_as relation]
+    PE -->|auto-approvable| CA[capability_approval]
+    PE -->|held| PCK[status: policy_checking]
+    PCK -->|approve_capability| CA
+    PCK -->|deny_capability| CD[capability_denial]
+    CA --> CE[call_executor]
+    CE --> RES[capability_result]
+    RES --> RS[result_sourcer]
+    RS --> SRC[source]
     SRC --> OE[Core: observation_extractor]
 ```
+
+## Approval resolution (held calls)
+
+A call whose `risk_class` is not auto-approvable is held at
+`status='policy_checking'`. Two tools resolve it — and they are the *only*
+way it advances:
+
+- `approve_capability(graph, call_id, approver_ref, note)` — creates the
+  same `capability_approval` object `policy_enforcer` creates for
+  auto-approved calls. `call_executor` fires on it: **one execution
+  trigger, no second path.**
+- `deny_capability(graph, call_id, approver_ref, reason)` — patches the
+  call to `rejected` and records a `capability_denial` (who, why, when),
+  linked via `denied_by`. Refusals are audit objects, not status flips.
+
+`pending_approvals(graph)` lists held calls, oldest first.
+
+**Approver verification.** When the Identity/Auth Pack is loaded and
+principals are registered, the `approver_ref` must resolve to a principal
+whose role is in `ToolGatewaySettings.approver_roles` (default
+`["owner", "admin"]`); unknown refs are refused. Without Identity/Auth the
+gateway degrades gracefully and records the decision with
+`verification='identity_unverified'` — verification happens when
+verification is possible.
 
 ## Object Types
 
@@ -47,10 +92,16 @@ graph LR
 |------|-------------|------------|
 | `capability_provider` | Registered external capability provider | `name`, `kind` (local/api/mcp/sdk/webhook), `base_url`, `capabilities`, `credential_ref_name` |
 | `capability_call` | A proposed or executing capability call | `provider_id`, `capability_name`, `input_data`, `credential_ref_name`, `risk_class`, `status` |
+| `capability_approval` | Graph-visible execution trigger — every executed call has one | `call_id`, `policy_decision` (auto_approved/manual), `approver`, `approved_at` |
+| `capability_denial` | Audited refusal of a held call | `call_id`, `denier`, `reason`, `denied_at` |
 | `capability_result` | The result of an executed call | `call_id`, `output_data`, `error`, `success`, `executed_at`, `source_id` |
 
 ### CapabilityCall Status Lifecycle
-`proposed` → `policy_checking` | `approved` → `executing` → `done` | `failed` | `rejected`
+```
+proposed → approved (auto)            → executing → done | failed
+proposed → policy_checking → approved (manual) → executing → done | failed
+proposed → policy_checking → rejected (denied)
+```
 
 ### Risk Classes
 - `low` — read-only, safe, no side effects
@@ -63,6 +114,8 @@ graph LR
 | Relation | Source → Target | Description |
 |----------|-----------------|-------------|
 | `calls` | capability_call → capability_provider | Which provider the call targets |
+| `approved_by` | capability_call → capability_approval | The decision that let the call execute |
+| `denied_by` | capability_call → capability_denial | The decision that refused the call |
 | `produces_result` | capability_call → capability_result | Execution result |
 | `sourced_as` | capability_result → source | Bridge to Core Pack for observation extraction |
 
@@ -70,16 +123,20 @@ graph LR
 
 ```python
 requires = ["core"]
-integrates_with = ["secrets"]  # For credential reference resolution
+integrates_with = ["secrets", "identity_auth"]
+# secrets       — credential reference resolution at execution time
+# identity_auth — approver verification for manual approve/deny
 ```
 
 ## Usage
+
+### The graph-driven flow (auto-approved)
 
 ```python
 from activegraph import Runtime, Graph
 from packs.core import pack as core_pack
 from packs.tool_gateway import pack as tg_pack, ToolGatewaySettings
-from packs.tool_gateway.tools import register_local_capability, execute_capability
+from packs.tool_gateway.tools import register_local_capability
 
 # Register a local capability
 def lookup_company(company_name: str) -> dict:
@@ -87,42 +144,54 @@ def lookup_company(company_name: str) -> dict:
 
 register_local_capability("crm", "lookup_company", lookup_company)
 
-# Load packs
 rt = Runtime(Graph())
 rt.load_pack(core_pack)
 rt.load_pack(tg_pack, settings=ToolGatewaySettings(
     auto_approve_risk_classes=["low", "medium"],
 ))
 
-# Create a CapabilityCall (policy_enforcer auto-approves low-risk calls)
+# Propose the call — that is ALL the caller does. policy_enforcer approves,
+# call_executor executes, result_sourcer bridges the output to Core.
 call = rt.graph.add_object("capability_call", {
     "provider_id": "prov#1",
-    "provider_name": "CRM",
+    "provider_name": "crm",
     "capability_name": "lookup_company",
     "input_data": {"company_name": "Northwind Robotics"},
     "risk_class": "low",
     "status": "proposed",
 })
-rt.run_until_idle()  # policy_enforcer approves it
+rt.run_until_idle()
 
-# Execute the approved call
-result_data = execute_capability(
-    provider_name="crm",
-    capability_name="lookup_company",
-    input_data={"company_name": "Northwind Robotics"},
-    call_id=call.id,
+print(rt.graph.get_object(call.id).data["status"])  # "done"
+```
+
+### The held flow (manual approval)
+
+```python
+from packs.tool_gateway.tools import (
+    pending_approvals_fn, approve_capability_fn, deny_capability_fn,
 )
 
-# Record result (triggers result_sourcer → Core observation_extractor)
-rt.graph.add_object("capability_result", {
-    "call_id": call.id,
-    "provider_name": "CRM",
-    "capability_name": "lookup_company",
-    "output_data": result_data["output_data"],
-    "success": result_data["success"],
-    "executed_at": result_data["executed_at"],
+call = rt.graph.add_object("capability_call", {
+    "provider_id": "prov#1",
+    "provider_name": "crm",
+    "capability_name": "initiate_payment",
+    "input_data": {"amount_usd": 50000},
+    "risk_class": "high",           # not auto-approvable
+    "status": "proposed",
 })
-rt.run_until_idle()
+rt.run_until_idle()                  # held at status='policy_checking'
+
+for held in pending_approvals_fn(rt.graph):
+    print(held["capability_name"], held["risk_class"])
+
+approve_capability_fn(rt.graph, call.id, approver_ref="user:owner",
+                      note="Verified out-of-band.")
+rt.run_until_idle()                  # call_executor runs it now
+
+# ... or refuse it, with the refusal recorded as a graph object:
+# deny_capability_fn(rt.graph, call.id, approver_ref="user:owner",
+#                    reason="Payment not recognized.")
 ```
 
 ## Settings
@@ -130,16 +199,23 @@ rt.run_until_idle()
 | Field | Default | Description |
 |-------|---------|-------------|
 | `auto_approve_risk_classes` | `["low"]` | Risk classes auto-approved without human review |
+| `approver_roles` | `["owner", "admin"]` | Roles allowed to approve/deny held calls (enforced when Identity/Auth is active) |
 | `record_input_data` | `True` | Record input params in CapabilityCall |
 | `record_output_data` | `True` | Record output in CapabilityResult |
 | `max_output_chars` | `10000` | Max chars stored in output_data |
 | `create_source_from_result` | `True` | Create Core source from each result |
+| `sanitize_output` | `True` | Redact key/token/password patterns from output before storing |
+| `inject_credentials` | `True` | Resolve + inject credential_ref via Secrets Pack at execution time |
 
 ## Fixtures
 
 ```bash
 python packs/tool_gateway/fixtures/run_fixtures.py
 ```
+
+- `tool_call_flow` — low-risk call: propose → auto-approve → execute → source
+- `manual_approval_flow` — high-risk call: propose → held → approve → execute → source
+- `manual_denial_flow` — high-risk call: propose → held → deny → rejected, no execution
 
 ## CHANGELOG
 

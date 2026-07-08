@@ -90,7 +90,7 @@ def run_founder_outreach_pipeline() -> bool:
 
     # Check relations
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []
@@ -204,7 +204,7 @@ def run_deal_round_tracking() -> bool:
         print(f"    status={lp.data.get('status')} '{lp.data.get('title')[:50]}'")
 
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []

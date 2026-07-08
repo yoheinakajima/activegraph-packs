@@ -79,7 +79,7 @@ def document_to_source(event, graph, ctx, *, settings=None):
         })
         _BRIDGE_SEEN[doc_id] = src.id
         try:
-            graph.add_relation("derived_from", src.id, doc_id)
+            graph.add_relation(src.id, doc_id, "derived_from")
         except Exception:
             pass
     except Exception:
@@ -137,12 +137,12 @@ def claim_to_observation(event, graph, ctx, *, settings=None):
         })
         _BRIDGE_SEEN[claim_id] = obs.id
         try:
-            graph.add_relation("derived_from", obs.id, claim_id)
+            graph.add_relation(obs.id, claim_id, "derived_from")
         except Exception:
             pass
         for sid in source_ids:
             try:
-                graph.add_relation("grounds", sid, obs.id)
+                graph.add_relation(sid, obs.id, "grounds")
             except Exception:
                 pass
     except Exception:
@@ -211,7 +211,7 @@ def memo_to_artifact(event, graph, ctx, *, settings=None):
         })
         _BRIDGE_SEEN[memo_id] = art.id
         try:
-            graph.add_relation("derived_from", art.id, memo_id)
+            graph.add_relation(art.id, memo_id, "derived_from")
         except Exception:
             pass
     except Exception:
@@ -264,7 +264,7 @@ def risk_to_evaluation(event, graph, ctx, *, settings=None):
         })
         _BRIDGE_SEEN[risk_id] = evl.id
         try:
-            graph.add_relation("derived_from", evl.id, risk_id)
+            graph.add_relation(evl.id, risk_id, "derived_from")
         except Exception:
             pass
     except Exception:

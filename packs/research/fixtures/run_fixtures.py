@@ -99,7 +99,7 @@ def run_paper_ingestion_pipeline() -> bool:
 
     # Check relations
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []
@@ -216,7 +216,7 @@ def run_direction_synthesis() -> bool:
 
     # Check relations
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []

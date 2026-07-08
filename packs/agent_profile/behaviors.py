@@ -472,7 +472,7 @@ def profile_context_trigger(event, graph, ctx, *, settings: AgentProfileSettings
 
     # Relation: auth_context → profile_context_request
     try:
-        graph.add_relation("triggers_context_for", auth_ctx_id, request.id)
+        graph.add_relation(auth_ctx_id, request.id, "triggers_context_for")
     except Exception:
         pass
 
@@ -526,7 +526,7 @@ def frame_context_trigger(event, graph, ctx, *, settings: AgentProfileSettings):
 
     # Relation: frame → profile_context_request
     try:
-        graph.add_relation("triggers_context_for", frame_id, request.id)
+        graph.add_relation(frame_id, request.id, "triggers_context_for")
     except Exception:
         pass
 
@@ -604,7 +604,7 @@ def profile_context_provider(event, graph, ctx, *, settings: AgentProfileSetting
 
     # Create fulfilled_by_profile relation
     try:
-        graph.add_relation("fulfilled_by_profile", request_id, view.id)
+        graph.add_relation(request_id, view.id, "fulfilled_by_profile")
     except Exception:
         pass
 

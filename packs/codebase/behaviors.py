@@ -130,7 +130,7 @@ def repo_ingester(event, graph, ctx, *, settings: CodebaseSettings):
             "source_id": source_id,
         })
         _REPO_REGISTRY[full_name] = repo.id
-        graph.add_relation("derived_from_source", repo.id, source_id)
+        graph.add_relation(repo.id, source_id, "derived_from_source")
     except Exception:
         pass
 
@@ -221,11 +221,11 @@ def issue_tracker(event, graph, ctx, *, settings: CodebaseSettings):
             "task_id": task_id,
         })
         _ISSUE_REGISTRY[issue_key] = issue.id
-        graph.add_relation("issue_in_repo", issue.id, repo_id)
-        graph.add_relation("derived_from_source", issue.id, source_id)
+        graph.add_relation(issue.id, repo_id, "issue_in_repo")
+        graph.add_relation(issue.id, source_id, "derived_from_source")
         if task_id:
             try:
-                graph.add_relation("action_creates_task", issue.id, task_id)
+                graph.add_relation(issue.id, task_id, "action_creates_task")
             except Exception:
                 pass
     except Exception:
@@ -305,9 +305,9 @@ def adr_extractor(event, graph, ctx, *, settings: CodebaseSettings):
             "adr_number": adr_number,
             "source_id": source_id,
         })
-        graph.add_relation("derived_from_source", adr.id, source_id)
+        graph.add_relation(adr.id, source_id, "derived_from_source")
         if repo_id:
-            graph.add_relation("adr_in_repo", adr.id, repo_id)
+            graph.add_relation(adr.id, repo_id, "adr_in_repo")
     except Exception:
         pass
 
@@ -393,9 +393,9 @@ def change_summarizer(event, graph, ctx, *, settings: CodebaseSettings):
             "author_ref": author,
             "source_id": source_id,
         })
-        graph.add_relation("derived_from_source", change.id, source_id)
+        graph.add_relation(change.id, source_id, "derived_from_source")
         if repo_id:
-            graph.add_relation("change_in_repo", change.id, repo_id)
+            graph.add_relation(change.id, repo_id, "change_in_repo")
     except Exception:
         pass
 
@@ -458,7 +458,7 @@ def dependency_auditor(event, graph, ctx, *, settings: CodebaseSettings):
                 "has_known_vulnerability": has_vuln and vuln_meets_threshold,
                 "vulnerability_summary": vuln.get("summary") or "",
             })
-            graph.add_relation("repo_depends_on", repo_id, dep_obj.id)
+            graph.add_relation(repo_id, dep_obj.id, "repo_depends_on")
         except Exception:
             pass
 

@@ -61,6 +61,16 @@ class ToolGatewaySettings(BaseModel):
         ),
     )
 
+    approver_roles: list[str] = Field(
+        default=["owner", "admin"],
+        description=(
+            "Principal roles allowed to resolve held calls via approve_capability / "
+            "deny_capability. Enforced only when the Identity/Auth Pack is loaded and "
+            "principals are registered; without it the gateway degrades gracefully and "
+            "records the decision with verification='identity_unverified'."
+        ),
+    )
+
     inject_credentials: bool = Field(
         default=True,
         description=(

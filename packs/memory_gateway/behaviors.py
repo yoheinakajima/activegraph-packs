@@ -154,7 +154,7 @@ def candidate_evaluator(event, graph, ctx, *, settings: MemoryGatewaySettings):
 
     # Create evaluates relation: evaluation → memory_candidate
     try:
-        graph.add_relation("evaluates", eval_obj.id, candidate_id)
+        graph.add_relation(eval_obj.id, candidate_id, "evaluates")
     except Exception:
         pass
 
@@ -238,7 +238,7 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
             except Exception:
                 pass
         try:
-            graph.add_relation("accepted_as", subject_id, existing_id)
+            graph.add_relation(subject_id, existing_id, "accepted_as")
         except Exception:
             pass
         return
@@ -274,7 +274,7 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
 
     # Create accepted_as relation: memory_candidate → memory_item
     try:
-        graph.add_relation("accepted_as", subject_id, item.id)
+        graph.add_relation(subject_id, item.id, "accepted_as")
     except Exception:
         pass
 
@@ -352,14 +352,14 @@ def memory_retriever(event, graph, ctx, *, settings: MemoryGatewaySettings):
 
     # Create fulfilled_by relation: request → retrieval
     try:
-        graph.add_relation("fulfilled_by", request_id, retrieval.id)
+        graph.add_relation(request_id, retrieval.id, "fulfilled_by")
     except Exception:
         pass
 
     # Create ranked_in relations: memory_item → memory_retrieval
     for item_id in item_ids:
         try:
-            graph.add_relation("ranked_in", item_id, retrieval.id)
+            graph.add_relation(item_id, retrieval.id, "ranked_in")
         except Exception:
             pass
 
@@ -424,7 +424,7 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
         )
 
         try:
-            graph.add_relation("scored_by", ranking.id, retrieval_id)
+            graph.add_relation(ranking.id, retrieval_id, "scored_by")
         except Exception:
             pass
 

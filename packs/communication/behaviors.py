@@ -174,7 +174,7 @@ def intent_detector(event, graph, ctx, *, settings: CommunicationSettings):
             "detected_by": "intent_detector",
             "frame_id": msg_data.get("frame_id"),
         })
-        graph.add_relation("intent_of", comm_intent.id, msg_id)
+        graph.add_relation(comm_intent.id, msg_id, "intent_of")
     except Exception:
         pass
 
@@ -251,7 +251,7 @@ def thread_tracker(event, graph, ctx, *, settings: CommunicationSettings):
         return
 
     try:
-        graph.add_relation("thread_contains", thread_id, msg_id)
+        graph.add_relation(thread_id, msg_id, "thread_contains")
     except Exception:
         pass
 
@@ -297,7 +297,7 @@ def response_dispatcher(event, graph, ctx, *, settings: CommunicationSettings):
     thread_id = data.get("thread_id")
     if thread_id:
         try:
-            graph.add_relation("dispatched_to", candidate_id, thread_id)
+            graph.add_relation(candidate_id, thread_id, "dispatched_to")
         except Exception:
             pass
 

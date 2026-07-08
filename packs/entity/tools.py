@@ -97,7 +97,7 @@ def decide_merge_fn(
                 b_id = candidate_obj.data.get("entity_b_id")
                 other_id = b_id if a_id == surviving_entity_id else a_id
                 if other_id:
-                    graph.add_relation("merged_into", other_id, surviving_entity_id)
+                    graph.add_relation(other_id, surviving_entity_id, "merged_into")
         except Exception:
             pass
 

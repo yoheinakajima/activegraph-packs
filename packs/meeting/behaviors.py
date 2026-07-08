@@ -218,7 +218,7 @@ def transcript_ingester(event, graph, ctx, *, settings: MeetingSettings):
         meeting_id = meeting.id
         _MEETING_REGISTRY[source_id] = meeting_id
         _MEETING_SEGMENT_COUNT[meeting_id] = 0
-        graph.add_relation("derived_from_source", meeting_id, source_id)
+        graph.add_relation(meeting_id, source_id, "derived_from_source")
     except Exception:
         return
 
@@ -254,7 +254,7 @@ def transcript_ingester(event, graph, ctx, *, settings: MeetingSettings):
                 "is_decision": has_decision,
                 "is_action_item": has_action,
             })
-            graph.add_relation("segment_of", seg.id, meeting_id)
+            graph.add_relation(seg.id, meeting_id, "segment_of")
             _MEETING_SEGMENT_COUNT[meeting_id] = _MEETING_SEGMENT_COUNT.get(meeting_id, 0) + 1
         except Exception:
             pass
@@ -293,8 +293,8 @@ def decision_extractor(event, graph, ctx, *, settings: MeetingSettings):
             "confidence": 0.80,
         })
         if meeting_id:
-            graph.add_relation("decision_in", decision.id, meeting_id)
-        graph.add_relation("decision_from_segment", decision.id, seg_id)
+            graph.add_relation(decision.id, meeting_id, "decision_in")
+        graph.add_relation(decision.id, seg_id, "decision_from_segment")
     except Exception:
         pass
 
@@ -346,9 +346,9 @@ def action_item_extractor(event, graph, ctx, *, settings: MeetingSettings):
         })
 
         if meeting_id:
-            graph.add_relation("action_item_in", action_item.id, meeting_id)
-        graph.add_relation("action_item_from_segment", action_item.id, seg_id)
-        graph.add_relation("action_creates_task", action_item.id, task.id)
+            graph.add_relation(action_item.id, meeting_id, "action_item_in")
+        graph.add_relation(action_item.id, seg_id, "action_item_from_segment")
+        graph.add_relation(action_item.id, task.id, "action_creates_task")
     except Exception:
         pass
 
@@ -397,7 +397,7 @@ def meeting_summarizer(event, graph, ctx, *, settings: MeetingSettings):
             "content": summary_content,
             "note_type": "summary",
         })
-        graph.add_relation("note_for", note.id, meeting_id)
+        graph.add_relation(note.id, meeting_id, "note_for")
     except Exception:
         pass
 

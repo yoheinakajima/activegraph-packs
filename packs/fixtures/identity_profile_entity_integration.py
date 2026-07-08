@@ -155,7 +155,7 @@ def run_identity_profile_entity_composition() -> bool:
     print("\n[4] Verifying integration shape...")
 
     all_relations = list(graph.relations())
-    rel_types = {r.source for r in all_relations}
+    rel_types = {r.type for r in all_relations}
     print(f"  relation types: {sorted(rel_types)}")
 
     # Show which entities came from the email

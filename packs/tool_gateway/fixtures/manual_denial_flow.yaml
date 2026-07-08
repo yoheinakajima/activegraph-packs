@@ -1,0 +1,57 @@
+# Fixture: Manual Denial Flow
+#
+# The refused half of the held-call lifecycle:
+#   1. A high-risk capability_call is proposed and held at 'policy_checking'
+#   2. deny_capability refuses it: the call is patched to 'rejected' and a
+#      capability_denial object records who refused it and why
+#   3. call_executor never fires — a denied call must not execute
+#
+# Refusals are first-class audit objects, not status flips.
+
+name: manual_denial_flow
+description: >
+  A high-risk capability call is held by policy and then explicitly
+  denied. The denial is a graph object linked via denied_by, and no
+  execution or result ever occurs.
+
+objects:
+  - type: capability_provider
+    data:
+      name: CRM API
+      kind: api
+      base_url: https://crm.example.com
+      description: Customer relationship management lookup
+      capabilities: [lookup_company, initiate_payment]
+      credential_ref_name: CRM_API_KEY
+      enabled: true
+      metadata: {}
+
+  - type: capability_call
+    data:
+      provider_id: PLACEHOLDER_PROVIDER_ID
+      provider_name: CRM API
+      capability_name: initiate_payment
+      input_data:
+        amount_usd: 50000
+        recipient: Northwind Robotics
+      credential_ref_name: CRM_API_KEY
+      risk_class: high
+      status: proposed
+      proposed_by: test_fixture
+      frame_id: frame_denial_001
+      proposed_at: "2026-07-07T11:00:00Z"
+      metadata: {}
+
+manual_decision:
+  action: deny
+  approver_ref: user:owner
+  reason: Payment not recognized — refuse until verified.
+
+expected_outputs:
+  call_statuses: [rejected]
+  relations:
+    includes:
+      - type: calls
+        description: capability_call links to capability_provider
+      - type: denied_by
+        description: capability_call links to its capability_denial record

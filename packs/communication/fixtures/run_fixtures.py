@@ -141,7 +141,7 @@ def run_response_dispatcher_fixture() -> dict:
     assert status == "sent", f"Expected status='sent', got '{status}'"
 
     rels = list(g.relations())
-    dispatched_rels = [r for r in rels if r.source == "dispatched_to"]
+    dispatched_rels = [r for r in rels if r.type == "dispatched_to"]
     assert len(dispatched_rels) >= 1, "Expected dispatched_to relation"
 
     return {

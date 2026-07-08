@@ -458,10 +458,14 @@ RELATION_TYPES = [
     RelationType(
         name="derived_from",
         source_types=(
-            "observation", "task", "action", "artifact",
+            "source", "observation", "task", "action", "artifact",
             "memory_candidate", "evaluation",
         ),
-        target_types=("source", "observation", "artifact"),
+        # Open on purpose (empty = any): bridge packs point derived_from at
+        # domain objects (diligence claims, memos, risks, ...) that Core must
+        # not enumerate — a closed list here would force Core to know domain
+        # nouns, which violates "Core stays small".
+        target_types=(),
         description=(
             "A downstream object is derived from a source object. "
             "Used by bridge packs to connect domain objects to Core objects."

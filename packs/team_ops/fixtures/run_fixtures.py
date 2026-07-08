@@ -118,7 +118,7 @@ def run_task_triage_and_assignment() -> bool:
         print(f"    task_id={a.data.get('task_id')[:8]} principal={a.data.get('principal_ref')}")
 
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []
@@ -219,7 +219,7 @@ def run_completion_workflow() -> bool:
     print(f"  completion_evidences total: {len(all_evidences)}")
 
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []

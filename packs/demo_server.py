@@ -623,15 +623,16 @@ def _relation_to_dict(rel) -> dict:
         data = _safe_json(data)
     except Exception:
         pass
-    # ActiveGraph's Relation stores fields counterintuitively:
-    #   rel.source = relation type label (e.g. "resolves_to")
-    #   rel.target = source object id
-    #   rel.type   = target object id
+    # Relation fields are exactly what they say: source/target are object
+    # ids, type is the relation type label. (An earlier comment here claimed
+    # the fields were shuffled — it was decoding malformed relations created
+    # by add_relation calls with the arguments in the wrong order, since
+    # fixed across all packs.)
     return {
         "id": str(rel.id),
-        "type": str(rel.source),
-        "source_id": str(rel.target),
-        "target_id": str(rel.type),
+        "type": str(rel.type),
+        "source_id": str(rel.source),
+        "target_id": str(rel.target),
         "data": data,
     }
 
@@ -748,6 +749,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_secrets_get()
             elif path == "/profile":
                 self._handle_profile_get()
+            elif path == "/approvals":
+                self._handle_approvals_get()
+            elif path == "/sessions":
+                self._handle_sessions_get()
             elif path == "/health":
                 self._send_json({"status": "ok"})
             else:
@@ -783,6 +788,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_profile_instruction_post(body)
             elif path == "/profile/instruction/delete":
                 self._handle_profile_instruction_delete(body)
+            elif path == "/approvals":
+                self._handle_approvals_post(body)
             else:
                 self._send_error("Not found", 404)
         except Exception as e:
@@ -954,6 +961,110 @@ class Handler(BaseHTTPRequestHandler):
             "event_count": events_after - events_before,
             "new_objects": new_obj_ids,
         })
+
+    # ── GET/POST /approvals ─────────────────────────────────────────────────
+    #
+    # The graph is the single source of truth for approval state: pending ==
+    # capability_call at status='policy_checking'; decisions are
+    # capability_approval / capability_denial objects. These endpoints are
+    # thin views over the Tool Gateway tools — no server-side bookkeeping.
+
+    def _handle_approvals_get(self):
+        rt = _get_rt()
+        from packs.tool_gateway.tools import pending_approvals_fn
+
+        def _decision_rows(obj_type: str, ts_key: str) -> list[dict]:
+            rows = []
+            try:
+                for o in rt.graph.objects(type=obj_type):
+                    rows.append({
+                        "id": str(o.id),
+                        "call_id": o.data.get("call_id"),
+                        "capability_name": o.data.get("capability_name", ""),
+                        "provider_name": o.data.get("provider_name", ""),
+                        ts_key: o.data.get(ts_key),
+                        "decided_by": o.data.get("approver") or o.data.get("denier"),
+                        "policy_decision": o.data.get("policy_decision"),
+                        "reason": o.data.get("reason"),
+                    })
+            except Exception:
+                pass
+            rows.sort(key=lambda r: r.get(ts_key) or "", reverse=True)
+            return rows[:20]
+
+        self._send_json({
+            "pending": pending_approvals_fn(rt.graph),
+            "recent_approvals": _decision_rows("capability_approval", "approved_at"),
+            "recent_denials": _decision_rows("capability_denial", "denied_at"),
+        })
+
+    def _handle_approvals_post(self, body: dict):
+        rt = _get_rt()
+        from packs.tool_gateway.tools import approve_capability_fn, deny_capability_fn
+
+        call_id = (body.get("call_id") or "").strip()
+        decision = (body.get("decision") or "").strip().lower()
+        approver_ref = (body.get("approver_ref") or "user:inspector").strip()
+
+        if not call_id:
+            self._send_error("call_id is required", 400)
+            return
+        if decision not in ("approve", "deny"):
+            self._send_error("decision must be 'approve' or 'deny'", 400)
+            return
+
+        if decision == "approve":
+            outcome = approve_capability_fn(
+                rt.graph, call_id, approver_ref=approver_ref,
+                note=body.get("note", ""),
+            )
+        else:
+            outcome = deny_capability_fn(
+                rt.graph, call_id, approver_ref=approver_ref,
+                reason=body.get("reason", ""),
+            )
+
+        if not outcome.get("ok"):
+            self._send_json({"ok": False, "reason": outcome.get("reason")}, 409)
+            return
+
+        # Let call_executor react to the approval (denials settle instantly,
+        # but running to idle is harmless and keeps this branch-free).
+        rt.run_until_idle()
+
+        try:
+            call = rt.graph.get_object(call_id)
+            final_status = call.data.get("status") if call else None
+        except Exception:
+            final_status = None
+
+        self._send_json({
+            "ok": True,
+            "decision": decision,
+            "call_id": call_id,
+            "call_status": final_status,
+            "approval_id": outcome.get("approval_id"),
+            "denial_id": outcome.get("denial_id"),
+        })
+
+    # ── GET /sessions ────────────────────────────────────────────────────────
+
+    def _handle_sessions_get(self):
+        rt = _get_rt()
+        sessions = []
+        try:
+            for o in rt.graph.objects(type="chat_session"):
+                sessions.append({
+                    "session_id": str(o.id),
+                    "user_ref": o.data.get("user_ref"),
+                    "status": o.data.get("status"),
+                    "turn_count": o.data.get("turn_count", 0),
+                    "started_at": o.data.get("started_at"),
+                })
+        except Exception:
+            pass
+        sessions.sort(key=lambda s: s.get("started_at") or "", reverse=True)
+        self._send_json({"sessions": sessions, "count": len(sessions)})
 
     # ── GET/POST /chat/config ───────────────────────────────────────────────
 

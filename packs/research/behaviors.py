@@ -160,13 +160,13 @@ def paper_ingester(event, graph, ctx, *, settings: ResearchSettings):
         })
         paper_id = paper.id
         _PAPER_REGISTRY[source_id] = paper_id
-        graph.add_relation("derived_from_source", paper_id, source_id)
+        graph.add_relation(paper_id, source_id, "derived_from_source")
     except Exception:
         return
 
     if venue_id:
         try:
-            graph.add_relation("published_in", paper_id, venue_id)
+            graph.add_relation(paper_id, venue_id, "published_in")
         except Exception:
             pass
 
@@ -179,7 +179,7 @@ def paper_ingester(event, graph, ctx, *, settings: ResearchSettings):
                     "name": aname,
                     "paper_ids": [paper_id],
                 })
-                graph.add_relation("authored_by", paper_id, author_obj.id)
+                graph.add_relation(paper_id, author_obj.id, "authored_by")
             except Exception:
                 pass
 
@@ -220,7 +220,7 @@ def claim_extractor(event, graph, ctx, *, settings: ResearchSettings):
             })
             if source_id:
                 try:
-                    graph.add_relation("grounds", source_id, obs.id)
+                    graph.add_relation(source_id, obs.id, "grounds")
                 except Exception:
                     pass
         except Exception:
@@ -267,7 +267,7 @@ def idea_atom_extractor(event, graph, ctx, *, settings: ResearchSettings):
                 "novelty_score": novelty,
                 "coherence_score": coherence,
             })
-            graph.add_relation("proposes_idea", paper_id, atom.id)
+            graph.add_relation(paper_id, atom.id, "proposes_idea")
             atom_ids.append(atom.id)
         except Exception:
             pass
@@ -318,7 +318,7 @@ def hypothesis_generator(event, graph, ctx, *, settings: ResearchSettings):
         except Exception:
             pass
         try:
-            graph.add_relation("composes_direction", atom_id, direction_id)
+            graph.add_relation(atom_id, direction_id, "composes_direction")
         except Exception:
             pass
         return
@@ -339,7 +339,7 @@ def hypothesis_generator(event, graph, ctx, *, settings: ResearchSettings):
             "confidence": round(coherence * 0.9, 2),
         })
         _DIRECTION_REGISTRY[tag_key] = direction.id
-        graph.add_relation("composes_direction", atom_id, direction.id)
+        graph.add_relation(atom_id, direction.id, "composes_direction")
     except Exception:
         pass
 
@@ -410,7 +410,7 @@ def research_direction_synthesizer(event, graph, ctx, *, settings: ResearchSetti
             "confidence": 0.72,
         })
         _DIRECTION_REGISTRY[synth_key] = direction.id
-        graph.add_relation("composes_direction", atom_id, direction.id)
+        graph.add_relation(atom_id, direction.id, "composes_direction")
     except Exception:
         pass
 

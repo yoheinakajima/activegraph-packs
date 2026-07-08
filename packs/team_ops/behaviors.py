@@ -105,13 +105,13 @@ def task_triager(event, graph, ctx, *, settings: TeamOpsSettings):
 
         if project_id:
             try:
-                graph.add_relation("part_of_project", task_id, project_id)
+                graph.add_relation(task_id, project_id, "part_of_project")
             except Exception:
                 pass
 
         if milestone_id:
             try:
-                graph.add_relation("part_of_milestone", task_id, milestone_id)
+                graph.add_relation(task_id, milestone_id, "part_of_milestone")
             except Exception:
                 pass
 
@@ -123,7 +123,7 @@ def task_triager(event, graph, ctx, *, settings: TeamOpsSettings):
                     "role": "assignee",
                     "assigned_at": _now_iso(),
                 })
-                graph.add_relation("assigned_to", assignment.id, task_id)
+                graph.add_relation(assignment.id, task_id, "assigned_to")
                 _TASK_ASSIGNMENTS[task_id] = assignment.id
             except Exception:
                 pass
@@ -174,7 +174,7 @@ def assignment_suggester(event, graph, ctx, *, settings: TeamOpsSettings):
             "role": "assignee",
             "assigned_at": _now_iso(),
         })
-        graph.add_relation("assigned_to", assignment.id, task_id)
+        graph.add_relation(assignment.id, task_id, "assigned_to")
         _TASK_ASSIGNMENTS[task_id] = assignment.id
 
         if review_needed:
@@ -273,7 +273,7 @@ def completion_verifier(event, graph, ctx, *, settings: TeamOpsSettings):
             "completed_at": _now_iso(),
             "source_ids": source_ids,
         })
-        graph.add_relation("evidence_for", evidence.id, task_id)
+        graph.add_relation(evidence.id, task_id, "evidence_for")
 
         try:
             graph.patch_object(task_id, {"status": "done"})

@@ -150,7 +150,7 @@ def founder_email_detector(event, graph, ctx, *, settings: VCSettings):
         })
         if source_id:
             try:
-                graph.add_relation("grounds", source_id, obs.id)
+                graph.add_relation(source_id, obs.id, "grounds")
             except Exception:
                 pass
     except Exception:
@@ -200,7 +200,7 @@ def company_enricher(event, graph, ctx, *, settings: VCSettings):
         })
         _COMPANY_REGISTRY[sender_ref] = company.id
         if source_id:
-            graph.add_relation("derived_from_comm", company.id, source_id)
+            graph.add_relation(company.id, source_id, "derived_from_comm")
     except Exception:
         return
 
@@ -217,13 +217,13 @@ def company_enricher(event, graph, ctx, *, settings: VCSettings):
             _FOUNDER_REGISTRY[sender_ref] = founder.id
             founder_id = founder.id
             if source_id:
-                graph.add_relation("founder_outreach_source", founder.id, source_id)
+                graph.add_relation(founder.id, source_id, "founder_outreach_source")
         except Exception:
             founder_id = None
 
     if founder_id and sender_ref in _COMPANY_REGISTRY:
         try:
-            graph.add_relation("founded_by", _COMPANY_REGISTRY[sender_ref], founder_id)
+            graph.add_relation(_COMPANY_REGISTRY[sender_ref], founder_id, "founded_by")
         except Exception:
             pass
 
@@ -281,7 +281,7 @@ def memo_drafter(event, graph, ctx, *, settings: VCSettings):
         return
 
     try:
-        graph.add_relation("memo_for", memo_obj.id, company_id)
+        graph.add_relation(memo_obj.id, company_id, "memo_for")
     except Exception:
         pass
 
@@ -323,7 +323,7 @@ def followup_tracker(event, graph, ctx, *, settings: VCSettings):
             "status": "pending",
             "task_id": task.id,
         })
-        graph.add_relation("followup_for", followup.id, company_id)
+        graph.add_relation(followup.id, company_id, "followup_for")
     except Exception:
         pass
 

@@ -159,6 +159,36 @@ class CapabilityApproval(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class CapabilityDenial(BaseModel):
+    """Records that a held capability call was explicitly denied.
+
+    Created by the deny_capability tool when an approver refuses a call
+    held at status='policy_checking'. Refusals are as auditable as
+    grants: the denial, who made it, and why are all graph objects —
+    a denied call is never just a status flip.
+    """
+
+    call_id: str = Field(
+        description="ID of the CapabilityCall that was denied.",
+    )
+    provider_name: str = Field(default="")
+    capability_name: str = Field(default="")
+    denier: str = Field(
+        default="",
+        description="Ref of the principal or operator that denied the call.",
+    )
+    reason: str = Field(
+        default="",
+        description="Human-readable reason the call was refused.",
+    )
+    denied_at: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 datetime of denial.",
+    )
+    frame_id: Optional[str] = Field(default=None)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class CapabilityResult(BaseModel):
     """The result of an executed capability call.
 
@@ -229,6 +259,14 @@ OBJECT_TYPES = [
         ),
     ),
     ObjectType(
+        name="capability_denial",
+        schema=CapabilityDenial,
+        description=(
+            "Records that a held capability_call was explicitly denied, by whom, "
+            "and why — refusals are first-class audit objects, not status flips."
+        ),
+    ),
+    ObjectType(
         name="capability_result",
         schema=CapabilityResult,
         description=(
@@ -253,6 +291,12 @@ RELATION_TYPES = [
         source_types=("capability_call",),
         target_types=("capability_approval",),
         description="A capability call is approved by a capability_approval record.",
+    ),
+    RelationType(
+        name="denied_by",
+        source_types=("capability_call",),
+        target_types=("capability_denial",),
+        description="A capability call was denied by a capability_denial record.",
     ),
     RelationType(
         name="produces_result",

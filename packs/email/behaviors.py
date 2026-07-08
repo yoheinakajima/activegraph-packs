@@ -151,7 +151,7 @@ def email_ingester(event, graph, ctx, *, settings: EmailSettings):
 
     if email_thread_id:
         try:
-            graph.add_relation("email_thread_contains", email_thread_id, email_obj_id)
+            graph.add_relation(email_thread_id, email_obj_id, "email_thread_contains")
         except Exception:
             pass
 
@@ -192,7 +192,7 @@ def email_ingester(event, graph, ctx, *, settings: EmailSettings):
             },
         })
         _EMAIL_TO_COMM_MESSAGE[email_obj_id] = comm_msg.id
-        graph.add_relation("derived_from_source", comm_msg.id, source_id)
+        graph.add_relation(comm_msg.id, source_id, "derived_from_source")
     except Exception:
         pass
 
@@ -266,7 +266,7 @@ def reply_drafter(event, graph, ctx, *, settings: EmailSettings):
             },
         })
         _CANDIDATE_TO_DRAFT[candidate_id] = draft.id
-        graph.add_relation("draft_from_candidate", draft.id, candidate_id)
+        graph.add_relation(draft.id, candidate_id, "draft_from_candidate")
     except Exception:
         pass
 

@@ -47,7 +47,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["tool_gateway"]
 pack = Pack(
     name="memory_gateway",
-    version="0.1.0",
+    version="0.1.1",
     description=(
         "Memory lifecycle manager. Evaluates memory_candidates from Core Pack, "
         "accepts high-confidence items into durable MemoryItems, and provides "

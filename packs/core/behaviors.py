@@ -172,7 +172,7 @@ def observation_extractor(event, graph, ctx, *, settings: CoreSettings):
         )
 
         # Create grounds relation: source → observation
-        graph.add_relation("grounds", source_id, obs.id)
+        graph.add_relation(source_id, obs.id, "grounds")
         created += 1
 
 
@@ -216,7 +216,7 @@ def task_linker(event, graph, ctx, *, settings: CoreSettings):
         ratio = _overlap_ratio(obs_text, task_title)
         if ratio >= threshold:
             try:
-                graph.add_relation("produces", obs_id, task.id)
+                graph.add_relation(obs_id, task.id, "produces")
             except Exception:
                 pass  # Relation may already exist
 
@@ -268,7 +268,7 @@ def memory_candidate_proposer(event, graph, ctx, *, settings: CoreSettings):
         ).model_dump(),
     )
 
-    graph.add_relation("proposes", obs_id, candidate.id)
+    graph.add_relation(obs_id, candidate.id, "proposes")
 
 
 BEHAVIORS = [observation_extractor, task_linker, memory_candidate_proposer]

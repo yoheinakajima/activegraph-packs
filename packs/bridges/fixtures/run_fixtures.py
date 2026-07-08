@@ -136,7 +136,7 @@ def fixture_document_claim_bridge():
     observations = [o for o in graph.objects() if o.type == "observation" and
                     (o.data or {}).get("metadata", {}).get("bridge") == "diligence_core"]
     relations = list(graph.relations())
-    derived = [r for r in relations if r.source == "derived_from"]
+    derived = [r for r in relations if r.type == "derived_from"]
 
     print(f"  Bridge sources (document→source): {len(sources)}")
     for s in sources:
@@ -207,7 +207,7 @@ def fixture_memo_risk_bridge():
     evaluations = [o for o in graph.objects() if o.type == "evaluation" and
                    (o.data or {}).get("metadata", {}).get("bridge") == "diligence_core"]
     relations = list(graph.relations())
-    derived = [r for r in relations if r.source == "derived_from"]
+    derived = [r for r in relations if r.type == "derived_from"]
 
     print(f"  Bridge artifacts (memo→artifact): {len(artifacts)}")
     for a in artifacts:

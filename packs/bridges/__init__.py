@@ -35,7 +35,7 @@ class DiligenceCoreBridgeSettings(BaseModel):
 
 pack = Pack(
     name="diligence_core_bridge",
-    version="0.1.0",
+    version="0.1.1",
     description=(
         "Maps Diligence pack objects to Core primitives so Diligence outputs "
         "appear alongside all other packs in the shared graph. "

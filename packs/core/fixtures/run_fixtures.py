@@ -78,7 +78,7 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
         tgt_id = _resolve_ref(rel_spec.get("target", ""), created_ids)
         if src_id and tgt_id:
             try:
-                graph.add_relation(rel_type, src_id, tgt_id)
+                graph.add_relation(src_id, tgt_id, rel_type)
             except Exception as e:
                 failures.append(f"  Failed to create relation {rel_type}: {e}")
 
@@ -92,12 +92,11 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
 
     all_relations = list(graph.relations())
 
-    # In ActiveGraph's Relation object:
-    #   r.source = the relation type name (e.g. "grounds", "produces")
-    #   r.target = the source object ID
-    #   r.type   = the target object ID
-    # (The field naming is counterintuitive but confirmed by inspection.)
-    relation_types_in_graph = {r.source for r in all_relations}
+    # Relation fields are exactly what they say: r.source / r.target are
+    # object IDs, r.type is the relation type name. (An earlier comment here
+    # claimed otherwise — it was describing malformed relations produced by
+    # calling add_relation with the arguments in the wrong order.)
+    relation_types_in_graph = {r.type for r in all_relations}
 
     # ---- Assert expected_outputs ----
     expected = scenario.get("expected_outputs", {})

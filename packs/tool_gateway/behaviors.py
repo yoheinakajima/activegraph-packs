@@ -69,9 +69,10 @@ def call_recorder(event, graph, ctx, *, settings: ToolGatewaySettings):
     if not provider_id or not call_id:
         return
 
-    # Create 'calls' relation: capability_call → capability_provider
+    # Create 'calls' relation: capability_call → capability_provider.
+    # NOTE: add_relation signature is (source, target, type).
     try:
-        graph.add_relation("calls", call_id, provider_id)
+        graph.add_relation(call_id, provider_id, "calls")
     except Exception:
         pass
 
@@ -133,9 +134,10 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
             ).model_dump(),
         )
 
-        # Create approved_by relation: capability_call → capability_approval
+        # Create approved_by relation: capability_call → capability_approval.
+        # NOTE: add_relation signature is (source, target, type).
         try:
-            graph.add_relation("approved_by", call_id, approval.id)
+            graph.add_relation(call_id, approval.id, "approved_by")
         except Exception:
             pass
     else:
@@ -256,9 +258,10 @@ def call_executor(event, graph, ctx, *, settings: ToolGatewaySettings):
     except Exception:
         pass
 
-    # Create produces_result relation: capability_call → capability_result
+    # Create produces_result relation: capability_call → capability_result.
+    # NOTE: add_relation signature is (source, target, type).
     try:
-        graph.add_relation("produces_result", call_id, result.id)
+        graph.add_relation(call_id, result.id, "produces_result")
     except Exception:
         pass
 
@@ -322,9 +325,10 @@ def result_sourcer(event, graph, ctx, *, settings: ToolGatewaySettings):
     except Exception:
         pass
 
-    # Create sourced_as relation: capability_result → source
+    # Create sourced_as relation: capability_result → source.
+    # NOTE: add_relation signature is (source, target, type).
     try:
-        graph.add_relation("sourced_as", result_id, source.id)
+        graph.add_relation(result_id, source.id, "sourced_as")
     except Exception:
         pass
 

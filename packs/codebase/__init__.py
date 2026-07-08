@@ -39,7 +39,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], composes_with=["identity_auth", "team_ops"]
 pack = Pack(
     name="codebase",
-    version="0.1.0",
+    version="0.1.1",
     description=(
         "Codebase tracking: repo ingestion, issue/PR tracking, ADR extraction, "
         "code change summarization, dependency auditing. "

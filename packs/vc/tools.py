@@ -30,7 +30,7 @@ def ingest_founder_email_fn(
         "metadata": {"subject": subject},
     })
     try:
-        graph.add_relation("derived_from_source", msg.id, source.id)
+        graph.add_relation(msg.id, source.id, "derived_from_source")
     except Exception:
         pass
     return msg
@@ -73,7 +73,7 @@ def add_traction_metric_fn(
         "growth_rate": growth_rate,
     })
     try:
-        graph.add_relation("reports_metric", company_id, metric.id)
+        graph.add_relation(company_id, metric.id, "reports_metric")
     except Exception:
         pass
     return metric
@@ -96,7 +96,7 @@ def add_deal_risk_fn(
         "mitigation": mitigation,
     })
     try:
-        graph.add_relation("risk_in", risk.id, company_id)
+        graph.add_relation(risk.id, company_id, "risk_in")
     except Exception:
         pass
     return risk

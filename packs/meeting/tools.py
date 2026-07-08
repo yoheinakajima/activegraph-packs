@@ -64,7 +64,7 @@ def add_decision_fn(
         "confidence": confidence,
     })
     try:
-        graph.add_relation("decision_in", decision.id, meeting_id)
+        graph.add_relation(decision.id, meeting_id, "decision_in")
     except Exception:
         pass
     return decision
@@ -100,12 +100,12 @@ def add_action_item_fn(
         "status": "open",
     })
     try:
-        graph.add_relation("action_item_in", action_item.id, meeting_id)
+        graph.add_relation(action_item.id, meeting_id, "action_item_in")
     except Exception:
         pass
     if task_id:
         try:
-            graph.add_relation("action_creates_task", action_item.id, task_id)
+            graph.add_relation(action_item.id, task_id, "action_creates_task")
         except Exception:
             pass
     return action_item

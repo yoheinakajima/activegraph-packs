@@ -21,7 +21,12 @@ import yaml
 from activegraph import Graph, Runtime
 from packs.core import pack as core_pack, CoreSettings
 from packs.tool_gateway import pack as tg_pack, ToolGatewaySettings
-from packs.tool_gateway.tools import register_local_capability
+from packs.tool_gateway.tools import (
+    approve_capability_fn,
+    deny_capability_fn,
+    pending_approvals_fn,
+    register_local_capability,
+)
 
 
 def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
@@ -55,9 +60,38 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
 
     rt.run_until_idle()
 
+    # --- Optional manual decision step (approve/deny a held call) ---
+    # Exercises the full held-call lifecycle: policy_enforcer holds the call
+    # at 'policy_checking', pending_approvals lists it, an approver resolves
+    # it, and run_until_idle lets call_executor react to the approval.
+    decision = scenario.get("manual_decision")
+    if decision:
+        pending = pending_approvals_fn(graph)
+        if not pending:
+            failures.append("  manual_decision: expected a held call, but pending_approvals is empty")
+        else:
+            call_id = pending[0]["call_id"]
+            if decision.get("action") == "approve":
+                outcome = approve_capability_fn(
+                    graph, call_id,
+                    approver_ref=decision.get("approver_ref", "user:owner"),
+                    note=decision.get("note", ""),
+                )
+            else:
+                outcome = deny_capability_fn(
+                    graph, call_id,
+                    approver_ref=decision.get("approver_ref", "user:owner"),
+                    reason=decision.get("reason", ""),
+                )
+            if not outcome.get("ok"):
+                failures.append(f"  manual_decision: {decision['action']} failed — {outcome.get('reason')}")
+            rt.run_until_idle()
+        if pending_approvals_fn(graph):
+            failures.append("  manual_decision: call still pending after decision")
+
     # Gather state
     all_relations = list(graph.relations())
-    relation_types = {r.source for r in all_relations}
+    relation_types = {r.type for r in all_relations}
     by_type: dict[str, list] = {}
     for o in graph.objects():
         by_type.setdefault(o.type, []).append(o)
@@ -77,6 +111,7 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
     # --- Print full call lifecycle state ---
     calls = by_type.get("capability_call", [])
     approvals = by_type.get("capability_approval", [])
+    denials = by_type.get("capability_denial", [])
     results = by_type.get("capability_result", [])
     sources = by_type.get("source", [])
 
@@ -85,14 +120,31 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
         print(f"    status={c.data.get('status', 'n/a')} name={c.data.get('capability_name', '')}")
 
     print(f"  capability_approval: {len(approvals)} (graph-driven execution trigger)")
+    if denials:
+        print(f"  capability_denial: {len(denials)} (audited refusals)")
     print(f"  capability_result: {len(results)} (created by call_executor behavior)")
     print(f"  source: {len(sources)} (created by result_sourcer behavior)")
 
-    # Verify the full chain ran
-    if calls and not approvals:
-        failures.append("  No capability_approval objects — policy_enforcer did not fire or approve")
-    if approvals and not results:
-        failures.append("  capability_approval exists but no capability_result — call_executor did not fire")
+    # --- Check final call statuses ---
+    for expected_status in expected.get("call_statuses", []):
+        actual = [c.data.get("status") for c in calls]
+        if expected_status not in actual:
+            failures.append(
+                f"  call_statuses: expected a call at {expected_status!r}, got {actual}"
+            )
+
+    # Verify the chain ran to the end the scenario expects
+    denied = bool(decision) and decision.get("action") == "deny"
+    if denied:
+        if not denials:
+            failures.append("  Denial expected but no capability_denial object was created")
+        if results:
+            failures.append("  Denied call must not execute, but a capability_result exists")
+    else:
+        if calls and not approvals:
+            failures.append("  No capability_approval objects — policy_enforcer did not fire or approve")
+        if approvals and not results:
+            failures.append("  capability_approval exists but no capability_result — call_executor did not fire")
 
     return (len(failures) == 0), failures
 

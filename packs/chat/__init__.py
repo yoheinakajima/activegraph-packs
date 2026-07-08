@@ -73,7 +73,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core", "communication"], composes_with=["identity_auth", "agent_profile"]
 pack = Pack(
     name="chat",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Chat adapter pack. Translates chat input into CommMessage(channel=chat). "
         "chat_ingester maps raw {'role': 'user', 'content': '...'} input into "

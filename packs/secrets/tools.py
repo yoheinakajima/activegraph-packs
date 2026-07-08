@@ -111,7 +111,7 @@ def resolve_and_audit_fn(
     # If call_id provided, create credential_used_in relation
     if call_id:
         try:
-            graph.add_relation("credential_used_in", usage_event.id, call_id)
+            graph.add_relation(usage_event.id, call_id, "credential_used_in")
         except Exception:
             pass
 

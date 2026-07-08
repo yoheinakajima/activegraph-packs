@@ -45,7 +45,7 @@ def create_milestone_fn(
         "completion_pct": 0.0,
     })
     try:
-        graph.add_relation("part_of_project", ms.id, project_id)
+        graph.add_relation(ms.id, project_id, "part_of_project")
     except Exception:
         pass
     return ms
@@ -89,7 +89,7 @@ def assign_task_fn(
         "assigned_at": datetime.now(timezone.utc).isoformat(),
     })
     try:
-        graph.add_relation("assigned_to", assignment.id, task_id)
+        graph.add_relation(assignment.id, task_id, "assigned_to")
     except Exception:
         pass
     return assignment
@@ -111,7 +111,7 @@ def mark_task_done_fn(
         "completed_at": now,
     })
     try:
-        graph.add_relation("evidence_for", evidence.id, task_id)
+        graph.add_relation(evidence.id, task_id, "evidence_for")
     except Exception:
         pass
     try:

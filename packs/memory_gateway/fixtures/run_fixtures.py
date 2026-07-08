@@ -62,7 +62,7 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
         by_type.setdefault(o.type, []).append(o)
 
     all_relations = list(graph.relations())
-    relation_types = {r.source for r in all_relations}
+    relation_types = {r.type for r in all_relations}
 
     expected = scenario.get("expected_outputs", {})
 

@@ -221,7 +221,7 @@ def run_profile_context_assembly() -> bool:
 
     # Check fulfilled_by_profile relations
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     if "fulfilled_by_profile" not in rel_types:
         failures.append("Missing relation: fulfilled_by_profile")
 

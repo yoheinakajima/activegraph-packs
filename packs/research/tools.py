@@ -68,7 +68,7 @@ def create_experiment_fn(
     })
     if direction_id:
         try:
-            graph.add_relation("tests_direction", exp.id, direction_id)
+            graph.add_relation(exp.id, direction_id, "tests_direction")
         except Exception:
             pass
     return exp

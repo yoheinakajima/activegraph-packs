@@ -1,0 +1,63 @@
+# Fixture: Manual Approval Flow
+#
+# The held-call lifecycle, end to end:
+#   1. A high-risk capability_call is proposed
+#   2. policy_enforcer holds it at status='policy_checking' (high is not
+#      in auto_approve_risk_classes)
+#   3. pending_approvals lists it; approve_capability resolves it —
+#      creating the same capability_approval object auto-approval creates
+#   4. call_executor executes; the result becomes a Core source
+#
+# This is the loop the plan calls "closing the trust loop": before it,
+# a held call could never be advanced by anything.
+
+name: manual_approval_flow
+description: >
+  A high-risk wire-transfer capability is proposed, held by policy,
+  listed as pending, manually approved by the owner, and only then
+  executed — with the whole decision trail in the graph.
+
+objects:
+  - type: capability_provider
+    data:
+      name: CRM API
+      kind: api
+      base_url: https://crm.example.com
+      description: Customer relationship management lookup
+      capabilities: [lookup_company, initiate_payment]
+      credential_ref_name: CRM_API_KEY
+      enabled: true
+      metadata: {}
+
+  - type: capability_call
+    data:
+      provider_id: PLACEHOLDER_PROVIDER_ID
+      provider_name: CRM API
+      capability_name: lookup_company
+      input_data:
+        company_name: Northwind Robotics
+      credential_ref_name: CRM_API_KEY
+      risk_class: high
+      status: proposed
+      proposed_by: test_fixture
+      frame_id: frame_manual_001
+      proposed_at: "2026-07-07T10:00:00Z"
+      metadata: {}
+
+manual_decision:
+  action: approve
+  approver_ref: user:owner
+  note: Verified with the owner out-of-band.
+
+expected_outputs:
+  call_statuses: [done]
+  relations:
+    includes:
+      - type: calls
+        description: capability_call links to capability_provider
+      - type: approved_by
+        description: capability_call links to its manual capability_approval
+      - type: produces_result
+        description: the approved call executed and produced a result
+      - type: sourced_as
+        description: the result was mapped to a Core source

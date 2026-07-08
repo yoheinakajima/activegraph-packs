@@ -102,7 +102,7 @@ def run_transcript_ingestion_pipeline() -> bool:
     print(f"  core tasks (from AIs): {len(tasks)}")
 
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []
@@ -229,7 +229,7 @@ def run_manual_meeting_workflow() -> bool:
     print(f"  notes:      {len(notes)}")
 
     all_rels = list(graph.relations())
-    rel_types = {r.source for r in all_rels}
+    rel_types = {r.type for r in all_rels}
     print(f"\n  relation types seen: {sorted(rel_types)}")
 
     failures = []

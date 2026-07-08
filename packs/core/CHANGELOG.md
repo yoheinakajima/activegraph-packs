@@ -1,5 +1,20 @@
 # Core Pack Changelog
 
+## v0.1.1 — Relation integrity fix (2026-07-08)
+
+### Fixed
+- **`add_relation` argument order.** Relation writes passed
+  `(type, source, target)` but the API is `(source, target, type)` — the same
+  bug the Chat Pack fixed in its v0.2.0. Affected relations were being written
+  as garbage edges (the type string as the source id), silently breaking graph
+  traversal over this pack's audit trail. Part of a repo-wide sweep (80 calls
+  across 14 packs) that also corrected fixture assertions written against the
+  broken shape (`r.source` where `r.type` was meant).
+- `derived_from` relation type: added `source` to `source_types` and opened
+  `target_types` (empty = any) — bridge packs point `derived_from` at domain
+  objects Core must not enumerate. The previous closed list silently rejected
+  every bridge-created edge once the argument order was fixed.
+
 ## v0.1.0 — Initial release (2026-06-03)
 
 ### Added

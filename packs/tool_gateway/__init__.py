@@ -1,4 +1,4 @@
-"""activegraph.packs.tool_gateway — Tool Gateway Pack v0.1.
+"""activegraph.packs.tool_gateway — Tool Gateway Pack v0.2.
 
 All external capability calls (APIs, MCP, local tools, SDK clients) must
 flow through this pack. It normalizes calls, runs policy checks, records
@@ -10,9 +10,11 @@ Key invariants:
   - Policy decisions are graph-visible: status field on CapabilityCall
   - Tool outputs become Core source objects → enabling downstream observation extraction
 
-Object types: capability_provider, capability_call, capability_result
-Behaviors:    call_recorder, policy_enforcer, result_sourcer
-Tools:        execute_capability
+Object types: capability_provider, capability_call, capability_approval,
+              capability_denial, capability_result
+Behaviors:    call_recorder, policy_enforcer, call_executor, result_sourcer
+Tools:        execute_capability, pending_approvals, approve_capability,
+              deny_capability
 
 Usage:
     from activegraph import Runtime, Graph
@@ -39,10 +41,10 @@ from .tools import TOOLS
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# requires=["core"], integrates_with=["secrets"]
+# requires=["core"], integrates_with=["secrets", "identity_auth"]
 pack = Pack(
     name="tool_gateway",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Capability execution gateway. All external calls (APIs, MCP, local tools) "
         "flow through here for policy checks, credential injection by reference, "

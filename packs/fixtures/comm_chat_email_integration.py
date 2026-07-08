@@ -187,7 +187,7 @@ def run_full_comm_stack_integration() -> dict:
 
     # Summary
     all_relations = list(g.relations())
-    relation_types = sorted({r.source for r in all_relations})
+    relation_types = sorted({r.type for r in all_relations})
 
     return {
         "sources": len(list(g.objects(type="source"))),

@@ -334,7 +334,7 @@ def entity_extractor(event, graph, ctx, *, settings: EntitySettings):
 
         # Create mentions relation: source → entity_mention
         try:
-            graph.add_relation("mentions", source_id, mention.id)
+            graph.add_relation(source_id, mention.id, "mentions")
         except Exception:
             pass
 
@@ -425,7 +425,7 @@ def entity_resolver(event, graph, ctx, *, settings: EntitySettings):
         except Exception:
             pass
         try:
-            graph.add_relation("refers_to", mention_id, best_entity_id)
+            graph.add_relation(mention_id, best_entity_id, "refers_to")
         except Exception:
             pass
     else:
@@ -454,7 +454,7 @@ def entity_resolver(event, graph, ctx, *, settings: EntitySettings):
         except Exception:
             pass
         try:
-            graph.add_relation("refers_to", mention_id, new_entity.id)
+            graph.add_relation(mention_id, new_entity.id, "refers_to")
         except Exception:
             pass
 
@@ -513,11 +513,11 @@ def merge_candidate_detector(event, graph, ctx, *, settings: EntitySettings):
 
             # Relations: merge_candidate_for → both entities
             try:
-                graph.add_relation("merge_candidate_for", candidate.id, new_entity_id)
+                graph.add_relation(candidate.id, new_entity_id, "merge_candidate_for")
             except Exception:
                 pass
             try:
-                graph.add_relation("merge_candidate_for", candidate.id, existing_id)
+                graph.add_relation(candidate.id, existing_id, "merge_candidate_for")
             except Exception:
                 pass
 

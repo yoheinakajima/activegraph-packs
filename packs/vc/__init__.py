@@ -40,7 +40,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core", "communication"], composes_with=["entity", "memory_gateway", "identity_auth"]
 pack = Pack(
     name="vc",
-    version="0.1.0",
+    version="0.1.1",
     description=(
         "VC deal flow management: founder outreach detection, company profiling, "
         "memo drafting, followup tracking, and LP updates. "

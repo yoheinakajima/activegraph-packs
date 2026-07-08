@@ -198,6 +198,9 @@ For the full architecture, the frames-vs-trace model, and a tour of the Inspecto
 | `GET /packs` | Loaded packs with their behaviors and object/relation types |
 | `GET /frames` | Execution frames and their events |
 | `POST /chat` | Inject a chat message into the graph |
+| `GET /sessions` | List chat sessions (id, user, turn count, started_at) |
+| `GET /approvals` | Held capability calls + recent approve/deny decisions |
+| `POST /approvals` | Resolve a held call: `{call_id, decision: approve\|deny, approver_ref}` |
 | `POST /reset` | Wipe SQLite stores and re-seed from fixtures |
 
 ---

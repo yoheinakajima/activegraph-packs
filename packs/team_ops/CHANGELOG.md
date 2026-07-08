@@ -1,5 +1,16 @@
 # Team/Ops Pack Changelog
 
+## v0.1.1 — Relation integrity fix (2026-07-08)
+
+### Fixed
+- **`add_relation` argument order.** Relation writes passed
+  `(type, source, target)` but the API is `(source, target, type)` — the same
+  bug the Chat Pack fixed in its v0.2.0. Affected relations were being written
+  as garbage edges (the type string as the source id), silently breaking graph
+  traversal over this pack's audit trail. Part of a repo-wide sweep (80 calls
+  across 14 packs) that also corrected fixture assertions written against the
+  broken shape (`r.source` where `r.type` was meant).
+
 ## v0.1.0 — 2026-06-03
 
 ### Added

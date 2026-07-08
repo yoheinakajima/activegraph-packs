@@ -115,7 +115,7 @@ def run_principal_lifecycle() -> bool:
 
     # --- Check relations ---
     all_relations = list(graph.relations())
-    relation_types_seen = {r.source for r in all_relations}
+    relation_types_seen = {r.type for r in all_relations}
     print(f"  relations: {sorted(relation_types_seen)}")
 
     # --- Assertions ---

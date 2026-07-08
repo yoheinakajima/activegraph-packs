@@ -58,7 +58,15 @@ polls. The API server proxies these through.
 | `GET /packs` | Loaded packs with behaviors and object/relation types |
 | `GET /frames` | Execution frames and the events grouped under each |
 | `POST /chat` | Inject a chat message into the graph |
+| `GET /sessions` | List chat sessions (id, user, turn count, started_at) |
+| `GET /approvals` | Held capability calls (`status='policy_checking'`) + recent decisions |
+| `POST /approvals` | Resolve a held call: `{call_id, decision: approve\|deny, approver_ref, note\|reason}` |
 | `POST /reset` | Wipe the SQLite stores and re-seed from fixtures |
+
+Approval state lives entirely in the graph — a pending approval *is* a
+`capability_call` at `status='policy_checking'`, and decisions are
+`capability_approval` / `capability_denial` objects — so the approvals API is
+a thin view with no server-side bookkeeping, and it survives restarts.
 
 ## Frames and the trace
 

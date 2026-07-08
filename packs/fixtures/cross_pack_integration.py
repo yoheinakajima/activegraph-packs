@@ -235,7 +235,7 @@ def run_integration_test() -> bool:
         failures.append("No memory_retrieval — memory_retriever behavior did not fire")
 
     all_relations = list(graph.relations())
-    relation_types = {r.source for r in all_relations}
+    relation_types = {r.type for r in all_relations}
     for expected_rel in ["calls", "approved_by", "produces_result", "sourced_as",
                           "evaluates", "fulfilled_by"]:
         if expected_rel not in relation_types:

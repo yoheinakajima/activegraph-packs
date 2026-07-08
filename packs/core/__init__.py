@@ -46,7 +46,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 pack = Pack(
     name="core",
-    version="0.1.0",
+    version="0.1.1",
     description=(
         "Universal primitive substrate for all ActiveGraph packs. "
         "Provides 7 object types (source, observation, task, action, artifact, "
