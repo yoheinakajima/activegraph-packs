@@ -60,6 +60,22 @@ SCENARIO_PATHS = ("happy", "conflict_park", "disable_restart",
 
 OWNER = "soak-owner@example.com"
 
+# The macOS budget_memory candidate: an UNBOUNDED memory runaway, so the
+# WALL-CLOCK kill contains it when the memory net (RLIMIT_AS) is OFF
+# (Darwin). The pure-Python spin between allocations paces the growth so
+# the wall clock reliably fires with a bounded peak (no `import time`:
+# the import allow-list gate would reject it, and unpaced growth could
+# stress the host). Genuinely unbounded: the loop never terminates, so
+# only a net can stop it.
+_MEM_RUNAWAY_SRC = (
+    "\n_HOG = []\n"
+    "while True:\n"
+    "    _HOG.append(bytearray(8 * 1024 * 1024))\n"
+    "    _pace = 0\n"
+    "    for _i in range(4_000_000):\n"
+    "        _pace += 1\n"
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -82,6 +98,12 @@ class SoakHarness:
         )
         self.state = self._load_state()
         self.rt = None
+        # Memory-net availability, detected once from the runtime's honest
+        # signal (a preflight probe that reports the RLIMIT_AS degradation
+        # on macOS). None = not yet probed; the override forces it for the
+        # deterministic fixtures that must exercise both platform branches.
+        self._memory_net = None
+        self._memory_net_override = None
 
     # ------------------------------------------------------------ state
 
@@ -334,11 +356,19 @@ class SoakHarness:
         return {"pack": name, "after_restart": reloaded.get(name, "")}
 
     def _scenario_budget(self, idx: int, kind: str) -> dict:
-        """One candidate per runtime net; each must die in the child
-        with the right outcome and a rejected proposal."""
+        """One candidate per runtime net; each must be CONTAINED in the
+        child (the trial fails) and leave a rejected proposal.
+
+        The invariant is containment, not which specific net fires.
+        budget_memory is platform-aware: the memory net (RLIMIT_AS) is
+        the container on Linux, and the wall-clock kill is the container
+        on macOS where that net is OFF. Keyed off the runtime's own
+        net-availability signal (`_memory_net_available`), never
+        sys.platform."""
         from packs.evolution.trial import run_trial
 
         name = f"soak_{kind}_{idx}"
+        contained_by = ""
         if kind == "budget_events":
             variant = {"trigger": (
                 "    for _i in range(200):\n"
@@ -346,29 +376,42 @@ class SoakHarness:
                 "{\"note\": f\"flood {_i}\"})")}
             settings = self.settings.model_copy(
                 update={"trial_max_new_events": 150})
-            expect_gate, expect_outcome = "replay", "limits_exceeded"
+            expect_outcomes = ("limits_exceeded",)
+            contained_by = "event budget"
         elif kind == "budget_wallclock":
             variant = {"hang_on_import": True}
             settings = self.settings
-            expect_gate, expect_outcome = "fixtures", "limits_exceeded"
-        else:  # budget_memory
+            expect_outcomes = ("limits_exceeded",)
+            contained_by = "wall-clock kill"
+        elif self._memory_net_available():
+            # Linux: the memory net is live. A fixed allocation above the
+            # RSS cap is caught at import (MemoryError). UNCHANGED so the
+            # in-progress Linux/Replit run behaves exactly as before.
             variant = {"extra_module_src":
                        "\n_HOG = bytearray(600 * 1024 * 1024)\n"}
             settings = self.settings
-            expect_gate, expect_outcome = "fixtures", "materialization_failed"
+            expect_outcomes = ("materialization_failed", "limits_exceeded")
+            contained_by = "memory net (RLIMIT_AS)"
+        else:
+            # macOS: the memory net is OFF, so a fixed 600MB would just
+            # allocate and the trial would (wrongly) pass. An UNBOUNDED
+            # runaway must be contained by the wall-clock kill instead.
+            variant = {"extra_module_src": _MEM_RUNAWAY_SRC}
+            settings = self.settings
+            expect_outcomes = ("limits_exceeded", "crashed")
+            contained_by = "wall-clock kill (memory net OFF)"
 
         proposal = self._author_and_gate(name, **variant)
         assert proposal.data["status"] == "gated", proposal.data
         trial = run_trial(self.rt, proposal.id, settings)
+        # Containment is the invariant: the runaway must NOT complete.
         assert trial["verdict"] == "fail", trial
         outcome = (trial.get("outcome")
                    or trial.get("eval_summary", {}).get("child_outcome"))
-        assert outcome == expect_outcome, (kind, outcome, trial)
-        if expect_gate == "fixtures":
-            assert trial.get("gate") == "fixtures", trial
+        assert outcome in expect_outcomes, (kind, outcome, contained_by, trial)
         data = self.rt.graph.get_object(proposal.id).data
         assert data["status"] == "rejected", data
-        return {"pack": name, "outcome": outcome}
+        return {"pack": name, "outcome": outcome, "contained_by": contained_by}
 
     def scenario_tainted(self, idx: int) -> dict:
         """A tainted proposal suspends and SITS there, untouched."""
@@ -403,6 +446,38 @@ class SoakHarness:
         assert graph.get_object(proposal.id).data["status"] == "suspended", (
             "the sweep must not touch a suspended proposal")
         return {"proposal": name, "flags": data["injection_flags"]}
+
+    # --------------------------------------------- memory-net detection
+
+    def _memory_net_available(self) -> bool:
+        """Whether the trial child's memory net (RLIMIT_AS) actually
+        applies on this box, from the runtime's OWN signal.
+
+        `activegraph.sandbox.preflight` returns the degradation warnings
+        the child reports; on macOS the memory cap degrades and the child
+        announces "memory net is OFF" (v1.7.1). This keys budget_memory
+        off the ACTUAL net availability rather than sys.platform, so the
+        scenario asserts CONTAINMENT by whichever net is real (the memory
+        net on Linux, the wall-clock kill on macOS). Cached; the override
+        forces it for the deterministic both-branch fixture."""
+        if self._memory_net_override is not None:
+            return self._memory_net_override
+        if self._memory_net is not None:
+            return self._memory_net
+        from activegraph.sandbox import TrialLimits
+        from activegraph.sandbox import preflight as sandbox_preflight
+        try:
+            warnings = sandbox_preflight(limits=TrialLimits(
+                max_rss_bytes=self.settings.trial_max_rss_bytes,
+                wall_clock_seconds=self.settings.trial_fixture_timeout_seconds))
+        except Exception:
+            # If the probe cannot run at all the box has bigger problems;
+            # assume the net is present (the Linux/CI default) and let the
+            # real preflight refuse elsewhere.
+            warnings = ()
+        off = any("memory net is OFF" in str(w) for w in warnings)
+        self._memory_net = not off
+        return self._memory_net
 
     # -------------------------------------------------------- preflight
 
@@ -455,6 +530,12 @@ class SoakHarness:
             ("disable_restart", lambda: self.scenario_disable_restart(idx)),
         ]
         for path, fn in scenarios:
+            # Attribution (Defect 2 fix): snapshot the failure-carrying
+            # objects that exist BEFORE this scenario, so on an anomaly we
+            # only read the child detail from THIS scenario's own trials,
+            # never a prior path's (budget_wallclock's error must not
+            # render under budget_memory).
+            pre_ids = self._failure_object_ids()
             try:
                 detail = fn()
                 self.state["paths"][path]["ok"] += 1
@@ -464,9 +545,9 @@ class SoakHarness:
                 # Defect 1: never let a child crash read as opaque. Pull
                 # the trial child's outcome + detail (TrialReport.detail,
                 # which now carries the stderr tail the runtime surfaces)
-                # from the graph, so the digest and anomaly log name the
+                # from THIS scenario's own objects, so the digest names the
                 # real error and not just the soak-side AssertionError.
-                child = self._latest_child_failure_detail()
+                child = self._latest_child_failure_detail(exclude_ids=pre_ids)
                 self.state["paths"][path]["anomalies"] += 1
                 self.state["anomaly_log"].append({
                     "rotation": idx, "path": path, "at": _now(),
@@ -482,25 +563,46 @@ class SoakHarness:
         return {"rotation": idx, "results": results,
                 "digest": str(digest_path)}
 
-    def _latest_child_failure_detail(self) -> str:
-        """The most recent trial-child failure detail from the graph
-        (Defect 1). A crashing child records its outcome and detail on
-        the `fixtures`/`in_sample`/`held_out` gate_result it fails, and
-        on mod_trial.eval_summary.child_detail; this returns the newest
-        such note so a crash is never opaque in the digest. Empty string
-        when nothing failed at the child boundary (the anomaly was a
-        soak-logic assertion, not a child crash)."""
+    def _failure_object_ids(self) -> set:
+        """Ids of the failure-carrying objects (gate_result, mod_trial)
+        that exist right now. Snapshotted before each scenario so the
+        anomaly attribution reads only that scenario's own failures."""
+        if self.rt is None:
+            return set()
+        ids = set()
+        try:
+            for t in ("gate_result", "mod_trial"):
+                for o in self.rt.graph.objects(type=t):
+                    ids.add(str(o.id))
+        except Exception:
+            pass
+        return ids
+
+    def _latest_child_failure_detail(self, exclude_ids: set | None = None) -> str:
+        """The trial-child failure detail for the CURRENT scenario
+        (Defect 1 surfacing + Defect 2 attribution). A crashing child
+        records its outcome and detail on the `fixtures`/`in_sample`/
+        `held_out` gate_result it fails, and on
+        mod_trial.eval_summary.child_detail. `exclude_ids` are the
+        objects that pre-existed the scenario, so a prior path's failure
+        never renders under this one. Empty string when nothing failed at
+        the child boundary (the anomaly was a soak-logic assertion)."""
         if self.rt is None:
             return ""
+        exclude = exclude_ids or set()
         candidates: list[tuple[str, str]] = []
         try:
             for g in self.rt.graph.objects(type="gate_result"):
+                if str(g.id) in exclude:
+                    continue
                 data = g.data or {}
                 if (data.get("gate") in ("fixtures", "in_sample", "held_out")
                         and data.get("verdict") == "fail"):
                     candidates.append((str(data.get("at", "")),
                                        f"{data.get('gate')}: {data.get('details', '')}"))
             for t in self.rt.graph.objects(type="mod_trial"):
+                if str(t.id) in exclude:
+                    continue
                 summary = (t.data or {}).get("eval_summary") or {}
                 outcome = summary.get("child_outcome")
                 if outcome and outcome != "completed":

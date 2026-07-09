@@ -1,5 +1,37 @@
 # Evolution Pack Changelog
 
+## v0.6.1 — Platform-aware runaway-memory containment (2026-07-08)
+
+The macOS soak was RED because budget_memory asserted the RLIMIT_AS
+memory net fires, which is only true on Linux. On macOS the memory net
+is deliberately OFF (Darwin cannot set address-space limits; 1.7.1
+degrades it loudly), so a fixed 600MB allocation completed and the
+trial passed, breaking `assert verdict == "fail"` every rotation.
+
+### Changed
+- budget_memory now protects CONTAINMENT (true on both platforms), not
+  "the memory net fires" (true only on Linux). It keys off the runtime's
+  own memory-net signal (`SoakHarness._memory_net_available`, from
+  `activegraph.sandbox.preflight` warnings), never `sys.platform`. Memory
+  net live (Linux): fixed over-cap allocation, contained by the memory
+  net (`materialization_failed`), UNCHANGED so the in-progress Linux run
+  is unaffected. Memory net OFF (macOS): an unbounded runaway contained
+  by the wall-clock kill (`limits_exceeded`).
+- `_latest_child_failure_detail` takes `exclude_ids`; run_rotation
+  snapshots the failure-carrying objects before each scenario so an
+  anomaly reads only THAT scenario's child detail. Fixes the
+  attribution bleed where budget_wallclock's error rendered under
+  budget_memory.
+
+### Added
+- Fixture 29: the Linux branch (real, memory-net containment), the macOS
+  branch (forced net-off, wall-clock containment), and the attribution
+  fix. Twenty-nine scenarios total.
+- Runbook: budget_memory documented as platform-conditional; a
+  memory-net-OFF warning on macOS is expected; the real red flag is a
+  runaway that `completed` (escaped all nets).
+
+
 ## v0.6.0 — The LLM author, MOCK model only (2026-07-08)
 
 Runtime floor >=1.7.1 (macOS RLIMIT_AS fix, memory-net-degrades-loudly,

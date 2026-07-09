@@ -1081,6 +1081,71 @@ def _author_gap(rt, *, exc_message=False, prose_capability=False):
     return str(gap.id), probe
 
 
+def fx_29_budget_memory_platform_aware(tmp) -> dict:
+    """budget_memory protects CONTAINMENT of a runaway-memory candidate
+    on both platforms, keyed off the runtime's real memory-net signal
+    (not sys.platform):
+    - memory net available (Linux, real here): a fixed over-cap
+      allocation is contained by the memory net (materialization_failed).
+    - memory net OFF (macOS, forced here): an unbounded runaway is
+      contained by the wall-clock kill (limits_exceeded), so the trial
+      still FAILS instead of completing.
+    Plus the attribution fix: one path's child failure never renders
+    under another's."""
+    from packs.evolution.soak import SoakHarness
+
+    # Detection returns the truth on this (Linux) box.
+    base = SoakHarness(os.path.join(tmp, "detect"),
+                       settings=EvolutionSettings(
+                           enabled=True, trial_fixture_timeout_seconds=6.0))
+    assert base._memory_net_available() is True, "Linux memory net is live"
+
+    # Linux branch, for real: fixed allocation contained by the memory net.
+    linux = SoakHarness(os.path.join(tmp, "linux"),
+                        settings=EvolutionSettings(
+                            enabled=True, heldout_fraction=0.5,
+                            trial_fixture_timeout_seconds=6.0))
+    linux.boot()
+    out_linux = linux._scenario_budget(1, "budget_memory")
+    assert out_linux["outcome"] in ("materialization_failed", "limits_exceeded")
+    assert "memory net" in out_linux["contained_by"]
+
+    # macOS branch, forced: memory net OFF, so a large RSS cap keeps the
+    # memory net from firing on Linux and the WALL-CLOCK contains the
+    # unbounded runaway instead (the real macOS behavior). Short fixture
+    # timeout so the paced growth stays small.
+    mac = SoakHarness(os.path.join(tmp, "mac"),
+                      settings=EvolutionSettings(
+                          enabled=True, heldout_fraction=0.5,
+                          trial_fixture_timeout_seconds=3.0,
+                          trial_max_rss_bytes=8 * 1024 * 1024 * 1024))
+    mac._memory_net_override = False
+    mac.boot()
+    out_mac = mac._scenario_budget(1, "budget_memory")
+    assert out_mac["outcome"] in ("limits_exceeded", "crashed"), out_mac
+    assert "wall-clock" in out_mac["contained_by"]
+
+    # Attribution: a second scenario's anomaly must read its OWN child
+    # failure, not the most recent in the graph. Seed two distinct trials.
+    graph = linux.rt.graph
+    graph.add_object("mod_trial", {
+        "proposal_id": "p_first", "verdict": "fail",
+        "eval_summary": {"child_outcome": "limits_exceeded",
+                         "child_detail": "FIRST_PATH wall clock exceeded"},
+        "at": "2026-07-09T00:00:00Z"})
+    pre = linux._failure_object_ids()
+    graph.add_object("mod_trial", {
+        "proposal_id": "p_second", "verdict": "fail",
+        "eval_summary": {"child_outcome": "materialization_failed",
+                         "child_detail": "SECOND_PATH MemoryError"},
+        "at": "2026-07-09T00:00:01Z"})
+    attributed = linux._latest_child_failure_detail(exclude_ids=pre)
+    assert "SECOND_PATH" in attributed, attributed
+    assert "FIRST_PATH" not in attributed, "prior path's error must not bleed"
+    return {"linux": out_linux["outcome"], "macos_forced": out_mac["outcome"],
+            "attribution": "own-trial only"}
+
+
 def fx_25_author_origin_assembly(tmp) -> dict:
     """§3 origin-based context assembly: the frame is four fixed sections
     and nothing else, and every EXCLUDED origin is provably absent. A
@@ -1347,6 +1412,8 @@ SCENARIOS = [
      fx_27_author_taint_and_caps),
     ("28 author render (gate 3): mock-LLM proposal renders read-beside-wrote",
      fx_28_author_render_gate3),
+    ("29 budget_memory platform-aware: memory-net vs wall-clock containment",
+     fx_29_budget_memory_platform_aware),
 ]
 
 
