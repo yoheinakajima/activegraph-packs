@@ -22,12 +22,32 @@ run every time), then walks seven paths with the scripted author:
 | conflict_park | the retry cap | `needs_owner` after exactly `max_conflict_retries` requeues; further sweeps do nothing |
 | budget_events | the runtime's event-budget net | rejected, child outcome `limits_exceeded` at replay |
 | budget_wallclock | the parent-side wall-clock kill | rejected, child outcome `limits_exceeded` at the fixture gate |
-| budget_memory | RLIMIT_AS in the child | rejected, child outcome `materialization_failed` (MemoryError) |
+| budget_memory | runaway-memory containment (platform-conditional, see below) | rejected; contained by whichever memory-related net is real on this box |
 | disable_restart | governed disable plus restart persistence | `disabled (stays down)` in the reload report after a real restart |
 
 Every path asserts its terminal state. A miss is recorded as an
 ANOMALY with a traceback and the rotation continues; anomalies are
 never swallowed.
+
+**budget_memory is platform-conditional, on purpose.** The invariant it
+protects is "a runaway-memory candidate is CONTAINED", which is true on
+both platforms; the specific net that contains it is not. The soak keys
+off the runtime's own memory-net signal (`activegraph.sandbox.preflight`
+reports whether `RLIMIT_AS` applies on this box), never `sys.platform`:
+
+- **Linux (memory net live):** the candidate makes a fixed over-cap
+  allocation and the memory net catches it at import; expected outcome
+  `materialization_failed`. This is the historical Linux behavior,
+  unchanged.
+- **macOS (memory net OFF):** Darwin cannot set address-space limits, so
+  the runtime degrades that net loudly and announces `memory net is
+  OFF`. The candidate then allocates UNBOUNDEDLY and the wall-clock kill
+  contains it instead; expected outcome `limits_exceeded`. A
+  memory-net-OFF warning on macOS is EXPECTED, not a red flag.
+
+The real red flag for this path is a runaway that escapes ALL nets: a
+budget_memory candidate whose trial `completed` (verdict pass). That
+means nothing contained it, and it is a stop-and-report.
 
 Keyless by construction: the scripted author writes the candidates,
 trial children get no LLM provider and an allow-list environment, and
@@ -119,9 +139,11 @@ anomaly log; do not restart over them:
   across rotations. The governed-disable path is failing quietly.
 - A `suspended` count that ever DECREASES, or a parked `needs_owner`
   proposal that changes status. Nothing automatic may touch either.
-- A budget path whose outcome drifts (e.g. `budget_memory` reporting
-  `limits_exceeded` instead of `materialization_failed`): a net is
-  catching the wrong thing or the wrong net is catching it.
+- A budget path whose candidate `completed` (trial verdict pass): a
+  runaway escaped every net. For `budget_memory` specifically, note the
+  outcome is platform-conditional (`materialization_failed` on Linux,
+  `limits_exceeded` on macOS, per the table above), so the red flag is
+  `completed`, not which of those two fired.
 - The happy path's `greeting_delta` at 0 with no anomaly recorded: the
   adopted behavior stopped firing without failing.
 - A rotation that stops producing digests at all (crash loop, disk

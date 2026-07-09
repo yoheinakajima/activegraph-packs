@@ -87,7 +87,7 @@ mismatch aborts with nothing loaded.
 python packs/evolution/fixtures/run_fixtures.py
 ```
 
-Twenty-eight acceptance scenarios (design §8): happy path, the six-way static
+Twenty-nine acceptance scenarios (design §8): happy path, the six-way static
 gate matrix, trial isolation, held-out discipline, conflict-then-retry,
 deterministic taint inheritance, self-approval blocked twice,
 approve-then-swap dead for source AND manifest-only swaps, restart
@@ -101,10 +101,12 @@ pins (promoted-from fork logs refuse retirement), a full soak rotation
 render (a tainted author context suspends with no approve button), and
 the author-frame boundaries (charter reserved-path refusal, taint
 recompute a lying record cannot launder, structured-field charset
-rejection), the soak preflight and never-opaque crash detail, and the
+rejection), the soak preflight and never-opaque crash detail, the
 LLM author against a MOCK model (origin assembly with every excluded
 origin absent, pack-owned provenance, no-tools-by-construction, the
-folds under the real author, the rate caps, and the gate-3 render).
+folds under the real author, the rate caps, and the gate-3 render), and
+platform-aware runaway-memory containment (memory net on Linux, wall
+clock on macOS).
 Scripted and MOCK authors only; no live model, no keys, no network.
 
 ## The soak (gate 5)

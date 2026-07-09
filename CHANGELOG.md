@@ -6,6 +6,19 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.6.1: platform-aware runaway-memory containment.**
+  The macOS soak was RED because budget_memory asserted the RLIMIT_AS
+  memory net fires, true only on Linux; on macOS that net is
+  deliberately OFF (Darwin cannot set address-space limits), so a fixed
+  600MB allocation completed and the trial passed, breaking the
+  assertion every rotation. Now budget_memory protects CONTAINMENT (true
+  on both platforms) and keys off the runtime's own memory-net signal:
+  the memory net contains a fixed over-cap allocation on Linux
+  (unchanged, so the in-progress Linux run is unaffected), and an
+  unbounded runaway is contained by the wall-clock kill on macOS. Also
+  fixes the anomaly-attribution bleed (one path's child error rendering
+  under another's). Fixture 29 covers both branches and the attribution
+  fix; the runbook documents the platform-conditional outcome.
 - **Evolution pack v0.6.0: the LLM author, MOCK model only.** Runtime
   floor `>=1.7.1,<2.0` (macOS RLIMIT_AS fix, memory-net-degrades-loudly,
   `activegraph.sandbox.preflight`, source-populated `TrialReport.detail`).
