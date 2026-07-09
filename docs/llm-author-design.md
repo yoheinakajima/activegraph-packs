@@ -1,17 +1,28 @@
 # LLM Author: design
 
-**Status: DESIGN FINAL, BUILD GATED. The author is unbuilt on purpose.
-Subprocess isolation shipped and is consumed (evolution-design §7.2),
-and this design has passed review by someone who did not write it (see
-History). The pipeline stays scripted-author-only until the remaining
-build gates hold: a green soak (evolution-design gate 5) and the four
-enforced boundaries this document now specifies. Building the author
-from a prompt drafted in an afternoon is the single riskiest move
-available to this codebase, which is why the design and its enforced
-trust boundaries exist before the code.**
+**Status: BUILT, MOCK-MODEL ONLY, LIVE OPERATION GATED ON THE SOAK. The
+author is implemented in `packs/evolution/author.py` and proven against
+a MOCK model with deterministic, keyless fixtures. Gates 1 (subprocess
+isolation), 2 (independent design review), 3 (drafting records render on
+the decision surface), and 6 (rate/budget caps) are MET; gate 4's
+enforced-boundary fixtures run against the real author path. Gate 5 (a
+green soak) is pending the soak's green finish, now running on 1.7.1 on
+both platforms. HARD RULE: the author is never pointed at a live model
+on a credentialed machine until gate 5 clears. Keyless mock operation is
+what makes building and proving it safe before the soak finishes.**
 
 ## History
 
+- **2026-07-08, author BUILT (mock model only).** `author.py` implements
+  §3 origin-based frame assembly (four fixed sections, every excluded
+  origin provably absent), the sealed drafting record with taint
+  recomputed from admitted ids, the one-shot no-tools model call, pack-
+  owned name/provenance (`agent_` prefix, `authored_by` stamped by pack
+  code, the model produces four source bodies and nothing else), and the
+  §5 rate/budget caps. Evolution fixtures 25-28 cover origin assembly and
+  exclusions, the pipeline and the four folds under the real author, the
+  taint-plus-caps behavior, and the gate-3 end-to-end render. Live-model
+  operation stays gated on gate 5 (the soak).
 - **2026-07-08, design review complete (build gate 2).** Approved: the
   origin-over-content posture is the correct and only defensible
   architecture; the no-tools-during-drafting property is airtight; and
@@ -187,30 +198,33 @@ read, never just what it wrote.
 ## 5. The author frame's mechanics
 
 - **One shot, no tools.** The author gets the assembled context and
-  returns files. It holds zero gateway capabilities during drafting:
-  no search, no memory recall, no fetch. Every tool call during
-  drafting is a channel for exactly the text §3 excluded, so the
-  drafting frame has no tool surface at all. If drafting needs more
-  context, that is a gap in (b) or (c) assembly, fixed in pack code
-  where it is reviewable.
-- **Output is files, nothing else.** The model returns the authored
-  file set; pack code writes the manifest scaffold, computes the
-  content hash with the runtime's implementation, and calls
-  `submit_proposal_fn` with `authored_by="llm"`. The model never picks
-  the pack name (namespaced `agent_` prefix, reserved-namespace gate
-  unchanged), never sets `authored_by`, never touches the manifest's
-  provenance block.
+  returns source. It holds zero gateway capabilities during drafting:
+  no search, no memory recall, no fetch. As BUILT, the frame handed to
+  the model is a pure-data dict with no graph handle and no capability,
+  so "no tool surface at all" holds by construction: there is nothing
+  to call. Fixture 26 serializes the frame to JSON to prove it. If
+  drafting needs more context, that is a gap in (b) or (c) assembly,
+  fixed in pack code where it is reviewable.
+- **Output is source bodies, nothing else.** As BUILT
+  (`author.py::AuthoredSource`), the model returns exactly four source
+  bodies (object types, behaviors, settings, tools) and nothing else.
+  Pack code owns `__init__.py`, the fixtures, the pinned trial driver,
+  and the manifest with its provenance, so the model STRUCTURALLY
+  cannot set the pack name (an `agent_` prefix it never sees), cannot
+  set provenance, and cannot emit the charter path. The proposal is
+  submitted with `authored_by="llm"` (the decision-surface banner reads
+  this); the manifest's coarse runtime flag is `agent` (the runtime's
+  provenance vocabulary is human/agent). Content hash is the runtime's.
 - **The decision surface shouts.** `authored_by="llm"` renders the
-  same AGENT banner, plus the drafting record: charter hash, admitted
+  loud author banner, plus the drafting record: charter hash, admitted
   ids, flags. An owner approving an LLM-authored pack sees what it
-  read and what it wrote, on one page.
-- **Budget and rate.** At most one draft in flight per gap, a daily
-  cap on drafts (setting), and no redrafting loops that feed a
-  rejection's gate details back into a fresh context. Gate details
-  quote candidate source; candidate source is model text; feeding it
-  back builds an unreviewed self-conversation. A rejected proposal's
-  retry is a fresh draft from the same (a) through (d) context, plus
-  the owner's own words if the owner wants to steer.
+  read and what it wrote, on one page (fixture 28, gate 3).
+- **Budget and rate.** As BUILT: at most one draft in flight per gap, a
+  daily cap on drafts (`EvolutionSettings.max_drafts_per_day`), and no
+  redrafting loops. Assembly never reads a prior proposal or its gate
+  details, so a retry is a fresh draft from the same (a) through (d)
+  context; there is no channel to feed a rejection back. Fixture 27
+  covers all three caps.
 
 ## 6. What this does NOT claim
 
@@ -233,44 +247,45 @@ read, never just what it wrote.
 
 ## 7. Gate conditions to build (all of them, no substitutions)
 
-1. Runtime subprocess isolation for fork trials shipped and consumed
-   here, so a hostile candidate's first execution happens outside the
-   parent process (today's fixture gate subprocess covers fixtures
-   only; in-process replay is evolution-design T5's accepted surface
-   and stops being acceptable the day an adversarial author exists).
-2. This design reviewed by someone who did not write it, with the
-   review recorded in this file's history. MET (see History,
-   2026-07-08): approved with four required changes, all folded and
-   enforced with fixtures.
-3. The decision surface renders drafting records (§4), so LLM-authored
-   proposals are reviewable to the same depth as their diffs. BUILT
-   AHEAD of the author: the drafting_context schema is registered, the
-   review page renders it as its own section (what the author read,
-   origin classes, taint union, charter hash), submission inherits the
-   record's flags deterministically, and fixture 20 proves a tainted
-   record suspends with a loud banner and no approve button. When the
-   author lands, this gate is a wiring step.
-4. Acceptance fixtures for the author frame itself, deterministic,
-   with a mock model: context assembly admits exactly the §3 set, a
-   flagged owner input taints the proposal, a memory object in the
-   graph provably never reaches the frame, the drafting record is
-   complete, and the no-tools property holds by construction. Four of
-   the enforced boundaries already have fixtures in the evolution
-   suite, built ahead of the author so the build is a wiring step:
-   - fixture 20: the drafting record renders on the decision surface;
-     a tainted record suspends with a loud banner and no approve
-     button.
-   - fixture 21: a proposal targeting the charter path is refused at
-     `static:reserved_paths`, before any other gate (change 1).
-   - fixture 22: taint is recomputed from admitted ids, so a record
-     that lies about its stored flags cannot launder taint (change 2).
-   - fixture 23: a prose-shaped structured field, and a field path off
-     the §3b allow-list, are both refused at submission (change 4).
-   What remains for this gate when the author lands: the mock-model
-   assembly fixtures (exact §3 admission set, memory-never-reaches-frame,
-   no-tools-by-construction).
+1. **MET.** Runtime subprocess isolation for fork trials, shipped
+   (v1.5) and consumed here, so a hostile candidate's first execution
+   happens outside the parent process. On 1.7.x the child imports
+   activegraph from the parent's resolved path with the env allow-list
+   closed.
+2. **MET** (see History, 2026-07-08): design reviewed by someone who
+   did not write it, with the review recorded here; approved with four
+   required changes, all folded and enforced with fixtures.
+3. **MET.** The decision surface renders drafting records (§4). The
+   `drafting_context` schema is registered, the review page renders it
+   as its own section (what the author read, origin classes, taint
+   union, charter hash), submission recomputes the record's flags
+   deterministically, and fixture 28 renders a real MOCK-LLM-authored
+   proposal end to end (banner, read-beside-wrote, taint). Fixture 20
+   proves a tainted record suspends with a loud banner and no approve
+   button.
+4. Acceptance fixtures for the author frame itself, deterministic, with
+   a MOCK model, against the real author path
+   (`packs/evolution/author.py`):
+   - fixture 25: assembly is four §3 sections and nothing else; a
+     planted memory, profile goal, tool output, prior rationale, and
+     the exception message all provably never reach the frame; it
+     admits exactly the §3 set.
+   - fixture 26: pack-owned name (`agent_` prefix) and provenance, the
+     model returns source bodies only, no-tools by construction (the
+     frame is pure data), the charter can never be authored, the
+     charset fold excludes a prose field at assembly, and the authored
+     pack passes a real subprocess trial.
+   - fixture 27: a tainted CONTEXT suspends even when the mock OUTPUT is
+     pristine; the three §5 caps (one-in-flight, daily, no-redraft).
+   - fixtures 20-23 (the four enforced folds) hold on the direct path;
+     26-27 confirm they hold under the real author.
+6. **MET.** Rate/budget caps (§5): fixture 27 covers one draft in
+   flight per gap, the daily cap (`max_drafts_per_day`), and the
+   no-redraft property.
 
-Until then: scripted author, owner-drafted packs, and nothing else.
+**Gate 5 (the soak) is the remaining blocker.** Until it finishes green,
+the author runs against a MOCK model only. Live-model operation on a
+credentialed machine is gated on that green finish, no substitutions.
 
 ## 8. Open questions
 

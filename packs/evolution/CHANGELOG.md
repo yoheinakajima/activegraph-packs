@@ -1,5 +1,43 @@
 # Evolution Pack Changelog
 
+## v0.6.0 — The LLM author, MOCK model only (2026-07-08)
+
+Runtime floor >=1.7.1 (macOS RLIMIT_AS fix, memory-net-degrades-loudly,
+activegraph.sandbox.preflight and source-populated TrialReport.detail).
+The LLM author is BUILT and proven against a MOCK model, keyless. Live-
+model operation stays gated on the soak finishing green.
+
+### Added
+- author.py: the LLM author (docs/llm-author-design.md). `assemble_frame`
+  builds the four-section origin-classified context (charter, structured
+  gap fields, target surface, verified-owner text) as pure data;
+  excluded origins (memory, agent_profile, capability_result.output_data,
+  web/MCP text, unverified senders, prior rationales, the exception
+  MESSAGE) never enter. `draft_proposal` is the one-shot pipeline: seal
+  the drafting_context, call the injected model with pure data and no
+  tools, take four source bodies, stamp the agent_ name and provenance
+  in pack code (the model touches neither), and submit. Rate caps: one
+  draft in flight per gap, daily cap (new EvolutionSettings.
+  max_drafts_per_day), no redraft-from-rejection.
+- author_charter.md: the author's system prompt, hash-pinned, human-PR-
+  only, never authorable.
+- author_frame: charter_text_and_hash; recompute_drafting_taint also
+  content-scans admitted owner inputs (the §3d tripwire).
+- Mock author model (fixtures/candidates.py::mock_author_model) and
+  fixtures 25-28: origin assembly with every excluded origin provably
+  absent; the pipeline and the four folds under the real author; a
+  tainted context suspending even when mock output is pristine plus the
+  three rate caps; and the gate-3 end-to-end render of a MOCK-LLM
+  proposal. Twenty-eight scenarios total.
+- drafting_context gains a `day` field for the daily rate cap.
+
+### Status (docs/llm-author-design.md)
+- Author BUILT; gates 1, 2, 3, 6 MET via mock; gate 4 fixtures run
+  against the real author path; gate 5 (green soak) is the remaining
+  blocker. Live-model operation on a credentialed machine is gated on
+  the soak's green finish.
+
+
 ## v0.5.2 — activegraph 1.7.0: soak green on the fixed trial child (2026-07-08)
 
 The whitelist question is answered in the runtime: 1.7.0 computes the

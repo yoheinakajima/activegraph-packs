@@ -289,3 +289,76 @@ def author_pack(
         from packs.evolution.author_frame import AUTHOR_CHARTER_FILENAME
         files[AUTHOR_CHARTER_FILENAME] = "# a charter the author must not write\n"
     return files
+
+
+# --------------------------------------------------------------------------
+# The MOCK author model (docs/llm-author-design.md). NEVER a live model:
+# a scripted callable that returns the four source bodies the real author
+# pipeline wraps. Fixed export symbols per the charter (OBJECT_TYPES /
+# RELATION_TYPES, BEHAVIORS, PackSettings, TOOLS).
+
+_MOCK_OBJECT_TYPES = '''"""Object types."""
+from __future__ import annotations
+from pydantic import BaseModel, Field
+from activegraph.packs import ObjectType
+
+
+class NoteLog(BaseModel):
+    note: str = Field(default="")
+
+
+OBJECT_TYPES = [ObjectType(name="agent_note_log", schema=NoteLog,
+                           description="A note the pack logged.")]
+RELATION_TYPES = []
+'''
+
+_MOCK_BEHAVIORS = '''"""Behaviors."""
+from __future__ import annotations
+from activegraph.packs import behavior
+
+from .settings import PackSettings
+
+
+@behavior(name="note_taker", on=["object.created"],
+          where={"object.type": "source"}, creates=["agent_note_log"])
+def note_taker(event, graph, ctx, *, settings: PackSettings):
+    graph.add_object("agent_note_log", {"note": settings.prefix})
+
+
+BEHAVIORS = [note_taker]
+'''
+
+_MOCK_SETTINGS = '''"""Settings."""
+from __future__ import annotations
+from pydantic import BaseModel, Field
+
+
+class PackSettings(BaseModel):
+    prefix: str = Field(default="noted")
+'''
+
+_MOCK_TOOLS = '''"""No tools."""
+TOOLS = []
+'''
+
+
+def mock_author_model(frame):
+    """A scripted stand-in for the LLM author's model. Returns the same
+    clean source regardless of the frame, so a proposal it authors is
+    always gate-compliant: that lets the taint fixtures prove a tainted
+    CONTEXT suspends even when the model's OUTPUT looks pristine.
+
+    Records the frame it was handed (mock_author_model.last_frame) so a
+    fixture can assert what the author read."""
+    from packs.evolution.author import AuthoredSource
+
+    mock_author_model.last_frame = frame
+    return AuthoredSource(
+        object_types_src=_MOCK_OBJECT_TYPES,
+        behaviors_src=_MOCK_BEHAVIORS,
+        settings_src=_MOCK_SETTINGS,
+        tools_src=_MOCK_TOOLS,
+    )
+
+
+mock_author_model.last_frame = None

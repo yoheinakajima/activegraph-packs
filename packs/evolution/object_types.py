@@ -56,6 +56,9 @@ class DraftingContext(BaseModel):
     model: str = Field(
         default="scripted",
         description="Author identity: 'scripted', 'owner', or an LLM id.")
+    day: str = Field(
+        default="",
+        description="Draft date (YYYY-MM-DD) for the daily rate cap.")
     at: str = Field(default="")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
