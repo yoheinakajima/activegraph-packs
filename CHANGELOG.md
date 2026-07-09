@@ -6,6 +6,23 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.6.0: the LLM author, MOCK model only.** Runtime
+  floor `>=1.7.1,<2.0` (macOS RLIMIT_AS fix, memory-net-degrades-loudly,
+  `activegraph.sandbox.preflight`, source-populated `TrialReport.detail`).
+  `packs/evolution/author.py` builds the author from
+  docs/llm-author-design.md: origin-classified frame assembly (four
+  fixed sections, every excluded origin provably absent), a sealed
+  drafting record with taint recomputed from admitted ids, a one-shot
+  no-tools model call handed pure data, and pack-owned name/provenance
+  (`agent_` prefix, the model returns four source bodies and touches
+  neither name nor provenance). Rate caps: one draft in flight per gap,
+  a daily cap, no redraft-from-rejection. Proven against a MOCK model
+  with keyless fixtures 25-28 (origin assembly, the folds under the real
+  author, taint-plus-caps, the gate-3 render). Author-build gates 1, 2,
+  3, 6 MET; gate 4 fixtures on the real path; gate 5 (a green soak) is
+  the remaining blocker. Live-model operation on a credentialed machine
+  is gated on the soak's green finish, no substitutions. Keyless mock
+  operation is what keeps this safe pre-soak.
 - **Evolution pack v0.5.2: activegraph 1.7.0, soak green on the fixed
   trial child.** Runtime floor raised to `>=1.7,<2.0`. 1.7.0 computes
   the trial child's import path from the parent's resolved `sys.path`,

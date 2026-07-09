@@ -67,6 +67,14 @@ class EvolutionSettings(BaseModel):
             "Zero means every conflict is the owner's problem immediately."
         ),
     )
+    max_drafts_per_day: int = Field(
+        default=8, ge=1,
+        description=(
+            "LLM-author rate cap (llm-author-design §5, gate 6): the most "
+            "drafts the author may produce in one day. One draft in flight "
+            "per gap is enforced separately."
+        ),
+    )
     heldout_fraction: float = Field(
         default=0.5, gt=0.0, lt=1.0,
         description=(

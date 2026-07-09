@@ -1,4 +1,4 @@
-# Evolution Pack — v0.5
+# Evolution Pack — v0.6
 
 Self-modification with provenance. The assistant authors candidate packs;
 static gates check them without executing anything; fork trials run them
@@ -61,6 +61,19 @@ verified principal is chassis territory beyond this demo server, per
 the gate list. Tickets are processed by the schedule tick driver on
 the runtime-executor thread.
 
+## The author (`author.py`, MOCK MODEL only)
+
+The LLM author (docs/llm-author-design.md) is built and proven against a
+MOCK model, keyless. `draft_proposal` assembles an origin-classified
+frame (four fixed sections: charter, structured gap fields, target
+surface, verified-owner text, and nothing else), seals a
+`drafting_context`, calls the model once with pure data and no tools,
+and submits four model-written source bodies wrapped by pack-owned
+name, provenance, and manifest. Memory, profiles, tool output,
+unverified-sender text, and prior rationales never enter the frame.
+Live-model operation on a credentialed machine is gated on the soak
+finishing green, no substitutions.
+
 ## The pins
 
 `mod_proposal.bundle_hash` is the runtime's bundle hash over every
@@ -74,7 +87,7 @@ mismatch aborts with nothing loaded.
 python packs/evolution/fixtures/run_fixtures.py
 ```
 
-Twenty-two acceptance scenarios (design §8): happy path, the six-way static
+Twenty-eight acceptance scenarios (design §8): happy path, the six-way static
 gate matrix, trial isolation, held-out discipline, conflict-then-retry,
 deterministic taint inheritance, self-approval blocked twice,
 approve-then-swap dead for source AND manifest-only swaps, restart
@@ -88,8 +101,11 @@ pins (promoted-from fork logs refuse retirement), a full soak rotation
 render (a tainted author context suspends with no approve button), and
 the author-frame boundaries (charter reserved-path refusal, taint
 recompute a lying record cannot launder, structured-field charset
-rejection).
-Scripted author only; no LLM, no keys, no network.
+rejection), the soak preflight and never-opaque crash detail, and the
+LLM author against a MOCK model (origin assembly with every excluded
+origin absent, pack-owned provenance, no-tools-by-construction, the
+folds under the real author, the rate caps, and the gate-3 render).
+Scripted and MOCK authors only; no live model, no keys, no network.
 
 ## The soak (gate 5)
 

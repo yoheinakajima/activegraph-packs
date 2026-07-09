@@ -16,7 +16,9 @@ touches a model. Pure graph reads and regex.
 
 from __future__ import annotations
 
+import hashlib
 import re
+from pathlib import Path
 from typing import Any
 
 # The one repo path an authored pack may never target. The charter is
@@ -26,6 +28,17 @@ from typing import Any
 # charter improvement is permanently out of scope for any autonomous
 # loop, not just v1 (§8, now a gate).
 AUTHOR_CHARTER_FILENAME = "author_charter.md"
+
+# The charter lives in the pack (repo-shipped, version-controlled). Its
+# sha256 is recorded on every drafting record so "which instructions was
+# the author under" is answerable forever.
+CHARTER_PATH = Path(__file__).parent / AUTHOR_CHARTER_FILENAME
+
+
+def charter_text_and_hash() -> tuple[str, str]:
+    """The charter's text and its `sha256:` pin (§3a)."""
+    text = CHARTER_PATH.read_text()
+    return text, "sha256:" + hashlib.sha256(text.encode()).hexdigest()
 
 # The manifest identifier charset (activegraph.packs.manifest._NAME_RE),
 # pinned here as a constant so the evolution pack validates admitted
@@ -140,4 +153,20 @@ def recompute_drafting_taint(graph, record_data: dict[str, Any]) -> list[str]:
         obj = graph.get_object(object_id)
         if obj is not None:
             flags.update((obj.data or {}).get("injection_flags") or [])
+
+    # Owner text (§3d) is the one free-text origin admitted, so it is
+    # ALSO content-scanned here, not merely read for stored flags: the
+    # tripwire flags the record (and thus taints the proposal) even when
+    # the owner input arrived without a pre-recorded flag. Origin still
+    # decides admission; the scan is the audit tripwire, never a filter.
+    try:
+        from packs.tool_gateway.untrusted import scan_for_injection
+    except Exception:
+        scan_for_injection = None
+    if scan_for_injection is not None:
+        for owner_id in (record_data.get("owner_input_ids") or []):
+            obj = graph.get_object(str(owner_id))
+            if obj is not None:
+                content = str((obj.data or {}).get("content", ""))
+                flags.update(scan_for_injection(content))
     return sorted(flags)

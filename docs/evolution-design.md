@@ -697,6 +697,22 @@ scripted generator, never a live LLM:
 23. **Structured-field charset** (llm-author-design §3b/§6, review
     change 4): a prose-shaped structured field, and a field path off the
     §3b allow-list, are both refused at submission.
+24. **Soak preflight + crash detail**: an incapable box is refused
+    before rotation 1; a trial-child failure is never opaque in the
+    digest.
+25. **Author origin assembly** (llm-author-design §3): the frame is four
+    fixed sections and nothing else; a planted memory, profile goal,
+    tool output, prior rationale, and the exception message all provably
+    never reach it; it admits exactly the §3 set.
+26. **Author pipeline and folds**: the MOCK author produces a real
+    proposal with a pack-owned `agent_` name and provenance, no tools in
+    the frame, the charter unauthored, the charset fold at assembly, and
+    the authored pack passes a real subprocess trial.
+27. **Author taint and caps**: a tainted context suspends even when the
+    mock output is pristine; the one-in-flight, daily, and no-redraft
+    caps refuse.
+28. **Author render (gate 3)**: a MOCK-LLM-authored proposal renders end
+    to end on the decision surface, what it read beside what it wrote.
 
 ## 9. Dependencies and sequencing
 

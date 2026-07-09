@@ -18,7 +18,7 @@ created_at = "2026-07-08T00:00:00Z"
 content_hash = "sha256:b3138d530091bf5a657099dbeac9f28572e3245152a5b084b6101a48f630fd1c"
 
 [dependencies]
-activegraph = ">=1.7,<2.0"
+activegraph = ">=1.7.1,<2.0"
 python = ">=3.11"
 python-deps = []
 

@@ -3,7 +3,7 @@
 
 [pack]
 name = "evolution"
-version = "0.5.2"
+version = "0.6.0"
 description = "Agent-authored packs under governance: static gates, fork trials against replayed history, bundle-hash pins, verified owner approval, quiescent promote adoption, immediate disable. Ships disabled."
 license = "Apache-2.0"
 
@@ -15,10 +15,10 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:5ec560ed339ca6e644111a43ff1d80a81a422d6d1c780a992591aa66c27c9f19"
+content_hash = "sha256:42bd71e4d38b8db02b6813d7ab09cc7ba007ab60e5711ab0d18cce8e4db806de"
 
 [dependencies]
-activegraph = ">=1.7,<2.0"
+activegraph = ">=1.7.1,<2.0"
 python = ">=3.11"
 python-deps = []
 
