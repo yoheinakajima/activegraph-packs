@@ -1,5 +1,45 @@
 # Evolution Pack Changelog
 
+## v0.7.2 — Adoption-time supersession + narrow boot heal (2026-07-09)
+
+Resolves the two crash-safety proposals from the v0.7.1 audit
+(docs/evolution-design.md §10), both per the owner's decision. The
+per-pack invariant — at most one active promotion per pack name — is now
+maintained on two fronts: the adoption path itself, and boot.
+
+### Added
+- **Adoption-time supersession (2B, canonical order step 6).** When a
+  pack name with an existing ACTIVE promotion is adopted, the prior active
+  is disabled and recorded `superseded_by` the new promotion, as part of
+  the same adoption transaction (after the real promote, so a crash can
+  never disable the old while failing to install the new). This makes the
+  invariant structurally maintained by the adoption path and makes the
+  designed version-update flow (the agent re-adopting its own prior pack)
+  correct for the first time.
+- **Narrow boot heal (2C), never guesses, every heal raises a gap.**
+  `reload_adopted_packs` now heals only what the event log makes
+  unambiguous: a `loading` record whose `promote.applied` marker is in the
+  log resolves to active + loads + closes its open ticket (fixes §10.1
+  case 6, the serious window — live promoted state with the pack
+  permanently unloaded and the chassis wedged); two actives for one pack
+  supersede the older by recency and load the survivor; a `loading` record
+  with NO marker is parked (fixes §10.1 case 5, so orphaned records cannot
+  accumulate). Anything the log does not decide is parked, not resolved.
+- Fixtures 34 (supersession: version update + crash-window convergence)
+  and 35 (boot heal: heal-on-marker, two-active supersession, park).
+
+### Fixed
+- **Duplicate `mod_rollback` on disable-ticket re-run (2A case 9).** A
+  disable ticket re-processed after a crash — promotion already disabled,
+  rollback already recorded — no longer stacks a second `mod_rollback`.
+
+### Docs
+- docs/evolution-design.md: supersession is now a numbered step in the
+  canonical adoption order (§1) with the invariant stated; §10 updated
+  from proposal to decided-and-implemented, including the boot-heal posture
+  and its never-guesses rule, the accepted case-8 transient (one paragraph,
+  no code), and the accepted case-3 audit noise.
+
 ## v0.7.1 — Soak crash-safety + boot dedupe (2026-07-09)
 
 Fallout from the Replit soak's rotation-15 red flag: a mid-rotation

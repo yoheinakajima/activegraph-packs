@@ -290,7 +290,47 @@ def process_adoption_tickets(
         # promotion_recorder (on promote.applied) flips loading -> active
         # on the next settle.
         rt.run_until_idle()
+
+        # 6. Adoption-time supersession (canonical order, design §3 stage 5).
+        # INVARIANT: at most one active promotion per pack name. With the new
+        # promotion now active, disable any OTHER active promotion for the
+        # same pack name and record it superseded_by the new one. This makes
+        # the invariant structurally maintained by the adoption path — and
+        # makes the designed version-update flow (the agent re-adopting its
+        # own prior pack under the same name) correct for the first time.
+        # Placed AFTER the real promote so a crash mid-adoption can never
+        # disable the old version while failing to install the new one.
+        superseded = _supersede_prior_actives(
+            graph, proposal.data.get("pack_name", ""), new_id=str(promotion.id))
+        if superseded:
+            outcomes[-1]["superseded"] = superseded
     return outcomes
+
+
+def _supersede_prior_actives(graph, pack_name: str, *, new_id: str) -> list[str]:
+    """Disable every OTHER active promotion for `pack_name`, recorded
+    `superseded_by = new_id`.
+
+    A bookkeeping disable, NOT a `disable_pack`: `load_pack` of the new
+    version already replaced the old under the same pack name, so the
+    runtime holds the new code; only the graph's promotion records need
+    reconciling. Both records stay in the audit trail — the old one
+    `disabled` and pointing at the new via `superseded_by`."""
+    superseded: list[str] = []
+    for p in list(graph.objects(type="mod_promotion")):
+        if str(p.id) == new_id:
+            continue
+        data = p.data or {}
+        if (data.get("pack_name") == pack_name
+                and data.get("status") == "active"):
+            meta = dict(data.get("metadata") or {})
+            meta["superseded_by"] = new_id
+            graph.patch_object(p.id, {
+                "status": "disabled",
+                "status_note": f"superseded by {new_id}",
+                "metadata": meta})
+            superseded.append(str(p.id))
+    return superseded
 
 
 def _process_disable(rt, graph, ticket) -> dict:
@@ -300,6 +340,16 @@ def _process_disable(rt, graph, ticket) -> dict:
         _abort(graph, ticket, None, "promotion vanished")
         return {"ticket": ticket.id, "outcome": "error"}
     pack_name = promotion.data.get("pack_name", "")
+    # Idempotency guard (2A case 9): a disable ticket re-processed after a
+    # crash — with the promotion already disabled and its rollback already
+    # recorded — must not stack a duplicate mod_rollback. Close the ticket
+    # and report; the disable already happened.
+    if promotion.data.get("status") == "disabled" and any(
+            (r.data or {}).get("promotion_id") == promotion_id
+            for r in graph.objects(type="mod_rollback")):
+        graph.patch_object(ticket.id, {"status": "done"})
+        return {"ticket": ticket.id, "outcome": "disabled",
+                "deregistered": False, "note": "already disabled"}
     deregistered = False
     try:
         deregistered = bool(rt.disable_pack(pack_name))

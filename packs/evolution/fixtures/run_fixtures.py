@@ -1342,71 +1342,178 @@ def fx_32_soak_invariant_assertion(tmp) -> dict:
             "named_both": True}
 
 
+def _boot_heal_gaps(graph, case=None):
+    return [x for x in graph.objects(type="capability_gap")
+            if (x.data or {}).get("metadata", {}).get("source") == "boot_heal"
+            and (case is None
+                 or (x.data or {}).get("metadata", {}).get("case") == case)]
+
+
 def fx_33_boot_dedupe(tmp) -> dict:
     """Gap C (product code, boot.py): reload_adopted_packs groups by pack
-    name, acts once, and reports truthfully. (a) an active promotion followed
-    by a disabled one resolves by recency to a single truthful outcome —
-    never loaded-while-reported-disabled. (b) two active promotions for one
-    pack load the most recent only (one load_pack call) and raise a loud
-    anomaly capability_gap."""
-    from packs.evolution.boot import reload_adopted_packs
+    name, acts once, and reports truthfully. An active promotion followed by
+    a disabled one resolves by recency to a single truthful outcome — never
+    loaded-while-reported-disabled, and exactly one outcome entry (not
+    overwritten pass by pass)."""
     from packs.evolution.soak import SoakHarness
 
-    # (a) active-then-disabled for one pack.
-    root_a = os.path.join(tmp, "dedupe_a")
-    ha = SoakHarness(root_a, settings=_soak_settings())
-    ha.boot()
-    ha.scenario_happy(1)  # real adoption -> soak_happy_1 active, loadable
-    promo = next(p for p in ha.rt.graph.objects(type="mod_promotion")
+    root = os.path.join(tmp, "dedupe")
+    h = SoakHarness(root, settings=_soak_settings())
+    h.boot()
+    h.scenario_happy(1)  # real adoption -> soak_happy_1 active, loadable
+    promo = next(p for p in h.rt.graph.objects(type="mod_promotion")
                  if p.data.get("pack_name") == "soak_happy_1"
                  and p.data.get("status") == "active")
     pid, fork = promo.data["proposal_id"], promo.data.get("fork_run_id", "")
-    ha.rt.graph.add_object("mod_promotion", {
+    h.rt.graph.add_object("mod_promotion", {
         "proposal_id": pid, "pack_name": "soak_happy_1",
         "status": "disabled", "fork_run_id": fork})
-    ha.teardown()
-    report = ha.boot()  # boot re-runs reload_adopted_packs
-    outcome_a = report["reloaded"].get("soak_happy_1", "")
-    assert outcome_a == "disabled (stays down)", outcome_a
+    h.teardown()
+    report = h.boot()  # boot re-runs reload_adopted_packs
+    outcome = report["reloaded"].get("soak_happy_1", "")
+    assert "disabled" in outcome and "stays down" in outcome, outcome
     # exactly one outcome entry for the pack (acted once, not overwritten)
     assert list(report["reloaded"]).count("soak_happy_1") == 1
+    return {"outcome": outcome, "acted_once": True}
 
-    # (b) two ACTIVE promotions for one pack.
-    root_b = os.path.join(tmp, "dedupe_b")
-    hb = SoakHarness(root_b, settings=_soak_settings())
-    hb.boot()
-    hb.scenario_happy(1)
-    promo_b = next(p for p in hb.rt.graph.objects(type="mod_promotion")
-                   if p.data.get("pack_name") == "soak_happy_1"
-                   and p.data.get("status") == "active")
-    p2 = hb.rt.graph.add_object("mod_promotion", {
-        "proposal_id": promo_b.data["proposal_id"],
-        "pack_name": "soak_happy_1", "status": "active",
-        "fork_run_id": promo_b.data.get("fork_run_id", "")})
-    gaps_before = sum(
-        1 for x in hb.rt.graph.objects(type="capability_gap")
-        if (x.data or {}).get("metadata", {}).get("source")
-        == "reload_adopted_packs")
-    loaded: list = []
-    orig = hb.rt.load_pack
 
-    def _spy(pack, **kw):
-        loaded.append(getattr(pack, "name", "?"))
-        return orig(pack, **kw)
+def fx_34_adoption_supersession(tmp) -> dict:
+    """2B: adoption-time supersession. A version-update adoption (same pack
+    name, an existing ACTIVE promotion) leaves exactly ONE active, the prior
+    record disabled and superseded_by the new one, both in the audit trail —
+    the invariant is structurally maintained by the adoption path. And the
+    crash-window re-adoption (the fx_31 scenario) now converges to one active
+    via this same mechanism."""
+    from packs.evolution.soak import SoakHarness
+    from packs.evolution.trial import run_trial
 
-    hb.rt.load_pack = _spy
-    out_b = reload_adopted_packs(hb.rt)
-    gaps_after = [x for x in hb.rt.graph.objects(type="capability_gap")
-                  if (x.data or {}).get("metadata", {}).get("source")
-                  == "reload_adopted_packs"]
-    assert loaded.count("soak_happy_1") == 1, (
-        f"must load the pack exactly once, loaded {loaded}")
-    assert "ANOMALY" in out_b.get("soak_happy_1", ""), out_b
-    assert len(gaps_after) > gaps_before, "two actives must raise a gap"
-    assert gaps_after[-1].data["metadata"]["loaded"] == str(p2.id), (
-        "must load the most recent active")
-    return {"case_a": outcome_a, "case_b_loads": loaded.count("soak_happy_1"),
-            "case_b_anomaly_gap": True}
+    S = _soak_settings()
+
+    # --- version update: adopt soak_happy_1, then adopt it AGAIN ---
+    h = SoakHarness(os.path.join(tmp, "super"), settings=S)
+    h.boot()
+    p1 = h._author_and_gate("soak_happy_1")
+    run_trial(h.rt, p1.id, S); h._approve_adoption(p1.id)
+    o1 = h._sweep()
+    old_id = o1[0]["promotion"]
+    h.rt.run_until_idle()
+    p2 = h._author_and_gate("soak_happy_1")
+    run_trial(h.rt, p2.id, S); h._approve_adoption(p2.id)
+    o2 = h._sweep()
+    new_id = o2[0]["promotion"]
+    h.rt.run_until_idle()
+
+    actives = [p for p in h.rt.graph.objects(type="mod_promotion")
+               if p.data.get("pack_name") == "soak_happy_1"
+               and p.data.get("status") == "active"]
+    assert len(actives) == 1, (
+        f"supersession must leave one active, got {len(actives)}")
+    assert str(actives[0].id) == str(new_id), "the survivor is the new one"
+    old = h.rt.graph.get_object(old_id)
+    assert old.data["status"] == "disabled", old.data
+    assert old.data.get("metadata", {}).get("superseded_by") == str(new_id), (
+        "the prior record must be superseded_by the new one")
+    assert str(old_id) in o2[0].get("superseded", []), o2[0]
+
+    # --- crash-window re-adoption converges via the same mechanism ---
+    root = os.path.join(tmp, "super_crash")
+    hc = SoakHarness(root, settings=S)
+    hc.boot(); hc.scenario_happy(1)
+    first = str(next(p for p in hc.rt.graph.objects(type="mod_promotion")
+                     if p.data.get("status") == "active").id)
+    hc.teardown()
+    hc2 = SoakHarness(root, settings=S)
+    hc2.boot(); hc2.scenario_happy(1)  # re-adopts soak_happy_1 -> supersedes first
+    actives2 = [p for p in hc2.rt.graph.objects(type="mod_promotion")
+                if p.data.get("status") == "active"]
+    assert len(actives2) == 1, actives2
+    assert hc2.rt.graph.get_object(first).data["status"] == "disabled"
+    return {"version_update": "one active, prior superseded_by new",
+            "crash_window": "converged to one active"}
+
+
+def fx_35_boot_heal(tmp) -> dict:
+    """2C: boot heals only what the log makes unambiguous, always with a gap.
+    (case 6) a loading record whose promote.applied marker is in the log
+    resolves to active, loads, closes its open ticket (chassis not wedged),
+    gap. (two-active) two actives -> older superseded, survivor loaded, gap.
+    (park) a loading record with NO marker parks, loads nothing, gap."""
+    from packs.evolution.boot import reload_adopted_packs
+    from packs.evolution.soak import SoakHarness
+
+    S = _soak_settings()
+
+    # --- case 6: loading + promote.applied in the log -> heal to active ---
+    root6 = os.path.join(tmp, "heal6")
+    h6 = SoakHarness(root6, settings=S)
+    h6.boot(); h6.scenario_happy(1)
+    promo6 = next(p for p in h6.rt.graph.objects(type="mod_promotion")
+                  if p.data.get("status") == "active")
+    fork6 = promo6.data.get("fork_run_id", "")
+    assert fork6, "the adopted promotion must carry its fork run id"
+    # Reconstruct the die-after-promote-before-recorder state: a loading
+    # record for a fork whose promote.applied is already in the log, plus an
+    # open adoption ticket (the chassis would otherwise re-run and wedge).
+    h6.rt.graph.patch_object(promo6.id, {"status": "loading",
+                                         "promote_marker_event_id": ""})
+    tk = h6.rt.graph.add_object("adoption_ticket", {
+        "kind": "adopt", "proposal_id": promo6.data["proposal_id"],
+        "status": "open"})
+    loaded6: list = []
+    orig6 = h6.rt.load_pack
+    h6.rt.load_pack = lambda pack, **kw: (loaded6.append(getattr(pack, "name", "?")),
+                                          orig6(pack, **kw))[1]
+    out6 = reload_adopted_packs(h6.rt)
+    assert h6.rt.graph.get_object(promo6.id).data["status"] == "active", (
+        "a completed-promote loading record must heal to active")
+    assert loaded6.count(promo6.data["pack_name"]) == 1, "must load the pack"
+    assert h6.rt.graph.get_object(tk.id).data["status"] == "done", (
+        "the open ticket must be closed so the chassis is not wedged")
+    assert _boot_heal_gaps(h6.rt.graph, case="loading_with_marker"), out6
+
+    # --- two actives -> supersede older, load survivor, gap ---
+    rootT = os.path.join(tmp, "healT")
+    hT = SoakHarness(rootT, settings=S)
+    hT.boot(); hT.scenario_happy(1)
+    pA = next(p for p in hT.rt.graph.objects(type="mod_promotion")
+              if p.data.get("status") == "active")
+    pB = hT.rt.graph.add_object("mod_promotion", {
+        "proposal_id": pA.data["proposal_id"],
+        "pack_name": pA.data["pack_name"], "status": "active",
+        "fork_run_id": pA.data.get("fork_run_id", "")})
+    loadedT: list = []
+    origT = hT.rt.load_pack
+    hT.rt.load_pack = lambda pack, **kw: (loadedT.append(getattr(pack, "name", "?")),
+                                          origT(pack, **kw))[1]
+    outT = reload_adopted_packs(hT.rt)
+    assert hT.rt.graph.get_object(pA.id).data["status"] == "disabled", (
+        "the older active must be superseded")
+    assert hT.rt.graph.get_object(pA.id).data["metadata"].get(
+        "superseded_by") == str(pB.id)
+    assert hT.rt.graph.get_object(pB.id).data["status"] == "active"
+    assert loadedT.count(pA.data["pack_name"]) == 1, "load the survivor once"
+    assert _boot_heal_gaps(hT.rt.graph, case="two_active"), outT
+
+    # --- park: loading with NO promote.applied -> parked, nothing loaded ---
+    rootP = os.path.join(tmp, "park")
+    hP = SoakHarness(rootP, settings=S)
+    hP.boot()
+    parked = hP.rt.graph.add_object("mod_promotion", {
+        "proposal_id": "ghost", "pack_name": "soak_ghost",
+        "status": "loading", "fork_run_id": "run-with-no-marker"})
+    loadedP: list = []
+    origP = hP.rt.load_pack
+    hP.rt.load_pack = lambda pack, **kw: (loadedP.append(getattr(pack, "name", "?")),
+                                          origP(pack, **kw))[1]
+    outP = reload_adopted_packs(hP.rt)
+    assert hP.rt.graph.get_object(parked.id).data["status"] == "disabled", (
+        "an incomplete-adoption loading record must be parked")
+    assert "soak_ghost" not in loadedP, "nothing loads for a parked pack"
+    assert _boot_heal_gaps(hP.rt.graph, case="loading_no_marker"), outP
+
+    return {"case6": "healed to active, ticket closed, loaded",
+            "two_active": "older superseded, survivor loaded",
+            "park": "parked with a gap, nothing loaded"}
 
 
 def fx_25_author_origin_assembly(tmp) -> dict:
@@ -1683,8 +1790,12 @@ SCENARIOS = [
      fx_31_soak_crash_window),
     ("32 soak invariant: two actives flip the digest RED, not printed",
      fx_32_soak_invariant_assertion),
-    ("33 boot dedupe: group by pack, act once, load most-recent, report true",
+    ("33 boot dedupe: group by pack, act once, report truthfully by recency",
      fx_33_boot_dedupe),
+    ("34 adoption supersession: same-name re-adopt leaves one active, prior superseded",
+     fx_34_adoption_supersession),
+    ("35 boot heal: loading-with-marker heals, two-active supersedes, no-marker parks",
+     fx_35_boot_heal),
 ]
 
 
