@@ -44,7 +44,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # integrates_with=["schedule", "chat"]
 pack = Pack(
     name="evolution",
-    version="0.7.1",
+    version="0.7.2",
     description=(
         "Agent-authored packs under governance: static gates, fork trials "
         "against replayed history, bundle-hash pins, verified owner approval, "

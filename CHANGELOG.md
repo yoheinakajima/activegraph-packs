@@ -6,6 +6,22 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.7.2: adoption-time supersession + narrow boot heal.**
+  Resolves both crash-safety proposals from the v0.7.1 audit, per the
+  owner's decisions. The per-pack invariant (at most one active promotion
+  per pack name) is now maintained structurally on two fronts. (1)
+  Adoption-time supersession: adopting a pack name with an existing active
+  promotion disables the prior active and records it `superseded_by` the
+  new one, as canonical-order step 6 (after the real promote), making the
+  designed version-update flow correct. (2) Narrow boot heal that never
+  guesses and always raises a `capability_gap`: a `loading` record whose
+  `promote.applied` is in the log heals to active + loads + closes its
+  ticket (fixes the serious window — live promoted state with the pack
+  permanently unloaded); two actives supersede the older by recency; a
+  `loading` record with no marker is parked. Plus a duplicate-`mod_rollback`
+  idempotency guard. Fixtures 34/35 prove it; docs/evolution-design.md §10
+  updated from proposal to decided-and-implemented.
+
 - **Evolution pack v0.7.1: soak crash-safety + boot dedupe, plus a
   product crash-safety audit.** The Replit soak's rotation-15 red flag
   (two adopted packs simultaneously live) was fully diagnosed: real

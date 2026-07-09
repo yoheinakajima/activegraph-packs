@@ -135,27 +135,54 @@ def _reload_one(rt, graph, promotion, name: str, *, suffix: str = "") -> str:
     return "loaded" + suffix
 
 
+def _promoted_fork_runs(graph) -> set:
+    """fork_run_ids whose promote provably COMPLETED — a `promote.applied`
+    marker for that run exists in the event log. A `loading` promotion whose
+    fork run is in this set is a completed promote whose recorder never ran;
+    boot can heal it to active WITHOUT guessing (design §10.3)."""
+    runs: set = set()
+    try:
+        for ev in graph.events:
+            if getattr(ev, "type", "") == "promote.applied":
+                fr = (getattr(ev, "payload", None) or {}).get("from_run", "")
+                if fr:
+                    runs.add(str(fr))
+    except Exception:
+        pass
+    return runs
+
+
+def _boot_gap(graph, description: str, meta: dict) -> None:
+    """Every boot heal/park raises a reflection capability_gap — the
+    hash-mismatch-at-boot precedent: nothing boot does to reconcile an
+    ambiguous state is ever silent."""
+    graph.add_object("capability_gap", {
+        "kind": "reflection", "description": description,
+        "status": "open", "metadata": {"source": "boot_heal", **meta}})
+
+
 def reload_adopted_packs(rt) -> dict[str, str]:
     """Returns {pack_name: outcome}, acting exactly ONCE per pack name.
 
-    Grouped-then-resolved (Gap C): the loop used to iterate every
-    mod_promotion in insertion order and overwrite outcomes[pack_name] each
-    pass, so a pack with an active record followed by a disabled one got
-    LOADED on the first and then reported "disabled" on the second — loaded
-    while reported down. Now we group by pack name, resolve each pack's
-    effective state from its full promotion set, load at most once, and
-    report what actually happened.
+    Grouped, healed, then resolved by recency. Boot heals ONLY what the
+    event log makes unambiguous, and every heal raises a reflection
+    capability_gap (design §10.3, the hash-mismatch-at-boot precedent):
 
-    Resolution rule: a pack's effective state is its MOST RECENT promotion's
-    status (recency wins — an active record shadowed by a later disable stays
-    down). The product invariant is at most one ACTIVE promotion per pack
-    name; a set with two or more actives is a genuine inconsistency (a
-    crash-orphaned record, or — until the design's supersession proposal
-    lands — a same-name re-adoption). We do NOT silently pick: we load the
-    most recent active only, log loudly, and open a capability_gap so the
-    condition is impossible to miss. We never heal (disable the losers) or
-    refuse here — that decision is the design's crash-safety proposal."""
+    - a `loading` record whose `promote.applied` marker is in the log is a
+      provably-completed promote whose recorder never ran → resolve to
+      active, load, gap (heals §10.1 case 6, the serious window: live
+      promoted state with the defining pack permanently unloaded);
+    - a `loading` record with NO marker is an incomplete adoption the log
+      does not decide → park it (terminal, + gap), load nothing; the chassis
+      re-runs its open ticket against a clean slate (heals §10.1 case 5);
+    - two active promotions for one pack name → supersede the older by
+      recency (consistent with adoption-time supersession), load the
+      survivor, gap;
+    - otherwise recency decides: an active shadowed by a MORE RECENT disable
+      stays down. Heal never guesses — anything the log leaves ambiguous
+      beyond the two cases above stays parked."""
     graph = rt.graph
+    promoted_runs = _promoted_fork_runs(graph)
 
     groups: dict[str, list] = {}
     for promotion in list(graph.objects(type="mod_promotion")):
@@ -164,42 +191,95 @@ def reload_adopted_packs(rt) -> dict[str, str]:
 
     outcomes: dict[str, str] = {}
     for name, group in groups.items():
+        # --- Heal or park loading records first (never guesses) ---
+        for p in group:
+            data = p.data or {}
+            if data.get("status") != "loading":
+                continue
+            fork = str(data.get("fork_run_id", ""))
+            proposal_id = data.get("proposal_id", "")
+            if fork and fork in promoted_runs:
+                # Case 6 heal: the promote completed; only the recorder was
+                # lost. Resolve to active and close any still-open adoption
+                # ticket so the chassis does not re-run it and wedge.
+                graph.patch_object(p.id, {
+                    "status": "active",
+                    "status_note": "healed at boot: promote.applied present "
+                                   "in the log"})
+                for t in graph.objects(type="adoption_ticket"):
+                    if ((t.data or {}).get("proposal_id") == proposal_id
+                            and (t.data or {}).get("status") == "open"):
+                        graph.patch_object(t.id, {
+                            "status": "done",
+                            "status_note": "closed by boot heal: promote "
+                                           "already applied"})
+                print(f"[evolution] BOOT HEAL: {name!r} loading promotion "
+                      f"{p.id} had a completed promote; resolved to active",
+                      flush=True)
+                _boot_gap(graph,
+                          f"adopted pack {name!r}: a loading promotion "
+                          f"({p.id}) had a completed promote (promote.applied "
+                          "in the log) but the recorder never ran; boot "
+                          "resolved it to active and loaded the pack.",
+                          {"promotion_id": str(p.id), "pack_name": name,
+                           "case": "loading_with_marker"})
+            else:
+                # Case 5 park: incomplete adoption, the log does not decide.
+                graph.patch_object(p.id, {
+                    "status": "disabled",
+                    "status_note": "parked at boot: incomplete adoption, no "
+                                   "promote.applied in the log"})
+                print(f"[evolution] BOOT PARK: {name!r} loading promotion "
+                      f"{p.id} is an incomplete adoption; parked", flush=True)
+                _boot_gap(graph,
+                          f"adopted pack {name!r}: a loading promotion "
+                          f"({p.id}) had no promote.applied in the log (an "
+                          "incomplete adoption); boot parked it. The chassis "
+                          "re-runs its open ticket against a clean slate.",
+                          {"promotion_id": str(p.id), "pack_name": name,
+                           "case": "loading_no_marker"})
+
         actives = [p for p in group
-                   if (p.data or {}).get("status") == "active"]
+                   if (graph.get_object(p.id).data or {}).get("status")
+                   == "active"]
+
+        # --- Two-or-more actives: supersede older by recency, load survivor ---
         if len(actives) >= 2:
-            chosen = actives[-1]  # most recent active
+            survivor = actives[-1]
+            losers = actives[:-1]
+            for lo in losers:
+                meta = dict((lo.data or {}).get("metadata") or {})
+                meta["superseded_by"] = str(survivor.id)
+                graph.patch_object(lo.id, {
+                    "status": "disabled",
+                    "status_note": f"superseded by {survivor.id} (boot heal)",
+                    "metadata": meta})
             ids = [str(p.id) for p in actives]
-            print(f"[evolution] BOOT ANOMALY: {name!r} has {len(actives)} "
-                  f"active promotions {ids}; loading the most recent "
-                  f"({chosen.id}) only, leaving the rest unreconciled",
-                  flush=True)
-            graph.add_object("capability_gap", {
-                "kind": "reflection",
-                "description": (
-                    f"adopted pack {name!r} had {len(actives)} active "
-                    f"promotions at boot ({ids}); loaded the most recent "
-                    f"({chosen.id}) only. This violates the per-pack "
-                    "invariant (at most one active promotion per pack name) "
-                    "and needs owner attention — see the crash-safety "
-                    "proposal in docs/evolution-design.md."),
-                "status": "open",
-                "metadata": {"promotion_ids": ids, "loaded": str(chosen.id),
-                             "pack_name": name, "source": "reload_adopted_packs"},
-            })
+            print(f"[evolution] BOOT HEAL: {name!r} had {len(actives)} active "
+                  f"promotions {ids}; superseded "
+                  f"{[str(l.id) for l in losers]} by {survivor.id}", flush=True)
+            _boot_gap(graph,
+                      f"adopted pack {name!r} had {len(actives)} active "
+                      f"promotions at boot ({ids}); boot superseded the older "
+                      f"by recency and loaded {survivor.id}.",
+                      {"promotion_ids": ids, "loaded": str(survivor.id),
+                       "pack_name": name, "case": "two_active"})
             outcomes[name] = _reload_one(
-                rt, graph, chosen, name,
-                suffix=f" (ANOMALY: {len(actives)} active, most recent only)")
+                rt, graph, survivor, name,
+                suffix=" (healed: superseded older active)")
             continue
 
-        most_recent = group[-1]
-        status = (most_recent.data or {}).get("status")
-        if status == "active":
-            # The single active is also the most recent record → load it.
-            outcomes[name] = _reload_one(rt, graph, most_recent, name)
-        elif status == "disabled":
-            # Most recent record is a disable; an older active (if any) is
-            # superseded by recency and stays down.
-            outcomes[name] = "disabled (stays down)"
+        # --- Recency resolution (single active or none) ---
+        if len(actives) == 1 and str(actives[0].id) == str(group[-1].id):
+            outcomes[name] = _reload_one(rt, graph, actives[0], name)
+        elif len(actives) == 1:
+            # A single active shadowed by a MORE RECENT disable: recency says
+            # the pack was disabled after this active. Stays down.
+            outcomes[name] = "disabled (stays down, superseded by recency)"
         else:
-            outcomes[name] = f"skipped (status={status})"
+            status = (graph.get_object(group[-1].id).data or {}).get("status")
+            if status == "disabled":
+                outcomes[name] = "disabled (stays down)"
+            else:
+                outcomes[name] = f"skipped (status={status})"
     return outcomes

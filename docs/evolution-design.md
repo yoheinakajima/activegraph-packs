@@ -69,6 +69,17 @@ with rationale:
    state.
 5. React to `promote.applied` (quiescent apply means nothing else
    fires) and record the `mod_promotion`.
+6. **Supersede (INVARIANT: at most one active promotion per pack name).**
+   With the new promotion active, disable any OTHER active promotion for
+   the same pack name and record it `superseded_by` the new one. This
+   makes the invariant structurally maintained by the adoption path
+   itself — and makes the designed version-update flow (the agent
+   re-adopting its own prior pack under the same name) correct: the prior
+   version's promotion is retired as part of the update, not left as a
+   second active. Placed AFTER step 4's real promote so a crash
+   mid-adoption can never disable the old version while failing to install
+   the new one (a bookkeeping disable, not a `disable_pack`: `load_pack`
+   of the new version already replaced the old code under the same name).
 
 Apply-time delta validation (v1.4, CONTRACT v1.3 #4 addendum 4c) is
 why step 3 loads the candidate BEFORE the real promote: promote
@@ -803,20 +814,20 @@ its fixtures never assert under strict replay across a promoted block,
 and any host enabling strict replay on a store with adoptions must
 expect divergence there. Ordinary replay (projection) is unaffected.
 
-## 10. Crash-safety audit and proposals (PROPOSAL — not yet implemented)
+## 10. Crash-safety: audit and resolution
 
 A soak-harness bug (the harness re-ran a rotation after losing its
 progress file and re-issued a duplicate adoption; see
 docs/soak-runbook.md and the v0.7.1 changelog) surfaced a real product
 question: the live agent's chassis will crash and restart constantly in
 always-on use, so the pack's OWN adoption/disable/boot machinery must be
-crash-safe across every window. This section is the audit. **Everything
-below §10.1 that is labelled PROPOSAL is investigate-and-propose only —
-no semantic change is implemented pending owner decision.** What IS
-implemented in this pass is boot's group-by-name dedupe and its pure
-DETECTION of a per-pack inconsistency (a loud log plus a `capability_gap`
-when a pack has two or more active promotions at boot); boot does not yet
-heal or refuse.
+crash-safe across every window. §10.1 is the audit; §10.2/§10.3 were
+proposals, now **decided and implemented in v0.7.2** (owner decisions:
+supersession, and narrow boot heal). The invariant this section
+protects is **at most one active promotion per pack name**, now
+maintained on two fronts: the adoption path supersedes (§10.2, §1 step
+6), and boot heals what the log makes unambiguous and parks the rest,
+never guessing (§10.3).
 
 ### 10.1 Crash-window enumeration
 
@@ -837,8 +848,8 @@ patches to active):
 | 2 | proposal→`adopting`, before the chassis runs | ticket open, proposal `adopting` | chassis re-processes the open ticket; converges | OK |
 | 3 | hash recheck / gates re-run (writes `gate_result`s) | proposal `gated`/`adopting`, extra `gate_result`s | chassis re-runs; idempotent except DUPLICATE `gate_result` audit rows | OK (audit noise) |
 | 4 | `load_pack`, before the `mod_promotion` record | pack loaded in-memory only (lost on crash), no record | load is ephemeral; chassis re-runs and re-loads | OK |
-| 5 | `mod_promotion`(loading) recorded, before `promote` | one `loading` record, ticket open | boot SKIPS `loading` (stays down, correct); chassis re-runs the open ticket and creates a SECOND `loading` record — the first is never resolved | **GAP** (orphaned `loading` records accumulate on repeated crash; no double-LOAD, boot ignores `loading`, but the audit trail is wrong) |
-| 6 | `promote` applied (`promote.applied` emitted), before `promotion_recorder` flips it to active | promoted STATE is live in the graph; `mod_promotion` still `loading` (recorder only runs on the live `promote.applied`, never re-derived at boot) | boot skips `loading` → the pack is NOT loaded even though its promoted objects are live; chassis re-runs, dry-run promote conflicts, ticket aborts, promotion stuck `loading`, proposal `conflict` | **GAP** (real inconsistency: live promoted state with the pack unloaded and the record stuck `loading`) |
+| 5 | `mod_promotion`(loading) recorded, before `promote` | one `loading` record (no `promote.applied` in the log), ticket open | boot PARKS the marker-less `loading` record (disabled + gap, §10.3) so it cannot accumulate; chassis re-runs the open ticket against a clean slate | **RESOLVED v0.7.2** (park-on-no-marker) |
+| 6 | `promote` applied (`promote.applied` emitted), before `promotion_recorder` flips it to active | promoted STATE is live in the graph; `mod_promotion` still `loading`, but its `promote.applied` marker IS in the log | boot HEALS: the marker proves the promote completed, so it resolves the record to active, loads the pack, closes the open ticket (chassis not wedged), and opens a gap (§10.3) | **RESOLVED v0.7.2** (heal-on-marker; the serious window is closed) |
 | 7 | `promotion_recorder` patched to active, before ticket→`done` | `mod_promotion` active, ticket open | boot loads the active pack; chassis re-runs the open ticket, dry-run conflicts, aborts the (already-done) work | OK (converges; a redundant abort is logged) |
 
 **Governed disable** (`_process_disable`: `disable_pack` in-memory dereg →
@@ -847,8 +858,25 @@ ticket→`done`):
 
 | # | die exactly after… | graph state | boot on restart | verdict |
 |---|---|---|---|---|
-| 8 | `disable_pack` (in-memory), before the `disabled` patch | `mod_promotion` still `active`, ticket open | boot RELOADS the pack as active (the dereg was in-memory and died with the process); chassis then re-processes the open disable ticket and disables it | OK-with-caveat (the "disabled" pack is transiently LIVE from boot until the chassis reprocesses the ticket that same cycle) |
-| 9 | `mod_promotion`→`disabled` patch, before ticket→`done` | `mod_promotion` disabled, ticket open | boot leaves it down (correct); chassis re-runs, disable is idempotent, DUPLICATE `mod_rollback` row | OK (audit noise) |
+| 8 | `disable_pack` (in-memory), before the `disabled` patch | `mod_promotion` still `active`, ticket open | boot RELOADS the pack as active (the dereg was in-memory and died with the process); chassis then re-processes the open disable ticket and disables it | **OK, accepted** (documented below: a bounded one-cycle transient) |
+| 9 | `mod_promotion`→`disabled` patch, before ticket→`done` | `mod_promotion` disabled, ticket open | boot leaves it down (correct); chassis re-runs; the idempotency guard (v0.7.2) skips the duplicate `mod_rollback` | **RESOLVED v0.7.2** (rollback dedupe guard) |
+
+**Case 8, the accepted transient (documented, no code).** When a governed
+disable dies after `disable_pack`'s in-memory deregistration but before the
+`mod_promotion`→`disabled` patch, the record is still `active`, so a
+restart's boot reloads the pack — it is briefly LIVE again. This is
+bounded and self-correcting: the disable ticket is still `open`, so the
+same boot cycle's chassis sweep re-processes it and disables the pack
+within that cycle (the demo server runs housekeeping and the sweep right
+after boot). The window is one cycle, the audit trail is consistent (the
+open ticket records the pending disable throughout), and closing it fully
+would require either a persistent "disabling" intent marker written before
+`disable_pack` or making boot consult open disable tickets — both add
+machinery for a one-cycle transient that the existing ticket already
+resolves. Accepted as a known property. Case 3's duplicate `gate_result`
+rows on a mid-adoption re-run are likewise accepted audit noise: dedup
+would require threading state through `run_static_gates` (shared with the
+gatekeeper behavior) for rows that are harmless append-only audit records.
 
 **Watch monitor** (v0.7.0): writes only a `capability_gap`, one-shot with
 a dedupe on the promotion id. Die mid-window: at worst the gap is not yet
@@ -860,88 +888,76 @@ loaded, some not). All `load_pack` effects are in-memory and die with the
 process; the only persistent write is the hash-mismatch disable+gap, which
 is idempotent. Restart re-runs boot from scratch. **Verdict OK (re-runnable).**
 
-### 10.2 The per-pack-name invariant (PROPOSAL)
+### 10.2 The per-pack-name invariant — supersession (DECIDED, v0.7.2)
 
 **The invariant:** at most one ACTIVE `mod_promotion` per pack name.
-**What enforces it today:** nothing. `process_adoption_tickets` creates a
-new `mod_promotion` unconditionally (adopt.py step 4) and never disables a
-prior active promotion of the same pack name. The soak churns UNIQUE names
-per rotation (`soak_happy_N`), so it never hit this in normal operation —
-the harness bug hit it by re-adopting the same name after amnesia.
+**Before v0.7.2:** nothing enforced it — `process_adoption_tickets` created
+a new `mod_promotion` unconditionally and never disabled a prior active of
+the same name. The soak churns UNIQUE names per rotation (`soak_happy_N`),
+so it never hit this in normal operation; the harness bug hit it by
+re-adopting the same name after amnesia. But the design explicitly allows
+the agent to propose UPDATES to its own prior packs as fresh proposals (a
+version update adopts the same pack name again), and nothing disabled the
+prior active — so a legitimate version update would have produced two
+actives too. The soak found the bug via a crash; a version update would
+have found it via normal use.
 
-**The legitimate flow that stresses it:** the design explicitly allows the
-agent to propose UPDATES to its own prior packs as fresh proposals (a
-version update adopts the same pack name again). When that happens in the
-real product, **nothing disables the prior active promotion** — so a
-legitimate version-update adoption ALSO produces two active promotions for
-one pack. The soak found this bug via a crash; a version update would find
-it via normal use. **This is a real gap.**
+**Decision: adoption-time supersession** (owner-approved over the
+fail-closed refusal alternative, which would have added an owner step to
+every routine version update for no security gain — the new version
+already cleared the full gate/trial/approval chain). Implemented as **step
+6 of the canonical adoption order** (§1): after the real `promote`
+succeeds and the new promotion is active, `_supersede_prior_actives`
+disables every OTHER active promotion for the same pack name, recording
+`superseded_by = <new promotion id>` on each. Placed after the promote so
+a crash mid-adoption can never disable the old version while failing to
+install the new one (which would leave the pack with zero actives). It is
+a bookkeeping disable, not a `disable_pack`: `load_pack` of the new version
+already replaced the old code under the same name. The invariant is now
+structurally maintained by the adoption path — boot never sees two actives
+from the legitimate flow. Fixture 34 proves it (version update leaves one
+active with the prior `superseded_by` the new; the crash-window
+re-adoption converges via the same mechanism).
 
-Two candidate fixes:
+### 10.3 Boot-time posture on ambiguity — heal, narrowly (DECIDED, v0.7.2)
 
-- **(i) Adoption-time supersession.** The canonical adoption order gains a
-  step: any existing active promotion for the same pack name is disabled as
-  part of the adoption, recorded as `superseded_by` the new promotion
-  (audit trail intact, invariant structurally maintained, in one governed
-  transaction).
-- **(ii) Adoption-time refusal.** Adopting a pack name that already has an
-  active promotion is a conflict; the owner must explicitly disable the old
-  one first.
+**Decision: heal, narrowly** (owner-approved over fail-closed, which would
+silently drop a pack the owner may depend on until they notice the park).
+Boot heals ONLY what the event log makes unambiguous, and **every heal
+raises a reflection `capability_gap`** (the hash-mismatch-at-boot
+precedent — nothing boot does to reconcile is silent). The **never-guesses
+rule**: anything the log does not decide is parked, not resolved.
+Implemented in `reload_adopted_packs`:
 
-**Recommendation: (i) supersession.** The design's stated intent is an
-autonomous loop in which the agent updates its own packs; (ii) adds an
-owner step to every routine version update, which fights that intent and
-would make the common case fail-closed for no security gain (the new
-version already went through the full gate/trial/approval chain — the
-prior version is not a threat, it is stale). Supersession keeps the loop
-autonomous, maintains the invariant structurally (so boot never sees two
-actives from the legitimate path), and preserves the audit trail via the
-`superseded_by` link. The one nuance to settle at implementation: order
-the supersession as part of the SAME canonical adoption transaction, after
-the real `promote` succeeds, so a crash mid-adoption can never disable the
-old version while failing to install the new one (which would leave the
-pack with zero active promotions). **HARD STOP — owner decides before any
-code.**
+- **A `loading` record whose `promote.applied` marker is in the log** is a
+  provably-completed promote whose recorder never ran → resolve to active,
+  load, close any still-open adoption ticket (so the chassis does not
+  re-run and wedge), gap. This closes §10.1 case 6, the serious window.
+- **Two active promotions for one pack name** → supersede the older by
+  recency (consistent with §10.2's semantics), load the survivor, gap.
+- **A `loading` record with NO marker** is an incomplete adoption the log
+  does not decide → park it (terminal + gap), load nothing; the chassis
+  re-runs its open ticket against a clean slate. This closes §10.1 case 5.
+- **Otherwise recency decides**: an active shadowed by a MORE RECENT
+  disable stays down. Anything genuinely ambiguous beyond the two heal
+  cases above stays parked — heal never guesses.
 
-### 10.3 Boot-time posture on ambiguity (PROPOSAL)
-
-Post-dedupe, boot resolves a contradictory promotion set by recency and
-logs loudly; for two-or-more actives it also opens a `capability_gap`
-(implemented this pass — pure detection, consistent with the existing
-hash-mismatch-at-boot precedent). The remaining decision is what boot does
-about a genuinely inconsistent state (two actives for one pack, or a GAP
-row from §10.1 such as the case-6 `loading`-with-a-live-`promote.applied`):
-
-- **(i) Heal.** Auto-disable the older/orphaned record, load the survivor,
-  raise a `capability_gap` documenting exactly what boot did (precedent:
-  the hash-mismatch-at-boot path already disables + loud-logs + opens a
-  gap). For case 6, "heal" means detecting the live `promote.applied`
-  marker for a `loading` promotion's `fork_run_id` and flipping it to
-  active + loading the pack.
-- **(ii) Fail closed.** Load neither promotion for that pack, park it for
-  the owner, raise the gap.
-
-**Recommendation: (i) heal, narrowly.** Boot already has a heal precedent
-(hash-mismatch), the agent is meant to run unattended, and fail-closed
-would silently drop a pack the owner may depend on until they notice the
-park. Heal, but always with the loud log + `capability_gap` so nothing is
-silent, and only for the two mechanically-unambiguous cases (pick the most
-recent active; resolve a `loading` record whose `promote.applied` is
-present in the log). Anything genuinely ambiguous beyond those stays down
-and parks. **HARD STOP — owner decides before any heal/refuse code.**
+Fixture 35 proves all three (heal-on-marker with ticket closed, two-active
+supersession, park-on-no-marker with nothing loaded).
 
 ### 10.4 Classification
 
-- **Real product gaps** (not test-harness-only): §10.1 case 5 (orphaned
-  `loading` records — minor, audit-only), §10.1 case 6 (live promoted
-  state with the pack unloaded — the serious one), §10.2 (no per-pack
-  supersession — the one a legitimate version update would hit). The boot
-  dedupe + detection shipped this pass narrows the blast radius of all
-  three (boot never double-loads and never silently mis-reports), but the
-  healing/supersession semantics are the proposals above, deliberately
-  unimplemented.
-- **Test-harness-only** (fixed this pass, product machinery was correct):
+- **Real product gaps, now RESOLVED in v0.7.2:** §10.1 case 5 (orphaned
+  `loading` records → parked), case 6 (live promoted state with the pack
+  unloaded, the serious one → healed), case 9 (duplicate `mod_rollback` →
+  idempotency guard), and §10.2 (no per-pack supersession → adoption-time
+  supersession). The invariant is now maintained on both the adoption path
+  and boot.
+- **Accepted, documented, no code:** §10.1 case 8 (a bounded one-cycle
+  transient the open disable ticket already resolves) and case 3
+  (duplicate `gate_result` audit rows on a mid-adoption re-run).
+- **Test-harness-only** (fixed in v0.7.1, product machinery was correct):
   the durable-state / immediate-persist gap (Gap A) and the missing
-  invariant assertion (Gap B) were both in `soak.py`, not in the evolution
-  pack. The runtime and the adoption machinery did exactly what they were
-  told each time; the harness told them the wrong thing after amnesia.
+  invariant assertion (Gap B) were both in `soak.py`. The runtime and the
+  adoption machinery did exactly what they were told each time; the harness
+  told them the wrong thing after amnesia.
