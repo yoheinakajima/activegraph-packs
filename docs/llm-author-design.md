@@ -4,10 +4,10 @@
 author is implemented in `packs/evolution/author.py` and proven against
 a MOCK model with deterministic, keyless fixtures. Gates 1 (subprocess
 isolation), 2 (independent design review), 3 (drafting records render on
-the decision surface), and 6 (rate/budget caps) are MET; gate 4's
-enforced-boundary fixtures run against the real author path. Gate 5 (a
-green soak) is pending the soak's green finish, now running on 1.7.1 on
-both platforms. HARD RULE: the author is never pointed at a live model
+the decision surface), 4 (enforced-boundary fixtures on the real author
+path), and 6 (rate/budget caps) are MET (gate 4 via the mock author).
+Gate 5 (a green soak) is pending the soak's green finish, now running on
+1.7.1 on both platforms. HARD RULE: the author is never pointed at a live model
 on a credentialed machine until gate 5 clears. Keyless mock operation is
 what makes building and proving it safe before the soak finishes.**
 
@@ -114,9 +114,12 @@ is enforced, not merely asserted. Three rules, all mechanical:
   This is a standing rule, not a deferral.
 
 **(b) The gap, structured.** From the `capability_gap` and its
-evidence chain, STRUCTURED FIELDS ONLY: capability name, provider,
-risk class, exception_type, failure counts, the object types involved.
-The free-text fields (`description`, `capability_result.output_data`,
+evidence chain, STRUCTURED FIELDS ONLY. The admitted field paths are a
+closed allow-list: `provider_name`, `capability_name`, `risk_class`,
+`exception_type`, and the two count fields `failure_count` and `n`.
+(Object types are NOT a section-(b) field — they reach the frame only
+through the target surface, section (c), from the manifest.) The
+free-text fields (`description`, `capability_result.output_data`,
 message bodies, tracebacks beyond the exception type and frame names)
 do not cross. A traceback quotes the failing input; the failing input
 is the attacker's text in the tool-failure case. If the owner wants
@@ -263,8 +266,8 @@ read, never just what it wrote.
    proposal end to end (banner, read-beside-wrote, taint). Fixture 20
    proves a tainted record suspends with a loud banner and no approve
    button.
-4. Acceptance fixtures for the author frame itself, deterministic, with
-   a MOCK model, against the real author path
+4. **MET (via mock).** Acceptance fixtures for the author frame itself,
+   deterministic, with a MOCK model, against the real author path
    (`packs/evolution/author.py`):
    - fixture 25: assembly is four §3 sections and nothing else; a
      planted memory, profile goal, tool output, prior rationale, and
@@ -277,8 +280,12 @@ read, never just what it wrote.
      pack passes a real subprocess trial.
    - fixture 27: a tainted CONTEXT suspends even when the mock OUTPUT is
      pristine; the three §5 caps (one-in-flight, daily, no-redraft).
-   - fixtures 20-23 (the four enforced folds) hold on the direct path;
-     26-27 confirm they hold under the real author.
+   - the four enforced folds are proven across fixtures 21 (charter
+     reserved-path), 22 (drafting-taint recompute), 23 (structured-field
+     charset), and 25 (exception-message exclusion — asserted in the
+     assembly fixture, not a standalone 20-23 case); fixture 20 is the
+     gate-3 drafting-record render, not a fold. Fixtures 26-27 confirm
+     the folds hold under the real author path.
 6. **MET.** Rate/budget caps (§5): fixture 27 covers one draft in
    flight per gap, the daily cap (`max_drafts_per_day`), and the
    no-redraft property.

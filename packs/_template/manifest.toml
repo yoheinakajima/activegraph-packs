@@ -20,7 +20,7 @@ created_at = "2026-01-01T00:00:00Z"
 content_hash = "sha256:REGENERATE-ME"
 
 [dependencies]
-activegraph = ">=1.4,<2.0"
+activegraph = ">=1.7.1,<2.0"
 python = ">=3.11"
 python-deps = []
 

@@ -21,6 +21,25 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      # ── Manifest drift gate ─────────────────────────────────────────────────
+      # tests/test_manifests.py checks the content hash (which by design
+      # EXCLUDES manifest.toml itself) and the loader-verified surface, so it
+      # cannot catch drift in the manifest-AUTHORED fields: the activegraph
+      # pin, the python range, python-deps, and [pack.provenance]. Regenerate
+      # every manifest from the live packs and fail on any diff. The generator
+      # is idempotent, so a clean tree stays clean; a stale pin (generator vs.
+      # checked-in) surfaces here as a diff. The pin only means something if it
+      # is checked.
+      - name: Manifest drift check (regenerate + diff)
+        run: |
+          python scripts/generate_manifests.py
+          if ! git diff --exit-code -- 'packs/*/manifest.toml'; then
+            echo "::error::Checked-in manifests are stale. Run"
+            echo "  python scripts/generate_manifests.py"
+            echo "and commit the result."
+            exit 1
+          fi
+
       # ── Per-pack fixture suites ─────────────────────────────────────────────
 
       - name: core fixtures

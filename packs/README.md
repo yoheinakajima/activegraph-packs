@@ -62,7 +62,6 @@ fixtures.
 | Pack | Requires | Description |
 |------|----------|-------------|
 | [`research`](research/) | core | Paper, method, idea atom, hypothesis, experiment tracking |
-| [`vc`](vc/) | core, communication | Founder relationships, deal tracking, investment memos |
 | [`codebase`](codebase/) | core | Repo, file, issue, PR, architecture decision tracking |
 | [`team_ops`](team_ops/) | core | Projects, assignments, milestones extending Core task |
 | [`meeting`](meeting/) | core | Meeting ingestion, transcript, decisions, action items |
@@ -88,7 +87,6 @@ kernel (activegraph runtime)
     │   ├── chat                  # Chat adapter
     │   └── email                 # Email adapter
     ├── research                  # Research domain
-    ├── vc                        # VC/investment domain
     ├── codebase                  # Codebase domain
     ├── team_ops                  # Team/Ops domain
     └── meeting                   # Meeting domain

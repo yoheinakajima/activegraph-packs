@@ -14,7 +14,8 @@ or with a gateway policy that would auto-approve critical calls.
 
 Object types: capability_gap, mod_proposal, gate_result, mod_trial,
               mod_promotion, mod_rollback, adoption_ticket
-Behaviors:    gap_detector, proposal_gatekeeper, promotion_recorder
+Behaviors:    gap_detector, proposal_gatekeeper, promotion_recorder,
+              watch_monitor (post-adoption self-noticing, §3 stage 6)
 Capabilities: evolution.adopt_proposal (critical),
               evolution.disable_promotion (high), registered by the host
               via adopt.register_adoption_capabilities (which refuses
@@ -43,7 +44,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # integrates_with=["schedule", "chat"]
 pack = Pack(
     name="evolution",
-    version="0.6.1",
+    version="0.7.0",
     description=(
         "Agent-authored packs under governance: static gates, fork trials "
         "against replayed history, bundle-hash pins, verified owner approval, "

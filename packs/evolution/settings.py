@@ -75,6 +75,15 @@ class EvolutionSettings(BaseModel):
             "per gap is enforced separately."
         ),
     )
+    watch_window_events: int = Field(
+        default=500, ge=1,
+        description=(
+            "Post-adoption watch window (design §3 stage 6): a behavior "
+            "failure attributable to an adopted pack's own behaviors within "
+            "this many events after its promote marker raises a reflection "
+            "capability_gap. Self-noticing, not self-healing."
+        ),
+    )
     heldout_fraction: float = Field(
         default=0.5, gt=0.0, lt=1.0,
         description=(
