@@ -291,14 +291,27 @@ class SoakHarness:
         ]
         assert not watch_failures, watch_failures
 
-        # Govern away the previous rotation's happy pack.
+        # Govern away the previous rotation's happy pack, then persist the
+        # new active promotion IMMEDIATELY (Gap A, the rotation-15 fix).
+        # The rotation's own _save_state runs only after all seven scenarios
+        # (run_rotation), so a crash in a LATER scenario used to lose this id
+        # and leave state.json pointing at a stale previous; the re-run then
+        # disabled the wrong target and orphaned an active promotion. The
+        # disable is status-guarded so the re-run is idempotent (disabling an
+        # already-disabled previous is a no-op), and the save here means the
+        # re-run's disable targets the TRUE previous (#new) instead of a
+        # stale value.
         previous = self.state.get("last_happy_promotion", "")
-        if previous and graph.get_object(previous) is not None:
+        prev_obj = graph.get_object(previous) if previous else None
+        disabled_previous = False
+        if prev_obj is not None and prev_obj.data.get("status") == "active":
             self._governed_disable(previous, "superseded by next rotation")
             assert graph.get_object(previous).data["status"] == "disabled"
+            disabled_previous = True
         self.state["last_happy_promotion"] = outcomes[0]["promotion"]
+        self._save_state()
         return {"adopted": name, "greeting_delta": after - before,
-                "disabled_previous": bool(previous)}
+                "disabled_previous": disabled_previous}
 
     def scenario_conflict_park(self, idx: int) -> dict:
         """The retry cap: contested shared state parks at needs_owner."""
@@ -556,12 +569,58 @@ class SoakHarness:
                 results.append({"path": path, "ok": False,
                                 "child_detail": child, "detail": tb})
 
+        # Gap B: assert the soak's own invariant (at most ONE active
+        # promotion total), not just print the count. This runs even when
+        # every scenario passed — rotation 15 scored all seven GREEN while
+        # two adopted packs were simultaneously live. A violation is a
+        # first-class anomaly: it flips the digest RED and persists in the
+        # anomaly_log, exactly like a scenario failure.
+        self._enforce_invariants(idx, results)
+
         self.state["rotations"] = idx
         self._save_state()
         digest_path = self.write_digest(idx, boot_report, results)
         self.teardown()
         return {"rotation": idx, "results": results,
                 "digest": str(digest_path)}
+
+    def _check_invariants(self, idx: int) -> Optional[dict]:
+        """The soak's post-rotation invariant: at most ONE active
+        mod_promotion TOTAL. Returns a violation dict or None.
+
+        Scope note: this is the SOAK invariant, total, because the happy
+        path is the only scenario that leaves an active promotion and it
+        churns exactly one at a time by design. The PRODUCT invariant is
+        per-pack-name (at most one active per pack) and is enforced
+        elsewhere (boot dedupe, and the design's crash-safety proposal);
+        do not conflate them."""
+        if self.rt is None:
+            return None
+        actives = [p for p in self.rt.graph.objects(type="mod_promotion")
+                   if (p.data or {}).get("status") == "active"]
+        if len(actives) <= 1:
+            return None
+        return {"invariant": "at most one active promotion (soak)",
+                "active_count": len(actives),
+                "promotions": [{"id": str(p.id),
+                                "pack": (p.data or {}).get("pack_name", "?")}
+                               for p in actives]}
+
+    def _enforce_invariants(self, idx: int, results: list[dict]) -> None:
+        """Record an invariant violation as a first-class anomaly."""
+        inv = self._check_invariants(idx)
+        if inv is None:
+            return
+        named = [f"{p['pack']}={p['id']}" for p in inv["promotions"]]
+        detail = (f"soak invariant violated: {inv['active_count']} active "
+                  f"promotions ({', '.join(named)}); expected at most 1")
+        self.state["anomaly_log"].append({
+            "rotation": idx, "path": "invariant", "at": _now(),
+            "child_detail": "", "invariant_violation": inv,
+            "traceback": detail,
+        })
+        results.append({"path": "invariant", "ok": False,
+                        "child_detail": "", "detail": detail})
 
     def _failure_object_ids(self) -> set:
         """Ids of the failure-carrying objects (gate_result, mod_trial)
@@ -698,6 +757,10 @@ class SoakHarness:
         for r in results:
             if r["ok"]:
                 lines.append(f"- [OK ] {r['path']}: {r['detail']}")
+            elif r["path"] == "invariant":
+                # Gap B: the invariant violation names the offending
+                # promotions directly on its own line.
+                lines.append(f"- [ANOMALY] invariant: {r['detail']}")
             else:
                 # Defect 1: the per-path line names the child failure
                 # directly when there is one, so the digest is never

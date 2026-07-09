@@ -1,5 +1,56 @@
 # Evolution Pack Changelog
 
+## v0.7.1 — Soak crash-safety + boot dedupe (2026-07-09)
+
+Fallout from the Replit soak's rotation-15 red flag: a mid-rotation
+container kill left the soak harness with a stale progress file, so the
+re-run re-issued a duplicate adoption and two packs' behaviors ended up
+simultaneously live. The double-adoption was real, but the enabling bug
+was in the SOAK HARNESS, not the adoption machinery or the runtime. One
+of the three fixes is in product code (boot.py).
+
+### Fixed
+- **Boot dedupe (product, `boot.py`).** `reload_adopted_packs` iterated
+  every `mod_promotion` in insertion order and overwrote the per-pack
+  outcome each pass, so a pack with an active record followed by a
+  disabled one was LOADED on the first and reported "disabled" on the
+  second — loaded while reported down. Now it groups by pack name,
+  resolves each pack's effective state from its full promotion set by
+  recency, loads at most once, and reports truthfully. Two or more active
+  promotions for one pack is a genuine inconsistency: it loads the most
+  recent active only, logs loudly, and opens a `capability_gap` (pure
+  detection; boot does not heal or refuse — see the crash-safety proposal
+  in docs/evolution-design.md §10).
+
+### Changed (soak harness)
+- **Durable state (Gap A).** `scenario_happy` persists its adoption to
+  `state.json` the moment it commits, not only at end-of-rotation, and
+  the disable-previous step is status-guarded for idempotent re-runs. A
+  mid-rotation kill can no longer make the re-run disable a stale target
+  and orphan an active promotion.
+- **Invariant assertion (Gap B).** The harness now ASSERTS its
+  post-rotation invariant (at most one active promotion total) instead of
+  only printing the count. A violation is a first-class anomaly: it names
+  the offending promotions, flips the digest RED, and persists in the
+  anomaly log — the class of bug that let rotation 15 pass all seven
+  scenarios silently can never pass silently again.
+
+### Added
+- Acceptance fixtures 31 (crash-window reproduction: no orphan after a
+  mid-rotation kill + re-run), 32 (the invariant assertion flips RED and
+  names both promotions), 33 (boot dedupe: truthful report, load once,
+  most-recent-active on two actives).
+
+### Docs
+- docs/soak-runbook.md: the harness now self-asserts `active<=1`
+  (the observer check is belt-and-braces); mid-rotation kills are safe;
+  invariant violations persist in the anomaly log across the daily digest
+  overwrite.
+- docs/evolution-design.md §10: a crash-safety audit of the product's own
+  adoption/disable/boot windows, with two PROPOSAL sections (per-pack
+  supersession; boot heal-vs-fail-closed) left unimplemented pending owner
+  decision.
+
 ## v0.7.0 — Stage-6 watch monitor (2026-07-09)
 
 Post-adoption self-noticing, the last unbuilt piece of the design's
