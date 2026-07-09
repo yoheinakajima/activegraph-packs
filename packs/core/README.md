@@ -4,7 +4,7 @@
 
 ## Overview
 
-Core Pack defines 7 object types and 7 relation types that form the shared language of the ActiveGraph pack ecosystem. Every domain pack (VC, Research, Codebase, etc.) builds on these primitives.
+Core Pack defines 7 object types and 7 relation types that form the shared language of the ActiveGraph pack ecosystem. Every domain pack (Research, Codebase, Meeting, etc.) builds on these primitives.
 
 Core is **deliberately minimal**. It does not include people, companies, claims, evidence, or documents — those belong in domain packs. Adding too much to Core would turn it into a universal ontology, which would conflict with domain packs.
 

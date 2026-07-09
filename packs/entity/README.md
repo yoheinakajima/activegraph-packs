@@ -128,7 +128,7 @@ decide_merge_fn(graph, candidates[0].id, "accepted", surviving_entity_id=org.id)
 
 - **Core Pack** — `entity_extractor` fires on `source.created`
 - **Identity Pack** — `Principal.entity_id` points to an `Entity` for dedup across channels
-- **VC/Research Packs** — extend `Entity` with domain overlays (funding, team, papers)
+- **Research/Codebase Packs** — extend `Entity` with domain overlays (team, papers, repos)
 
 ---
 

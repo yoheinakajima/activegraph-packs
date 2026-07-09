@@ -6,7 +6,7 @@ Channel-neutral communication semantic layer for all ActiveGraph packs.
 
 Communication Pack owns the **semantic layer** of communication. It provides the shared
 primitives that all channel adapters (Chat, Email, SMS, Voice) translate into. Domain packs
-(VC, Research) respond to `comm_message` objects regardless of which channel produced them.
+(Research, Meeting) respond to `comm_message` objects regardless of which channel produced them.
 
 ## Object Types
 

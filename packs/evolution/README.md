@@ -106,7 +106,9 @@ LLM author against a MOCK model (origin assembly with every excluded
 origin absent, pack-owned provenance, no-tools-by-construction, the
 folds under the real author, the rate caps, and the gate-3 render), and
 platform-aware runaway-memory containment (memory net on Linux, wall
-clock on macOS).
+clock on macOS), and the stage-6 watch monitor (an adopted pack whose
+own behavior fails within the watch window self-notices with a
+reflection gap; a non-adopted or out-of-window failure does not).
 Scripted and MOCK authors only; no live model, no keys, no network.
 
 ## The soak (gate 5)

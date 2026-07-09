@@ -73,7 +73,7 @@ content_hash = "sha256:9f8a..."  # see §4
 # signature = ""                 # reserved, see §7
 
 [dependencies]
-activegraph = ">=1.3,<2.0"       # PEP 440 range
+activegraph = ">=1.7.1,<2.0"     # PEP 440 range
 python = ">=3.11"
 # PEP 508 strings; empty for most packs. The loader checks distribution
 # presence (importlib.metadata), never installs (Q4). NOTE: this key must appear BEFORE the
@@ -180,17 +180,24 @@ object): `object_types`, `relation_types`, `behaviors`, `tools`,
 | `tools` | each `Tool.name` in `Pack.tools` |
 | `settings_schema` | `Pack.settings_schema.__name__` (empty string when the pack has no settings) |
 
-**Statically verified, never by the loader**:
-`[[surface.capabilities]]` and `consumes`. Gateway capability
-registration is imperative host wiring (`register_local_capability`
-calls at startup, sometimes conditional on optional packs), so the
-loader cannot observe it at `load_pack` time. The check is an AST walk
-of the pack source performed by CI in this repo and by the evolution
-pack's static gates: every `register_local_capability` call site must
-match a declared `[[surface.capabilities]]` entry and vice versa, and
-every capability invocation must match `consumes`. Q8 asks the runtime
-team whether a declarative `Pack.capabilities` field should exist so
-this can move loader-side eventually.
+**Statically verified, and (for capabilities, since v1.4) also
+loader-verified**: `[[surface.capabilities]]` and `consumes`. Gateway
+capability registration is imperative host wiring
+(`register_local_capability` calls at startup, sometimes conditional on
+optional packs), which the loader cannot observe. The static half is an
+AST walk of the pack source performed by CI in this repo and by the
+evolution pack's static gates: every `register_local_capability` call
+site must match a declared `[[surface.capabilities]]` entry and vice
+versa, and every capability invocation must match `consumes`.
+
+Q8 is now resolved (see §9): the runtime shipped a declarative
+`Pack.capabilities` field in v1.4, so `verify_surface` ALSO does a
+loader-side two-way check of capabilities (presence and `risk_class`)
+against the live pack — the same check it does for behaviors, tools,
+and object types. Capabilities are therefore checked on both sides
+(loader + static-AST, defense in depth); `consumes` stays static-AST
+only, a one-way check that every declared consumed capability is
+actually invoked in the source.
 
 `risk_class` is a closed set: `low | medium | high | critical`,
 matching tool_gateway's `CapabilitySpec`. Validators reject anything

@@ -1,5 +1,35 @@
 # Evolution Pack Changelog
 
+## v0.7.0 — Stage-6 watch monitor (2026-07-09)
+
+Post-adoption self-noticing, the last unbuilt piece of the design's
+stage 6. An adopted pack that begins failing is now noticed
+automatically instead of going unobserved.
+
+### Added
+- `watch_monitor`, a fourth behavior. Within `watch_window_events`
+  (new setting, default 500) after a pack's promote marker, a
+  `behavior.failed` attributable to that pack's own behaviors raises one
+  reflection `capability_gap`. Self-noticing, not self-healing: the gap
+  flows through the normal loop; nothing is auto-remediated.
+- `EvolutionSettings.watch_window_events`.
+- Acceptance fixture 30: in-window failure self-notices; a non-adopted
+  behavior's failure and a failure past the window do not; a second
+  in-window failure does not stack a second open gap.
+
+### Changed
+- The `mod_promotion` load-time record now carries its adopted pack's
+  behavior names (namespaced `<pack>.<behavior>`, as the runtime emits
+  them) in `metadata.behaviors`, the attribution key the monitor uses.
+
+### Notes
+- Implementation-forced deviation folded back into the design: the
+  runtime suppresses `behavior.*` events from behavior re-matching (loop
+  prevention), so `watch_monitor` cannot subscribe to `behavior.failed`
+  directly. It reacts to ordinary graph activity (`object.created`) and
+  scans the event log instead. `docs/evolution-design.md` §3 stage 6
+  documents this.
+
 ## v0.6.1 — Platform-aware runaway-memory containment (2026-07-08)
 
 The macOS soak was RED because budget_memory asserted the RLIMIT_AS

@@ -147,7 +147,7 @@ The organizing idea of this repo is a two-tier pack model.
   each pack's README and `__init__.py` and respected through load order, not
   enforced kwargs on `Pack(...)`.) Layered packs split into *infrastructure* (tool gateway,
   secrets, memory, identity, agent profile, entity), *communication* (channel-neutral
-  messaging plus chat/email adapters), and *domain* verticals (research, vc,
+  messaging plus chat/email adapters), and *domain* verticals (research,
   codebase, team_ops, meeting). Domain packs map their outputs back to Core
   primitives, so infrastructure packs never need to know they exist.
 
@@ -291,7 +291,7 @@ Run a single pack's fixture suite:
 
 ```bash
 python packs/core/fixtures/run_fixtures.py
-python packs/vc/fixtures/run_fixtures.py
+python packs/research/fixtures/run_fixtures.py
 python packs/memory_gateway/fixtures/run_fixtures.py
 # pattern: python packs/<pack_name>/fixtures/run_fixtures.py
 ```

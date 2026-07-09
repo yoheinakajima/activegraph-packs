@@ -249,6 +249,15 @@ def process_adoption_tickets(
             "bundle_hash": proposal.data.get("bundle_hash", ""),
             "status": "loading",
             "at": _now(),
+            # The adopted pack's own behavior names, namespaced exactly as
+            # the runtime emits them in a behavior.failed payload
+            # ("<pack>.<behavior>"): the attribution key the stage-6
+            # watch_monitor uses to tie a failure back to this promotion
+            # (design §3 stage 6).
+            "metadata": {"behaviors": [
+                f"{getattr(pack, 'name', '')}.{getattr(b, 'name', '')}"
+                for b in getattr(pack, "behaviors", [])
+                if getattr(b, "name", "")]},
         })
         try:
             graph.add_relation(proposal_id, promotion.id, "promoted_as")

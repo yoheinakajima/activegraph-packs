@@ -1,6 +1,6 @@
 # Evolution Pack: design
 
-**Status: IMPLEMENTED (packs/evolution, activegraph >=1.5). This
+**Status: IMPLEMENTED (packs/evolution, activegraph >=1.7.1). This
 document is the design of record; implementation-forced decisions were
 folded back in the same commits that made them (per the house rule that
 an uncovered decision is a doc bug). Runtime deliveries consumed: v1.4
@@ -8,7 +8,10 @@ promote with apply-time delta validation (CONTRACT v1.3 #4 addendum
 4c), `disable_pack`, the manifest reference implementation; v1.5
 subprocess trial isolation (`activegraph.sandbox.run_forked_trial`,
 closing §7.2/T5's process edge) and enforced retention pins
-(`activegraph.store.retention`, closing §7.5).**
+(`activegraph.store.retention`, closing §7.5); v1.7/1.7.1 the trial
+child's runtime-owned `preflight`, source-populated `TrialReport.detail`,
+and the macOS RLIMIT_AS memory-net-off behavior the soak's budget_memory
+path now keys off (§3 stage 3, threat T5).**
 
 The evolution pack lets the assistant author new packs for itself, trial
 them in isolation against its own history, and adopt them only after the
@@ -84,11 +87,13 @@ New object types (all with full schemas at implementation time):
 | Type | Purpose | Key fields |
 |---|---|---|
 | `capability_gap` | Something the assistant could not do | `kind` (tool_failure, unhandled_intent, reflection, owner_request), `description`, `evidence_refs`, `status` |
-| `mod_proposal` | One candidate pack version | `gap_id`, `pack_name`, `pack_version`, `manifest` (per manifest-spec), `source_artifact_ids`, `bundle_hash`, `rationale`, `authored_by`, `status` |
+| `drafting_context` | What an author READ before it wrote (llm-author-design §4) | `charter_hash`, `gap_id`, `structured_fields`, `surface_sources`, `owner_input_ids`, `injection_flags`, `model`, `day` |
+| `mod_proposal` | One candidate pack version | `gap_id`, `drafting_context_id`, `pack_name`, `pack_version`, `source_artifact_ids` (the manifest rides here as one artifact), `bundle_hash`, `rationale`, `authored_by`, `status` |
 | `gate_result` | One gate's verdict on one proposal | `proposal_id`, `gate` (static, fixtures, in_sample, held_out), `verdict`, `details` |
 | `mod_trial` | One fork trial of one proposal | `proposal_id`, `fork_run_id`, `forked_at_event`, `eval_summary`, `diff_summary`, `failures`, `verdict` |
-| `mod_promotion` | A completed adoption | `proposal_id`, `trial_id`, `promote_marker_event_id`, `from_run`, `applied_counts`, `status` (active, disabled) |
+| `mod_promotion` | A pack adoption, recorded at load time | `proposal_id`, `trial_id`, `pack_name`, `fork_run_id`, `promote_marker_event_id`, `applied_counts`, `bundle_hash`, `status` (loading, active, disabled) |
 | `mod_rollback` | A disable/rollback action | `promotion_id`, `method`, `reason`, `at` |
+| `adoption_ticket` | Phase-one output of a governed adopt/disable call, applied by the chassis between frames (§3 stage 5) | `kind` (adopt, disable), `proposal_id`, `promotion_id`, `call_id`, `status` |
 
 Proposal source files are stored as Core `artifact` objects, one per
 file, hashed individually; `mod_proposal.bundle_hash` is the BUNDLE
@@ -106,12 +111,19 @@ refuses.
 Proposal status machine:
 
 ```
-drafted -> gated -> trialed -> pending_approval -> promoted
+drafted -> gated -> trialed -> pending_approval -> adopting -> promoted
                 \-> rejected (gate fail)      \-> denied
 trialed -> conflict (promote aborted) -> re-trial or abandoned
+conflict -> needs_owner (retry cap reached, terminal; see §3 stage 5)
 promoted -> disabled (rollback)
 any -> suspended (injection taint, see §6)
 ```
+
+(`adopting` is set by the phase-one executor when it queues the
+adoption ticket; `needs_owner` is the terminal park the retry-capped
+chassis moves a repeatedly-conflicting proposal to. The
+`mod_promotion` is born `loading` at load time and flips to `active`
+on the `promote.applied` marker.)
 
 ## 3. Lifecycle stages
 
@@ -167,7 +179,20 @@ goes through the same gates. Constraints on what may be authored:
 ### Stage 2: static gates (deterministic, zero LLM, zero execution)
 
 Run in order, first failure stops the pipeline, every verdict is a
-`gate_result`:
+`gate_result`. Three structural pre-gates run BEFORE the numbered eight
+(the numbering below stays stable across doc revisions; the code names
+them `static:reserved_paths`, `static:file_set`, `static:trial_driver`,
+so `run_static_gates` emits eleven gate names in total):
+
+- **Reserved paths** (`static:reserved_paths`): the proposal may not
+  author any human-PR-only file — first and foremost the author charter
+  (llm-author-design §3a/§8). Refused before any other gate runs.
+- **Fixed file set** (`static:file_set`): every authored file must be in
+  the allowed set (manifest, `__init__`, `object_types`, `behaviors`,
+  `tools`, `settings`, the two fixture files); nothing else is admitted.
+- **Trial driver** (`static:trial_driver`): `fixtures/trial_scenario.py`
+  is the chassis driver, included verbatim and gate-verified byte for
+  byte (design §3 stage 3).
 
 1. **Manifest validity**: parses, schema-valid per manifest-spec,
    version sane, declared runtime range includes the pinned runtime.
@@ -222,7 +247,15 @@ fork = Runtime.load(store_path, run_id=report.fork_run_id, behaviors=[])
 The parent forks; the child is a fresh interpreter that verifies the
 bundle-hash pin BEFORE importing anything, loads the fork by run id,
 and runs the scenario under the runtime's three nets (rlimits,
-parent-side wall-clock kill, event budget). The parent never imports
+parent-side wall-clock kill, event budget). Platform-conditional net,
+folded back from the soak: the RLIMIT_AS memory net is live on Linux
+but OFF on macOS (Darwin refuses address-space limits, and v1.7.1
+degrades it loudly rather than silently). The soak's budget_memory path
+keys off the runtime's own net-availability signal (not `sys.platform`)
+and asserts CONTAINMENT either way — the memory net catches a fixed
+over-cap allocation on Linux, the wall-clock kill catches an unbounded
+runaway on macOS. A memory-net-OFF warning on macOS is expected; the
+only red flag is a runaway that completes. The parent never imports
 candidate code at trial time. Two child runs per trial: the
 candidate's own fixtures (the sandbox smoke), then the chassis trial
 driver. The driver is an interface-forced design decision folded back
@@ -403,11 +436,22 @@ owner moves it again. Fixture 16 walks the full park-and-refuse path.
 
 ### Stage 6: monitor, disable, roll back
 
-- **Watch window**: after adoption, a behavior watches
-  `behavior.failed` events from the candidate's behaviors for a
-  configurable window and raises a `capability_gap` of kind
-  `reflection` if the failure rate is nonzero. Self-noticing, not
-  self-healing: fixes are new proposals through the same loop.
+- **Watch window**: after adoption, the `watch_monitor` behavior looks
+  for `behavior.failed` events from the candidate's own behaviors within
+  `watch_window_events` events after its promote marker, and raises a
+  `capability_gap` of kind `reflection` if the failure rate is nonzero.
+  Self-noticing, not self-healing: fixes are new proposals through the
+  same loop. Implementation detail folded back from the build: the
+  runtime deliberately suppresses `behavior.*` events from behavior
+  re-matching (loop prevention), so `watch_monitor` cannot subscribe to
+  `behavior.failed` directly. It reacts to ordinary graph activity
+  (`object.created`) and scans the event log instead, keyed off the
+  behavior names each `mod_promotion` records at load time, so only an
+  adopted pack's own failures — never unrelated ones — trigger it.
+  Acceptance fixture 30 proves in-window / out-of-window / non-adopted /
+  dedup. Because event ids reset on restart, the acute watch window is
+  a within-run notion; a marker from a prior run yields no match, which
+  is the honest post-restart posture.
 - **Disable (v1 rollback, upgraded for v1.4)**: `mod_promotion.status
   = disabled` via a governed capability, PLUS immediate deregistration:
   `rt.disable_pack(name)` removes the pack's behaviors, tools, and
@@ -443,16 +487,23 @@ class EvolutionSettings(BaseModel):
     max_total_source_bytes: int = 24_000
     max_file_bytes: int = 12_000
     gap_failure_threshold: int = 3
-    trial_max_events: int = 2_000
-    trial_max_llm_calls: int = 20
-    trial_wall_clock_seconds: float = 120.0   # child kill net (v1.5)
+    trial_max_new_events: int = 2_000      # child event-budget net
+    trial_fixture_timeout_seconds: float = 30.0   # fixture-gate child kill
+    trial_wall_clock_seconds: float = 120.0   # replay-trial child kill (v1.5)
     trial_max_rss_bytes: int = 512 * 2**20    # child RLIMIT_AS (v1.5)
     max_conflict_retries: int = 2      # then needs_owner, terminal
-    heldout_segment_events: int = 200
-    watch_window_events: int = 500
+    max_drafts_per_day: int = 8        # LLM-author rate cap (gate 6)
+    heldout_fraction: float = 0.5      # replay held-out share, touched once
+    watch_window_events: int = 500     # §3 stage-6 watch_monitor window
     import_allow_list: list[str] = [...]   # the §3 stage-2 list
     reserved_namespaces: list[str] = [...]
 ```
+
+The trial's resource nets are wall-clock and RSS (RLIMIT_AS) kills plus
+the event budget; there is no per-trial LLM-call net (trials run the
+scripted/mock author, so an LLM-call cap has nothing to bound). The RSS
+net is off on macOS, where Darwin refuses address-space limits — see the
+platform-conditional note in §3 stage 3 and threat T5.
 
 ## 6. Threat model
 
@@ -548,8 +599,9 @@ shipped default.
    available should we want them: the runtime added
    `run_forked_trial(..., extra_packs=(PackSource(...),))` in v1.7,
    each extra pack through the identical pin chain as the candidate.
-   The pack does not use it yet (no floor bump past >=1.5), and the
-   pinned-driver plus marker-sweep patterns this pack uses are the
+   The pack does not use `extra_packs` yet (the floor is `>=1.7.1` for
+   the preflight/memory-net-signal work the soak consumes, not for this),
+   and the pinned-driver plus marker-sweep patterns this pack uses are the
    documented recommendation in the runtime's trial-isolation-design
    §2b, with the CONTRACT #4d residue linkage made explicit there.
 3. **RESOLVED in v0.2: trial replay residue.** Promote's three-way
@@ -623,8 +675,11 @@ scripted generator, never a live LLM:
 5. **Conflict and retry**: parent advances between dry_run and adopt;
    promote aborts; proposal shows `conflict` with the runtime's
    conflict list; re-fork retry succeeds.
-6. **Injection taint**: a gap whose evidence carries injection flags
-   yields a `suspended` proposal that no gate will touch until cleared.
+6. **Injection taint** (also covers the fixture-11 case): a gap whose
+   evidence carries injection flags yields a `suspended` proposal that
+   no gate will touch until cleared, and the inheritance is deterministic
+   even when the scripted reviewer omits the flagged source from
+   `evidence_refs`.
 7. **Self-approval attempt**: a generated pack declaring
    `approve_capability` fails the reserved-namespace gate; forcing it
    into the registry anyway is refused by `as_llm_tool`.
@@ -639,10 +694,13 @@ scripted generator, never a live LLM:
     so does a runtime without identity_auth loaded or without a
     registered approver-role principal (unverified-mode adoption must
     not exist).
-11. **Taint inheritance**: a reflection review that consumed a flagged
-    capability_result produces a gap carrying the inherited flags even
-    when the (scripted) reviewer omits the flagged source from
-    evidence_refs; the resulting proposal is `suspended`.
+11. **Taint inheritance** (folded into fixture 6, no standalone fixture —
+    the code's `SCENARIOS` skips 11): a reflection review that consumed a
+    flagged capability_result produces a gap carrying the inherited flags
+    even when the (scripted) reviewer omits the flagged source from
+    evidence_refs; the resulting proposal is `suspended`. `fx_06`
+    asserts exactly this, so the number is kept as a pointer and every
+    "fixture N" reference below still names the matching `fx_N`.
 12. **Loading-state tracking**: a real-promote conflict after
     `load_pack` leaves `mod_promotion` at `loading`; disable works on
     it, and a restart does not re-load it.
@@ -713,6 +771,18 @@ scripted generator, never a live LLM:
     caps refuse.
 28. **Author render (gate 3)**: a MOCK-LLM-authored proposal renders end
     to end on the decision surface, what it read beside what it wrote.
+29. **budget_memory platform-aware**: the soak's runaway-memory path is
+    contained on both platforms, keyed off the runtime's real
+    memory-net signal — the memory net catches a fixed over-cap
+    allocation on Linux (`materialization_failed`), the wall-clock kill
+    catches an unbounded runaway on macOS (`limits_exceeded`) — and the
+    anomaly attribution reads its own trial's child detail, never a
+    neighbouring path's.
+30. **Watch monitor** (§3 stage 6): an adopted pack whose own behavior
+    fails within the watch window produces exactly one reflection
+    `capability_gap`; a non-adopted behavior's failure, and a failure
+    past the window, produce none; a second in-window failure does not
+    stack a second open gap.
 
 ## 9. Dependencies and sequencing
 

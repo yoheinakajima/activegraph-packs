@@ -1146,6 +1146,117 @@ def fx_29_budget_memory_platform_aware(tmp) -> dict:
             "attribution": "own-trial only"}
 
 
+def fx_30_watch_monitor(tmp) -> dict:
+    """Stage-6 post-adoption self-noticing (design §3 stage 6).
+
+    An adopted pack whose own behavior fails within the watch window
+    produces exactly one reflection capability_gap, tied to its
+    promotion. Failures from a NON-adopted behavior, and failures
+    OUTSIDE the window, produce none. Self-noticing only: the gap flows
+    through the normal loop, nothing is auto-remediated. Because the
+    runtime suppresses behavior.* events from behavior re-matching, the
+    monitor observes failures by scanning the event log on ordinary
+    graph activity rather than subscribing to behavior.failed."""
+    from activegraph.packs import Pack, ObjectType, behavior as _behavior
+    from pydantic import BaseModel as _BaseModel
+
+    from packs.evolution.behaviors import _evt_ord
+
+    class _Empty(_BaseModel):
+        pass
+
+    @_behavior(name="canary_in", on=["object.created"],
+               where={"object.type": "poke_in"})
+    def canary_in(event, graph, ctx):
+        raise RuntimeError("canary_in boom")
+
+    @_behavior(name="canary_out", on=["object.created"],
+               where={"object.type": "poke_out"})
+    def canary_out(event, graph, ctx):
+        raise RuntimeError("canary_out boom")
+
+    @_behavior(name="canary_stray", on=["object.created"],
+               where={"object.type": "poke_stray"})
+    def canary_stray(event, graph, ctx):
+        raise RuntimeError("canary_stray boom")
+
+    canary = Pack(
+        name="canary", version="0.1.0",
+        object_types=[ObjectType(name="poke_in", schema=_Empty),
+                      ObjectType(name="poke_out", schema=_Empty),
+                      ObjectType(name="poke_stray", schema=_Empty),
+                      ObjectType(name="tick", schema=_Empty)],
+        behaviors=[canary_in, canary_out, canary_stray])
+
+    window = 20
+    rt = Runtime(Graph(), persist_to=os.path.join(tmp, "watch.sqlite"))
+    rt.load_pack(evolution_pack,
+                 settings=EvolutionSettings(enabled=True,
+                                            watch_window_events=window))
+    rt.load_pack(canary)
+    rt.run_until_idle()
+
+    def reflections():
+        return [g for g in rt.graph.objects(type="capability_gap")
+                if (g.data or {}).get("kind") == "reflection"
+                and (g.data or {}).get("status") == "open"]
+
+    def top_ord():
+        return _evt_ord(rt.graph.events[-1].id)
+
+    def seed_promotion(pack_name, marker, behaviors):
+        p = rt.graph.add_object("mod_promotion", {
+            "proposal_id": f"prop_{pack_name}", "pack_name": pack_name,
+            "status": "active", "promote_marker_event_id": marker,
+            "metadata": {"behaviors": behaviors}})
+        rt.run_until_idle()
+        return p
+
+    # An adopted pack (canary) still inside its watch window.
+    in_marker = rt.graph.events[-1].id
+    promo_in = seed_promotion("canary", in_marker, ["canary.canary_in"])
+
+    # 1. NON-ADOPTED failure while an adopted promotion is pending: the
+    #    stray behavior belongs to no promotion, so nothing is raised.
+    rt.graph.add_object("poke_stray", {})
+    rt.graph.add_object("tick", {})
+    rt.run_until_idle()
+    assert len(reflections()) == 0, "a non-adopted failure must not self-notice"
+
+    # 2. IN-WINDOW failure of the adopted behavior: exactly one reflection
+    #    gap, tied to this promotion, self-noticing only.
+    rt.graph.add_object("poke_in", {})
+    rt.graph.add_object("tick", {})
+    rt.run_until_idle()
+    gaps = reflections()
+    assert len(gaps) == 1, f"one in-window failure -> one gap, got {len(gaps)}"
+    meta = gaps[0].data["metadata"]
+    assert meta["promotion_id"] == str(promo_in.id), meta
+    assert meta["watch_failures"] == 1, meta
+    assert meta.get("source") == "watch_monitor", meta
+
+    # 3. OUT-OF-WINDOW failure: a second adopted pack whose marker is far
+    #    enough in the past that the failure lands beyond the window.
+    seed_promotion("canary_old", "evt_001", ["canary.canary_out"])
+    while top_ord() - 1 <= window:  # ensure we are past the window from evt_001
+        rt.graph.add_object("tick", {})
+        rt.run_until_idle()
+    rt.graph.add_object("poke_out", {})
+    rt.graph.add_object("tick", {})
+    rt.run_until_idle()
+    assert len(reflections()) == 1, "a failure past the window must not self-notice"
+
+    # 4. DEDUP: another in-window failure of the same pack does not stack a
+    #    second open gap.
+    rt.graph.add_object("poke_in", {})
+    rt.graph.add_object("tick", {})
+    rt.run_until_idle()
+    assert len(reflections()) == 1, "one open reflection gap per adopted pack"
+
+    return {"in_window": "reflection gap raised", "non_adopted": "no gap",
+            "out_of_window": "no gap", "dedup": "single open gap"}
+
+
 def fx_25_author_origin_assembly(tmp) -> dict:
     """§3 origin-based context assembly: the frame is four fixed sections
     and nothing else, and every EXCLUDED origin is provably absent. A
@@ -1414,6 +1525,8 @@ SCENARIOS = [
      fx_28_author_render_gate3),
     ("29 budget_memory platform-aware: memory-net vs wall-clock containment",
      fx_29_budget_memory_platform_aware),
+    ("30 watch monitor: adopted-pack failure self-notices in-window only",
+     fx_30_watch_monitor),
 ]
 
 

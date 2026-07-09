@@ -6,6 +6,40 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Documentation and consistency audit: two code fixes plus doc
+  reconciliation.** A report-only audit found two places where the code
+  had drifted from documented intent, plus documentation staleness. Both
+  code gaps are now closed and the docs reconciled to the shipped code
+  (the code was treated as the source of truth throughout).
+  - **C1 — Evolution pack v0.7.0: the stage-6 watch monitor is built.**
+    `docs/evolution-design.md` §3 stage 6 described a post-adoption
+    monitor that was never shipped (only three behaviors were
+    registered). Now built: `watch_monitor` raises a reflection
+    `capability_gap` when an adopted pack's own behavior fails within
+    `watch_window_events` after its promote marker. Self-noticing, not
+    self-healing. Fixture 30 covers in-window / out-of-window /
+    non-adopted / dedup. Because the runtime suppresses `behavior.*`
+    from behavior re-matching, the monitor scans the event log on
+    ordinary activity rather than subscribing to `behavior.failed`; the
+    design records that deviation.
+  - **C2 — manifest-drift CI gate.** CI verified the content hash (which
+    by design excludes `manifest.toml`) and the surface, but nothing
+    checked the manifest-authored fields (the `activegraph` pin, python
+    range, deps, provenance) against `scripts/generate_manifests.py`, so
+    a generator/manifest pin drift stayed green. CI now regenerates every
+    manifest and fails on any diff; proven against a deliberately
+    introduced pin mismatch.
+  - **Docs reconciled to the code.** Finished the vc-pack deletion (six
+    tracked references in `README.md`, `packs/README.md`,
+    `bundles/README.md`, and the overclaiming CHANGELOG line);
+    `docs/evolution-design.md` synced (runtime floor `>=1.7.1`, §2 object
+    types and status machine, §3 eleven-gate list and platform-conditional
+    memory containment, §5 settings, §8 fixture list); `docs/manifest-spec.md`
+    §3 corrected (capabilities are loader-verified since v1.4, per its own
+    §9 Q8); `docs/llm-author-design.md` gate 4 stamped MET and the
+    fixture-to-fold mapping corrected. Cosmetic: sample and `_template`
+    pins bumped to `>=1.7.1`, illustrative "VC" mentions reworded.
+
 - **Evolution pack v0.6.1: platform-aware runaway-memory containment.**
   The macOS soak was RED because budget_memory asserted the RLIMIT_AS
   memory net fires, true only on Linux; on macOS that net is
@@ -211,7 +245,8 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
   was not well designed, and its extraction was only ever a dogfood for
   the manifest's multi-repo loading. Removed: `packs/vc`, `vc_bundle`
   (+ its example and `build_vc_assistant`), the pyproject entry point,
-  the CI step, and every doc reference. The bundle count drops to 4 and
+  and the CI step. (The doc references were swept later; see the
+  documentation-audit entry above.) The bundle count drops to 4 and
   the pack count to 18 + bridge. Consequence for the manifest spec: §5
   (sources, resolution, pins) loses its first consumer and is marked
   PROVISIONAL until a real pack-sources host builds against it; the

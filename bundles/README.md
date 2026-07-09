@@ -113,28 +113,21 @@ The bridge never modifies Diligence objects.
 
 ## Bundle Compatibility Matrix
 
-| Pack | Assistant | Email Asst | VC | Research |
-|------|:---------:|:----------:|:--:|:--------:|
-| `core` | ✅ | ✅ | ✅ | ✅ |
-| `tool_gateway` | ✅ | ✅ | ✅ | ✅ |
-| `secrets` | ✅ | ✅ | ✅ | ❌ |
-| `memory_gateway` | ✅ | ✅ | ✅ | ✅ |
-| `agent_profile` | ✅ | ✅ | ✅ | ❌ |
-| `identity_auth` | ✅ | ✅ | ✅ | ❌ |
-| `communication` | ✅ | ✅ | ✅ | ✅ |
-| `chat` | ✅ | ✅ | ✅ | ✅ |
-| `email` | ❌ | ✅ | ✅ | ❌ |
-| `entity` | ❌ | ✅ | ✅ | ❌ |
-| `diligence`* | ❌ | ❌ | ⚠️* | ❌ |
-| `diligence_core_bridge` | ❌ | ❌ | ✅ | ❌ |
-| `meeting` | ❌ | ❌ | ✅ | ❌ |
-| `research` | ❌ | ❌ | ❌ | ✅ |
-| `codebase` | add-on | add-on | add-on | ❌ |
-| `team_ops` | add-on | add-on | add-on | ❌ |
-
-*⚠️ Diligence v1.0.5 declares `derived_from` which conflicts with Core Pack.
-The `diligence_core_bridge` works without Diligence co-loaded — it subscribes by
-object type name, so injected Diligence-type objects still map to Core primitives.
+| Pack | Assistant | Email Asst | Research |
+|------|:---------:|:----------:|:--------:|
+| `core` | ✅ | ✅ | ✅ |
+| `tool_gateway` | ✅ | ✅ | ✅ |
+| `secrets` | ✅ | ✅ | ❌ |
+| `memory_gateway` | ✅ | ✅ | ✅ |
+| `agent_profile` | ✅ | ✅ | ❌ |
+| `identity_auth` | ✅ | ✅ | ❌ |
+| `communication` | ✅ | ✅ | ✅ |
+| `chat` | ✅ | ✅ | ✅ |
+| `email` | ❌ | ✅ | ❌ |
+| `entity` | ❌ | ✅ | ❌ |
+| `research` | ❌ | ❌ | ✅ |
+| `codebase` | add-on | add-on | ❌ |
+| `team_ops` | add-on | add-on | ❌ |
 
 ## Examples
 
@@ -144,5 +137,4 @@ See `bundles/examples/` for runnable demos:
 |---|---|---|
 | `assistant_example.py` | Assistant | Chat input → CommMessage → Principal → ChatTurn |
 | `email_assistant_example.py` | Email Assistant | Inbound email → EmailThread + CommIntent + entity |
-| `vc_example.py` | VC | Founder email + diligence objects + meeting transcript |
 | `research_example.py` | Research | Two papers → idea atoms → hypothesis → experiment |

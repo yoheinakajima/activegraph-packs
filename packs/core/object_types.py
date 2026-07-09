@@ -77,7 +77,7 @@ class Observation(BaseModel):
     - 'Email asks for follow-up.'
     - 'Meeting included a decision.'
 
-    Domain packs (Research, VC) may promote high-confidence observations
+    Domain packs (Research, Codebase) may promote high-confidence observations
     to domain-specific claims — but that happens in those packs, not here.
     """
 

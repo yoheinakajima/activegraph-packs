@@ -3,7 +3,7 @@
 Channel-neutral communication semantic layer for all ActiveGraph packs.
 
 Provides the shared primitive layer that all channel adapters (Chat, Email, SMS, Voice)
-translate into. Domain packs (VC, Research) see comm_message objects regardless of
+translate into. Domain packs (Research, Meeting) see comm_message objects regardless of
 whether the request came from chat, email, or any other channel.
 
 Object types:
