@@ -1257,6 +1257,158 @@ def fx_30_watch_monitor(tmp) -> dict:
             "out_of_window": "no gap", "dedup": "single open gap"}
 
 
+def _soak_settings():
+    return EvolutionSettings(enabled=True, trial_fixture_timeout_seconds=5.0,
+                             trial_wall_clock_seconds=30.0)
+
+
+def fx_31_soak_crash_window(tmp) -> dict:
+    """Gap A (the rotation-15 enabler): a crash after the happy adoption but
+    before the rotation's state save can no longer orphan an active
+    promotion. Reproduces the Replit mechanism: run scenario_happy, simulate
+    the process dying mid-rotation (the rotation's own _save_state never
+    runs, so state.json's rotations counter is stale), re-instantiate the
+    harness on the same store, re-run the rotation, and assert exactly one
+    active promotion — the re-run disabled the first via the immediately
+    persisted last_happy_promotion."""
+    from packs.evolution.soak import SoakHarness
+
+    root = os.path.join(tmp, "crashwin")
+    h = SoakHarness(root, settings=_soak_settings())
+    h.boot()
+    h.scenario_happy(1)  # adopts soak_happy_1 -> one active; persists last_happy
+    actives = [p for p in h.rt.graph.objects(type="mod_promotion")
+               if (p.data or {}).get("status") == "active"]
+    assert len(actives) == 1, actives
+    first_id = str(actives[0].id)
+
+    # Simulate the T1 crash: die mid-rotation. run_rotation's _save_state
+    # (which advances the rotations counter) never ran, but Gap A already
+    # persisted the new promotion id. Drop the runtime and re-instantiate.
+    h.teardown()
+    h2 = SoakHarness(root, settings=_soak_settings())
+    assert h2.state["rotations"] == 0, "the rotation never completed its save"
+    assert h2.state["last_happy_promotion"] == first_id, (
+        "Gap A must have persisted the adoption immediately")
+
+    h2.boot()  # reloads soak_happy_1 (the still-active first promotion)
+    h2.scenario_happy(1)  # re-run: disable the true previous, adopt afresh
+    actives2 = [p for p in h2.rt.graph.objects(type="mod_promotion")
+                if (p.data or {}).get("status") == "active"]
+    assert len(actives2) == 1, (
+        "orphaned active promotion after re-run: "
+        f"{[(str(p.id), p.data.get('pack_name')) for p in actives2]}")
+    assert h2.rt.graph.get_object(first_id).data["status"] == "disabled", (
+        "the first promotion must be disabled by the re-run")
+    return {"first": first_id, "actives_after_rerun": len(actives2),
+            "orphan": "none"}
+
+
+def fx_32_soak_invariant_assertion(tmp) -> dict:
+    """Gap B (the detection gap): the harness ASSERTS its invariant (at most
+    one active promotion total) instead of only printing the count. Construct
+    the orphaned-active state (two active promotions), run the invariant
+    check, and assert it records a first-class anomaly that flips the digest
+    RED and names both promotions — the class that let rotation 15 pass all
+    seven scenarios can never pass silently again."""
+    from packs.evolution.soak import SoakHarness
+
+    root = os.path.join(tmp, "invariant")
+    h = SoakHarness(root, settings=_soak_settings())
+    h.boot()
+    g = h.rt.graph
+    p1 = g.add_object("mod_promotion", {"proposal_id": "x",
+                                        "pack_name": "soak_happy_A",
+                                        "status": "active"})
+    p2 = g.add_object("mod_promotion", {"proposal_id": "y",
+                                        "pack_name": "soak_happy_B",
+                                        "status": "active"})
+    inv = h._check_invariants(1)
+    assert inv is not None and inv["active_count"] == 2, inv
+    assert {e["id"] for e in inv["promotions"]} == {str(p1.id), str(p2.id)}, inv
+
+    results: list = []
+    h._enforce_invariants(1, results)
+    assert len(results) == 1 and results[0]["path"] == "invariant", results
+    assert not results[0]["ok"], results
+    assert len(h.state["anomaly_log"]) == 1, "invariant anomaly must persist"
+
+    digest = h.write_digest(1, {"fresh": False, "reloaded": {}}, results)
+    text = Path(digest).read_text()
+    assert "**RED**" in text, "an invariant violation must flip the digest RED"
+    assert "soak_happy_A" in text and "soak_happy_B" in text, (
+        "the digest must name both offending promotions")
+    return {"active_count": inv["active_count"], "digest": "RED",
+            "named_both": True}
+
+
+def fx_33_boot_dedupe(tmp) -> dict:
+    """Gap C (product code, boot.py): reload_adopted_packs groups by pack
+    name, acts once, and reports truthfully. (a) an active promotion followed
+    by a disabled one resolves by recency to a single truthful outcome —
+    never loaded-while-reported-disabled. (b) two active promotions for one
+    pack load the most recent only (one load_pack call) and raise a loud
+    anomaly capability_gap."""
+    from packs.evolution.boot import reload_adopted_packs
+    from packs.evolution.soak import SoakHarness
+
+    # (a) active-then-disabled for one pack.
+    root_a = os.path.join(tmp, "dedupe_a")
+    ha = SoakHarness(root_a, settings=_soak_settings())
+    ha.boot()
+    ha.scenario_happy(1)  # real adoption -> soak_happy_1 active, loadable
+    promo = next(p for p in ha.rt.graph.objects(type="mod_promotion")
+                 if p.data.get("pack_name") == "soak_happy_1"
+                 and p.data.get("status") == "active")
+    pid, fork = promo.data["proposal_id"], promo.data.get("fork_run_id", "")
+    ha.rt.graph.add_object("mod_promotion", {
+        "proposal_id": pid, "pack_name": "soak_happy_1",
+        "status": "disabled", "fork_run_id": fork})
+    ha.teardown()
+    report = ha.boot()  # boot re-runs reload_adopted_packs
+    outcome_a = report["reloaded"].get("soak_happy_1", "")
+    assert outcome_a == "disabled (stays down)", outcome_a
+    # exactly one outcome entry for the pack (acted once, not overwritten)
+    assert list(report["reloaded"]).count("soak_happy_1") == 1
+
+    # (b) two ACTIVE promotions for one pack.
+    root_b = os.path.join(tmp, "dedupe_b")
+    hb = SoakHarness(root_b, settings=_soak_settings())
+    hb.boot()
+    hb.scenario_happy(1)
+    promo_b = next(p for p in hb.rt.graph.objects(type="mod_promotion")
+                   if p.data.get("pack_name") == "soak_happy_1"
+                   and p.data.get("status") == "active")
+    p2 = hb.rt.graph.add_object("mod_promotion", {
+        "proposal_id": promo_b.data["proposal_id"],
+        "pack_name": "soak_happy_1", "status": "active",
+        "fork_run_id": promo_b.data.get("fork_run_id", "")})
+    gaps_before = sum(
+        1 for x in hb.rt.graph.objects(type="capability_gap")
+        if (x.data or {}).get("metadata", {}).get("source")
+        == "reload_adopted_packs")
+    loaded: list = []
+    orig = hb.rt.load_pack
+
+    def _spy(pack, **kw):
+        loaded.append(getattr(pack, "name", "?"))
+        return orig(pack, **kw)
+
+    hb.rt.load_pack = _spy
+    out_b = reload_adopted_packs(hb.rt)
+    gaps_after = [x for x in hb.rt.graph.objects(type="capability_gap")
+                  if (x.data or {}).get("metadata", {}).get("source")
+                  == "reload_adopted_packs"]
+    assert loaded.count("soak_happy_1") == 1, (
+        f"must load the pack exactly once, loaded {loaded}")
+    assert "ANOMALY" in out_b.get("soak_happy_1", ""), out_b
+    assert len(gaps_after) > gaps_before, "two actives must raise a gap"
+    assert gaps_after[-1].data["metadata"]["loaded"] == str(p2.id), (
+        "must load the most recent active")
+    return {"case_a": outcome_a, "case_b_loads": loaded.count("soak_happy_1"),
+            "case_b_anomaly_gap": True}
+
+
 def fx_25_author_origin_assembly(tmp) -> dict:
     """§3 origin-based context assembly: the frame is four fixed sections
     and nothing else, and every EXCLUDED origin is provably absent. A
@@ -1527,6 +1679,12 @@ SCENARIOS = [
      fx_29_budget_memory_platform_aware),
     ("30 watch monitor: adopted-pack failure self-notices in-window only",
      fx_30_watch_monitor),
+    ("31 soak crash window: mid-rotation kill leaves no orphaned promotion",
+     fx_31_soak_crash_window),
+    ("32 soak invariant: two actives flip the digest RED, not printed",
+     fx_32_soak_invariant_assertion),
+    ("33 boot dedupe: group by pack, act once, load most-recent, report true",
+     fx_33_boot_dedupe),
 ]
 
 

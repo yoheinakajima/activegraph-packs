@@ -6,6 +6,26 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.7.1: soak crash-safety + boot dedupe, plus a
+  product crash-safety audit.** The Replit soak's rotation-15 red flag
+  (two adopted packs simultaneously live) was fully diagnosed: real
+  double-adoption, but the enabling bug was in the SOAK HARNESS after a
+  mid-rotation container kill left it with a stale progress file. Fixed
+  the harness completely (Gap A: persist the happy adoption the moment it
+  commits, not at end-of-rotation; Gap B: the harness now asserts its own
+  invariant — at most one active promotion total — and flips the digest
+  RED on a violation instead of printing the count and passing) and the
+  one unambiguous product bug (Gap C: `boot.py`'s `reload_adopted_packs`
+  grouped nothing, so a pack could be loaded while reported disabled; now
+  it groups by pack name, resolves by recency, loads once, and on two
+  active promotions for one pack loads the most recent only with a loud
+  log + `capability_gap`). Fixtures 31/32/33 prove each. Also a product
+  crash-safety AUDIT (docs/evolution-design.md §10): a crash-window table
+  over the two-phase adoption, disable, watch-monitor, and boot paths,
+  with two findings left as PROPOSALS pending owner decision (per-pack
+  adoption-time supersession; boot heal-vs-fail-closed on ambiguity) —
+  investigate-and-propose only, no semantic change implemented.
+
 - **Documentation and consistency audit: two code fixes plus doc
   reconciliation.** A report-only audit found two places where the code
   had drifted from documented intent, plus documentation staleness. Both

@@ -111,38 +111,95 @@ def retire_unpinned_trial_forks(store_path: str) -> dict[str, str]:
     return outcomes
 
 
+def _reload_one(rt, graph, promotion, name: str, *, suffix: str = "") -> str:
+    """Materialize, hash-verify, and load ONE promotion's pack. Returns the
+    outcome string. A bundle-hash mismatch disables the promotion loudly and
+    opens a capability_gap (the pre-existing behavior, unchanged)."""
+    proposal = graph.get_object((promotion.data or {}).get("proposal_id", ""))
+    if proposal is None:
+        return "skipped (proposal missing)" + suffix
+    try:
+        _, _, pack = materialize_verified(graph, proposal)
+    except PackManifestError as exc:
+        graph.patch_object(promotion.id, {"status": "disabled"})
+        graph.add_object("capability_gap", {
+            "kind": "reflection",
+            "description": (f"adopted pack {name!r} failed its bundle-hash "
+                            f"pin at boot and was disabled: {exc}"),
+            "status": "open",
+            "metadata": {"promotion_id": str(promotion.id)},
+        })
+        print(f"[evolution] BOOT HASH MISMATCH: {name} disabled", flush=True)
+        return "disabled (hash mismatch)" + suffix
+    rt.load_pack(pack)
+    return "loaded" + suffix
+
+
 def reload_adopted_packs(rt) -> dict[str, str]:
-    """Returns {pack_name: outcome} for every adoption record seen."""
+    """Returns {pack_name: outcome}, acting exactly ONCE per pack name.
+
+    Grouped-then-resolved (Gap C): the loop used to iterate every
+    mod_promotion in insertion order and overwrite outcomes[pack_name] each
+    pass, so a pack with an active record followed by a disabled one got
+    LOADED on the first and then reported "disabled" on the second — loaded
+    while reported down. Now we group by pack name, resolve each pack's
+    effective state from its full promotion set, load at most once, and
+    report what actually happened.
+
+    Resolution rule: a pack's effective state is its MOST RECENT promotion's
+    status (recency wins — an active record shadowed by a later disable stays
+    down). The product invariant is at most one ACTIVE promotion per pack
+    name; a set with two or more actives is a genuine inconsistency (a
+    crash-orphaned record, or — until the design's supersession proposal
+    lands — a same-name re-adoption). We do NOT silently pick: we load the
+    most recent active only, log loudly, and open a capability_gap so the
+    condition is impossible to miss. We never heal (disable the losers) or
+    refuse here — that decision is the design's crash-safety proposal."""
     graph = rt.graph
-    outcomes: dict[str, str] = {}
+
+    groups: dict[str, list] = {}
     for promotion in list(graph.objects(type="mod_promotion")):
-        data = promotion.data or {}
-        name = data.get("pack_name", "?")
-        status = data.get("status")
-        if status == "disabled":
-            outcomes[name] = "disabled (stays down)"
-            continue
-        if status != "active":
-            outcomes[name] = f"skipped (status={status})"
-            continue
-        proposal = graph.get_object(data.get("proposal_id", ""))
-        if proposal is None:
-            outcomes[name] = "skipped (proposal missing)"
-            continue
-        try:
-            _, _, pack = materialize_verified(graph, proposal)
-        except PackManifestError as exc:
-            graph.patch_object(promotion.id, {"status": "disabled"})
+        name = (promotion.data or {}).get("pack_name", "?")
+        groups.setdefault(name, []).append(promotion)
+
+    outcomes: dict[str, str] = {}
+    for name, group in groups.items():
+        actives = [p for p in group
+                   if (p.data or {}).get("status") == "active"]
+        if len(actives) >= 2:
+            chosen = actives[-1]  # most recent active
+            ids = [str(p.id) for p in actives]
+            print(f"[evolution] BOOT ANOMALY: {name!r} has {len(actives)} "
+                  f"active promotions {ids}; loading the most recent "
+                  f"({chosen.id}) only, leaving the rest unreconciled",
+                  flush=True)
             graph.add_object("capability_gap", {
                 "kind": "reflection",
-                "description": (f"adopted pack {name!r} failed its bundle-hash "
-                                f"pin at boot and was disabled: {exc}"),
+                "description": (
+                    f"adopted pack {name!r} had {len(actives)} active "
+                    f"promotions at boot ({ids}); loaded the most recent "
+                    f"({chosen.id}) only. This violates the per-pack "
+                    "invariant (at most one active promotion per pack name) "
+                    "and needs owner attention — see the crash-safety "
+                    "proposal in docs/evolution-design.md."),
                 "status": "open",
-                "metadata": {"promotion_id": str(promotion.id)},
+                "metadata": {"promotion_ids": ids, "loaded": str(chosen.id),
+                             "pack_name": name, "source": "reload_adopted_packs"},
             })
-            print(f"[evolution] BOOT HASH MISMATCH: {name} disabled", flush=True)
-            outcomes[name] = "disabled (hash mismatch)"
+            outcomes[name] = _reload_one(
+                rt, graph, chosen, name,
+                suffix=f" (ANOMALY: {len(actives)} active, most recent only)")
             continue
-        rt.load_pack(pack)
-        outcomes[name] = "loaded"
+
+        most_recent = group[-1]
+        status = (most_recent.data or {}).get("status")
+        if status == "active":
+            # The single active is also the most recent record → load it.
+            outcomes[name] = _reload_one(rt, graph, most_recent, name)
+        elif status == "disabled":
+            # Most recent record is a disable; an older active (if any) is
+            # superseded by recency and stays down.
+            outcomes[name] = "disabled (stays down)"
+        else:
+            outcomes[name] = f"skipped (status={status})"
     return outcomes

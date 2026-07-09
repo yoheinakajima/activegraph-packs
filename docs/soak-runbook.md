@@ -29,6 +29,16 @@ Every path asserts its terminal state. A miss is recorded as an
 ANOMALY with a traceback and the rotation continues; anomalies are
 never swallowed.
 
+After the seven paths, the harness also asserts its own **post-rotation
+invariant**: at most ONE `active` promotion total (the happy path churns
+exactly one at a time). This runs even when every path passed — the
+class of bug it guards against once let a rotation score all seven GREEN
+while two adopted packs were simultaneously live. A violation is a
+first-class anomaly of its own: it names the offending promotions, flips
+the digest RED, and lands in the anomaly log, exactly like a path
+failure. The external observer's "at most one active" check below is now
+belt-and-braces — redundant by design rather than load-bearing.
+
 **budget_memory is platform-conditional, on purpose.** The invariant it
 protects is "a runaway-memory candidate is CONTAINED", which is true on
 both platforms; the specific net that contains it is not. The soak keys
@@ -97,8 +107,13 @@ python -m packs.evolution.soak --root data/soak --rotations 12  # stop after 12
 
 Keep it alive across your own disconnects however you prefer
 (`nohup ... &`, tmux, a Replit always-on task). The harness keeps all
-its state in `--root`; killing and restarting it is safe and is itself
-a light test of resume.
+its state in `--root`; killing and restarting it is safe — including a
+kill in the MIDDLE of a rotation. The happy path persists its adoption
+to `state.json` the moment it commits (not only at end-of-rotation), so
+a mid-rotation kill that loses the rotation's progress file can no
+longer make the re-run disable a stale target and orphan an active
+promotion (the Replit rotation-15 mechanism). A killed rotation simply
+re-runs from its start on restart.
 
 One rotation takes about half a minute on a small machine (the
 wall-clock scenario deliberately burns its 5-second timeout). At the
@@ -122,7 +137,13 @@ after every rotation. Healthy looks like:
   reload report listing old packs as `disabled (stays down)`
 
 `data/soak/state.json` carries the cumulative counts and the anomaly
-log; the console prints one line per rotation.
+log; the console prints one line per rotation. The digest file is
+overwritten after every rotation (and named per day), so a transient
+RED can be overwritten GREEN on the next rotation — but every anomaly,
+invariant violations included, is APPENDED to `state.json`'s
+`anomaly_log` and stays there regardless. If you ever see a RED digest,
+read `anomaly_log`: it is the durable record, and it does not get
+overwritten.
 
 ## Red flags (stop and report)
 
@@ -136,7 +157,11 @@ anomaly log; do not restart over them:
   here anymore; if an anomaly names a child failure, that detail is the
   report, not the soak assertion above it.
 - More than one `active` promotion, or an `active` count that grows
-  across rotations. The governed-disable path is failing quietly.
+  across rotations. The governed-disable path is failing quietly. The
+  harness now asserts this itself post-rotation (it surfaces as an
+  `invariant` anomaly naming both promotions), so a RED digest gets you
+  here without your having to eyeball the count; this bullet stays as
+  the belt-and-braces external check.
 - A `suspended` count that ever DECREASES, or a parked `needs_owner`
   proposal that changes status. Nothing automatic may touch either.
 - A budget path whose candidate `completed` (trial verdict pass): a
