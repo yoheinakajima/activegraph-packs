@@ -37,6 +37,12 @@ server. No Node required.
 ```bash
 pip install -e ".[dev]"          # activegraph + all packs (editable install)
 
+# Until activegraph v1.9 is on PyPI, install the runtime from source.
+# Clone it as activegraph-src — a directory named activegraph in your
+# working directory would shadow the installed package:
+#   git clone https://github.com/yoheinakajima/activegraph activegraph-src
+#   pip install -e "./activegraph-src[llm]"
+
 # Option A: run the standalone demo server (HTTP API on :7788)
 python packs/demo_server.py
 
@@ -313,6 +319,39 @@ python packs/fixtures/chat_memory_cross_session.py
 ```
 
 The demo server also loads all fixture data on startup — `POST /reset` re-seeds from scratch if you want a clean run.
+
+---
+
+## Doctor
+
+When a fresh machine misbehaves, run the noninteractive environment
+diagnostic before debugging anything else:
+
+```bash
+python -m packs.doctor                 # pass/fail lines, exit 0/1
+python -m packs.doctor --json          # machine-readable report
+python -m packs.doctor --store sqlite:///path/to/babyagi.db   # also check a store path
+python -m packs.doctor --artifact-dir /data/replay-artifacts  # check a configured artifact dir
+```
+
+It checks, in order: the installed **activegraph version and v1.9
+feature floor** (the same preflight that guards `import packs`);
+**package shadowing** (is `import activegraph` the pip install, or a
+stray `activegraph` directory on `sys.path`? — always clone the runtime
+repo as `activegraph-src`, never `activegraph`); **replay artifact-store
+coherence** (importer and normalizer must share one `artifact_store_dir`,
+or every imported item dies at replay with `ReplayUnavailableError`);
+the **Python floor** (≥ 3.11); **`--store` writability** when given;
+**pack entry points** resolvable; and a **manifest content-hash
+spot-check** of one pack (the same condition CI's drift gate enforces).
+
+If the environment is so broken that even `import packs` raises, the
+preflight error is itself the diagnosis; to run the remaining checks
+anyway:
+
+```bash
+ACTIVEGRAPH_PACKS_SKIP_PREFLIGHT=1 python -m packs.doctor
+```
 
 ---
 

@@ -85,6 +85,13 @@ def assert_runtime_compatible(runtime_module: ModuleType | None = None) -> None:
     contract floor; return silently otherwise. Called once at
     ``import packs``."""
     if not runtime_supports_contract(runtime_module):
-        raise RuntimePreflightError(
+        err = RuntimePreflightError(
             preflight_message(found_runtime_version(runtime_module))
         )
+        # A note, not part of the message: full diagnostics still run on
+        # a broken runtime via the escape hatch (see packs/__init__.py).
+        err.add_note(
+            "Full diagnostics: "
+            "ACTIVEGRAPH_PACKS_SKIP_PREFLIGHT=1 python -m packs.doctor"
+        )
+        raise err

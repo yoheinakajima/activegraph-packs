@@ -16,11 +16,18 @@ baffling ``CapabilityDecl.__init__() got an unexpected keyword argument
 'action_class'`` somewhere mid-import. See packs/_preflight.py.
 """
 
+import os as _os
+
 from packs._preflight import (
     RuntimePreflightError,
     assert_runtime_compatible,
 )
 
-assert_runtime_compatible()
+# ACTIVEGRAPH_PACKS_SKIP_PREFLIGHT=1 exists for exactly one caller:
+# `python -m packs.doctor` on a broken runtime, which must be able to
+# import this package to report the breakage as a diagnostic line
+# instead of dying on it here.
+if _os.environ.get("ACTIVEGRAPH_PACKS_SKIP_PREFLIGHT") != "1":
+    assert_runtime_compatible()
 
 __all__ = ["RuntimePreflightError", "assert_runtime_compatible"]
