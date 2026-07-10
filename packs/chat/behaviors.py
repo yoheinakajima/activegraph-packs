@@ -731,6 +731,9 @@ def chat_memory_context(event, graph, ctx, *, settings: ChatSettings):
             include_global=settings.memory_include_global,
             # Never recall a memory born in the frame that is asking.
             exclude_frame_id=frame_id,
+            # P10: the query embedding rides the runtime's recorded
+            # ctx.embed path when the runtime has an embedding provider.
+            ctx=ctx,
         )
     except Exception:
         return  # Recall must never break the response.

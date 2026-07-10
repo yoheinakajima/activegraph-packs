@@ -29,6 +29,7 @@ def retrieve_memories_fn(
     subject_scoped: bool = False,
     include_global: bool = True,
     exclude_frame_id: Optional[str] = None,
+    ctx: Any = None,
 ) -> list[dict[str, Any]]:
     """Query the memory backend and return ranked results.
 
@@ -47,25 +48,31 @@ def retrieve_memories_fn(
         include_global: When subject_scoped, also include subject-less (NULL)
             "global" memories. True (default) for backward compatibility; pass
             False for strict per-user isolation (no shared/legacy NULL rows).
+        ctx: The caller's behavior ``ctx`` (or a ``Runtime``). When it can
+            serve embeddings, the query embedding rides the runtime's
+            RECORDED path (embedding.requested/responded events, replay —
+            P10) instead of the process-global embedder. Omit for the
+            exact legacy behavior.
 
     Returns:
         List of dicts sorted by outcome-adjusted relevance:
         [{item_id, text, score, raw_score, reliability_verdict,
           reliability_multiplier, category, confidence}]
     """
-    from .backend import get_backend
+    from .backend import get_backend, runtime_recorded_embedding
 
     backend = get_backend(backend_url)
-    results = backend.retrieve_by_query(
-        query=query,
-        top_k=top_k,
-        min_score=min_score,
-        category=category,
-        subject_ref=subject_ref,
-        subject_scoped=subject_scoped,
-        include_global=include_global,
-        exclude_frame_id=exclude_frame_id,
-    )
+    with runtime_recorded_embedding(ctx):
+        results = backend.retrieve_by_query(
+            query=query,
+            top_k=top_k,
+            min_score=min_score,
+            category=category,
+            subject_ref=subject_ref,
+            subject_scoped=subject_scoped,
+            include_global=include_global,
+            exclude_frame_id=exclude_frame_id,
+        )
 
     # Update retrieval stats for returned items
     for r in results:

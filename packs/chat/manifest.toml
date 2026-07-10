@@ -3,7 +3,7 @@
 
 [pack]
 name = "chat"
-version = "0.4.0"
+version = "0.5.0"
 description = "Chat adapter pack. Translates chat input into CommMessage(channel=chat). chat_ingester maps raw {'role': 'user', 'content': '...'} input into CommMessage + ChatSession + ChatTurn. chat_llm_responder assembles context and produces CommResponseCandidate (optionally calling Tool Gateway proxy tools in the native LLM loop). chat_responder delivers the response."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:2c182ce6ef8de2144c008f19c6835029edfa2334f0e5a76c721a724bcd29539a"
+content_hash = "sha256:1ac55cae8ecd71e84e08c8dc0b0d26acdeb063c1347156758dd39ac9cf4eacbc"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

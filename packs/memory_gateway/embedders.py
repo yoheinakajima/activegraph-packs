@@ -22,6 +22,20 @@ module provides the implementations an application can plug in:
 
 Nothing in this module runs on import; registration is always an explicit
 application-side call (the demo server does it at startup).
+
+P10 (2026-07-10): first-party pack code now embeds through the runtime's
+RECORDED path — ``ctx.embed`` / ``Runtime.embed`` — whenever the runtime
+has an ``embedding_provider`` (see ``backend.runtime_recorded_embedding``);
+recorded embeds emit ``embedding.requested``/``embedding.responded`` events
+and replay from the log. Both embedder classes here implement the runtime's
+EmbeddingProvider protocol, so the preferred wiring is now::
+
+    from packs.memory_gateway.embedders import OpenAIEmbedder
+    rt = Runtime(graph, embedding_provider=OpenAIEmbedder())
+
+``set_embedder(...)`` remains supported as the DIRECT (unrecorded) seam for
+third-party embedders and bare-graph hosts, but first-party packs no longer
+call it when a runtime records embeddings.
 """
 
 from __future__ import annotations

@@ -99,7 +99,7 @@ def build_pack(*, llm_tools=None, max_tool_turns: int = 4) -> Pack:
     # composes_with=["identity_auth", "agent_profile", "tool_gateway"]
     return Pack(
         name="chat",
-        version="0.4.0",
+        version="0.5.0",
         description=(
             "Chat adapter pack. Translates chat input into CommMessage(channel=chat). "
             "chat_ingester maps raw {'role': 'user', 'content': '...'} input into "

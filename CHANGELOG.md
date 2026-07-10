@@ -6,6 +6,19 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **P10: packs adopt `ctx.embed`.** First-party memory-gateway embedding
+  (write-time item vectors, retrieval query vectors, chat recall, the
+  demo server's MCP memory surface) rides the runtime's recorded
+  `Context.embed`/`Runtime.embed` path whenever the runtime has an
+  embedding provider — every embed emits
+  `embedding.requested`/`embedding.responded` events and replays from
+  the log with zero provider contact. Direct provider calls
+  (`set_embedder`) remain supported for third parties and bare-graph
+  hosts but are no longer used by first-party packs when a runtime
+  records embeddings. Fixture `recorded_embedding_replay` proves the
+  round-trip replays against a raise-on-contact provider. Details in
+  the memory_gateway and chat changelogs.
+
 - **Canonical `action_class` (R0–R4) across the gateway layer** (ADR
   0016; runtime CONTRACT v1.9). Capability specs, registrations,
   capability_call/approval/denial objects, the catalog, and pending

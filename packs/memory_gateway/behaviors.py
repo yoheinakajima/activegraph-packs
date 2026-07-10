@@ -32,7 +32,7 @@ from typing import Optional
 
 from activegraph.packs import behavior
 
-from .backend import get_backend, lexical_score
+from .backend import get_backend, lexical_score, runtime_recorded_embedding
 from .object_types import MemoryItem, MemoryRanking, MemoryRetrieval
 from .settings import MemoryGatewaySettings
 
@@ -328,20 +328,25 @@ def memory_writer(event, graph, ctx, *, settings: MemoryGatewaySettings):
         ).model_dump(),
     )
 
-    # Store in backend
-    backend.store_item(
-        item_id=item.id,
-        text=candidate_data.get("text", ""),
-        category=candidate_data.get("category"),
-        confidence=candidate_data.get("confidence", 0.7),
-        # frame_id records the frame the memory was BORN in, which is what
-        # lets retrieval exclude same-frame items (see retrieve_by_query's
-        # exclude_frame_id): recall must never return a memory created by
-        # the very turn that is asking.
-        metadata={"candidate_id": subject_id, "created_at": now,
-                  "frame_id": candidate_data.get("frame_id")},
-        subject_ref=subject_ref,
-    )
+    # Store in backend. P10: write-time embedding goes through the
+    # runtime's RECORDED path (ctx.embed → embedding.requested/responded
+    # events, replayable) whenever the runtime has an embedding
+    # provider; otherwise the legacy process-global embedder applies
+    # exactly as before.
+    with runtime_recorded_embedding(ctx):
+        backend.store_item(
+            item_id=item.id,
+            text=candidate_data.get("text", ""),
+            category=candidate_data.get("category"),
+            confidence=candidate_data.get("confidence", 0.7),
+            # frame_id records the frame the memory was BORN in, which is what
+            # lets retrieval exclude same-frame items (see retrieve_by_query's
+            # exclude_frame_id): recall must never return a memory created by
+            # the very turn that is asking.
+            metadata={"candidate_id": subject_id, "created_at": now,
+                      "frame_id": candidate_data.get("frame_id")},
+            subject_ref=subject_ref,
+        )
 
     # Enforce max_items limit
     if settings.max_items > 0:
@@ -393,14 +398,16 @@ def memory_retriever(event, graph, ctx, *, settings: MemoryGatewaySettings):
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Query the backend
+    # Query the backend. P10: the query embedding rides the recorded
+    # runtime path when available (see memory_writer for the rule).
     backend = get_backend(backend_url)
-    results = backend.retrieve_by_query(
-        query=query,
-        top_k=top_k,
-        min_score=min_score,
-        category=category,
-    )
+    with runtime_recorded_embedding(ctx):
+        results = backend.retrieve_by_query(
+            query=query,
+            top_k=top_k,
+            min_score=min_score,
+            category=category,
+        )
 
     item_ids = [r["item_id"] for r in results]
 
