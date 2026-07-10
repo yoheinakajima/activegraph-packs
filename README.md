@@ -167,6 +167,8 @@ Full explanation, dependency graph, and the invariants that hold it together:
 | Pack | Description |
 |------|-------------|
 | `core` | Universal primitive layer: source, observation, task, action, artifact, memory_candidate, evaluation |
+| `activity_normalizer` | Provider-neutral evidence identity, replay modes, revisions, and deterministic candidate extraction from strict importer handoffs |
+| `semantic_extraction` | The shared annotation layer (ADR 0026): typed source-anchored annotations under one provenance envelope, cache-identified deterministic extraction, first-class coverage, `extraction_profile` config artifact, and per-domain candidate projectors |
 | `tool_gateway` | Capability execution gateway — normalizes, policy-checks, and records all external tool/API/MCP calls |
 | `secrets` | Credential reference management — actual secrets never enter the model context or graph |
 | `memory_gateway` | Full memory lifecycle: evaluates candidates, stores accepted items (SQLite), retrieval with keyword ranking |
@@ -187,6 +189,21 @@ Full explanation, dependency graph, and the invariants that hold it together:
 | `meeting` | Meeting processing: decision extraction, action item tracking, automated summarization |
 
 Plus `packs/bridges/` — a Diligence-Core bridge that maps the bundled ActiveGraph Diligence pack outputs to Core objects (source, observation, artifact, evaluation).
+
+### Importers (`packs/importers/`)
+
+Format adapters that emit strict `acquired_item`/`acquired_content`
+handoffs; evidence identity, dedup, and extraction stay
+normalizer-owned (ADR 0011).
+
+| Importer | Description |
+|----------|-------------|
+| `local_files` | Local directory snapshots (category `local_knowledge`) |
+| `chatgpt_export` | Official ChatGPT export ZIPs — canonical conversation paths plus abandoned edit branches |
+| `claude_export` | Claude's export archive (flat `conversations.json`, ZIP or bare JSON) — same identity semantics as `chatgpt_export` |
+| `assistant_self_summary` | Pasted (`manual`) or MCP-pushed (`mcp`) assistant self-summaries — one surface, transport as metadata, evidence identity by canonical content hash, injection-scanned (ADR 0025) |
+| `assistant_local_sessions` | Claude Code (`~/.claude/projects`) and Codex (`~/.codex/sessions`) local session logs — bounded recent-N window, defensive parsing of unversioned formats |
+| `public_presence` | Gateway-routed, budgeted R0 fetching of the owner's public handles (zero-key stdlib floor, artifact replay payloads, injection posture; keyed Firecrawl-grade upgrade behind the same settings seam) |
 
 ### Bundles
 
