@@ -109,9 +109,10 @@ def test_capability_declarations_match_source(name, relative_path):
     pack_dir = _pack_dir(relative_path)
     manifest = load_manifest(pack_dir / "manifest.toml")
 
-    declared = {(c.provider, c.capability, c.risk_class)
+    declared = {(c.provider, c.capability, c.risk_class, c.action_class)
                 for c in manifest.capabilities}
-    found = {(d["provider"], d["capability"], d["risk_class"])
+    found = {(d["provider"], d["capability"], d["risk_class"],
+              d["action_class"])
              for d in extract_capability_registrations(pack_dir)}
     assert declared == found, (
         f"{name}: [[surface.capabilities]] does not match "

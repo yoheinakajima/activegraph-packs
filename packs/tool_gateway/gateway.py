@@ -22,7 +22,7 @@ neither imports the other.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from .sanitizer import sanitize_output
 from .settings import ToolGatewaySettings
@@ -30,14 +30,110 @@ from .untrusted import scan_for_injection
 
 
 def decide_policy(
-    risk_class: str, settings: ToolGatewaySettings
+    risk_class: str,
+    settings: ToolGatewaySettings,
+    *,
+    action_class: str = "",
+    authority_ceiling: str = "none",
+    capability_ceiling: Optional[str] = None,
 ) -> Literal["auto_approve", "hold"]:
-    """The gateway's one policy decision: is *risk_class* auto-approvable?
+    """The gateway's one policy decision: may this call run unattended?
 
-    Everything else about approval (who may resolve a held call, what the
-    decision objects look like) builds on this answer.
+    Two EXPLICITLY separate dimensions, evaluated independently — neither
+    is ever inferred from the other (ADR 0016):
+
+      * **legacy risk dimension** — is *risk_class* in
+        ``settings.auto_approve_risk_classes``? Exactly the pre-v0.7
+        behavior; hosts that configure only this dimension see decisions
+        identical to before.
+      * **action-class dimension** — is the canonical *action_class*
+        auto-eligible under *authority_ceiling* (the runtime instance
+        ceiling, default ``"none"`` = grants nothing) and any stricter
+        *capability_ceiling*? R4 always routes to the governance gate,
+        R3 always requires approval, missing/invalid class fails closed
+        — see the runtime's ``evaluate_action_authority``.
+
+    The call is auto-approved iff EITHER dimension explicitly grants it;
+    the action-class dimension can only ADD automation within R0–R2
+    under a raised ceiling, never widen the legacy dimension's answer
+    for R3/R4 (those are unrepresentable as ceiling grants). Use
+    :func:`decide_policy_detail` when the per-dimension reasoning must
+    be recorded (approval surfaces do).
     """
-    return "auto_approve" if risk_class in settings.auto_approve_risk_classes else "hold"
+    return decide_policy_detail(
+        risk_class,
+        settings,
+        action_class=action_class,
+        authority_ceiling=authority_ceiling,
+        capability_ceiling=capability_ceiling,
+    )["decision"]
+
+
+def decide_policy_detail(
+    risk_class: str,
+    settings: ToolGatewaySettings,
+    *,
+    action_class: str = "",
+    authority_ceiling: str = "none",
+    capability_ceiling: Optional[str] = None,
+) -> dict[str, Any]:
+    """`decide_policy` with the per-dimension record the surfaces keep.
+
+    Returns::
+
+        {
+          "decision": "auto_approve" | "hold",
+          "legacy_risk": {"risk_class", "auto_approve"},
+          "action_authority": {"action_class", "decision",
+                               "matched_policy", "reason", "ceiling",
+                               "capability_ceiling", "effective_ceiling"},
+          "granted_by": "legacy_risk" | "action_authority"
+                        | "legacy_risk+action_authority" | "",
+        }
+
+    ``action_authority`` comes verbatim from the runtime's pure
+    ``evaluate_action_authority`` (the same rules the runtime audits),
+    so a held call can say WHY the ceiling path declined it: missing
+    class, above ceiling, or stricter local policy. A runtime-side
+    ``authority.decision`` audit event is the caller's job when a
+    Runtime handle is available (behaviors have one; see
+    behaviors.policy_enforcer) — this function stays graph-free.
+    """
+    from activegraph.runtime.authority import evaluate_action_authority
+
+    legacy_grants = risk_class in settings.auto_approve_risk_classes
+    authority = evaluate_action_authority(
+        capability="",
+        action_class=action_class,
+        ceiling=authority_ceiling,
+        capability_ceiling=capability_ceiling,
+    )
+    action_grants = authority.decision == "auto_approve"
+    granted = [
+        name
+        for name, grants in (
+            ("legacy_risk", legacy_grants),
+            ("action_authority", action_grants),
+        )
+        if grants
+    ]
+    return {
+        "decision": "auto_approve" if granted else "hold",
+        "legacy_risk": {
+            "risk_class": risk_class,
+            "auto_approve": legacy_grants,
+        },
+        "action_authority": {
+            "action_class": authority.action_class,
+            "decision": authority.decision,
+            "matched_policy": authority.matched_policy,
+            "reason": authority.reason,
+            "ceiling": authority.ceiling,
+            "capability_ceiling": authority.capability_ceiling,
+            "effective_ceiling": authority.effective_ceiling,
+        },
+        "granted_by": "+".join(granted),
+    }
 
 
 def execute_approved_call(

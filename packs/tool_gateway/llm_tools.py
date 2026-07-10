@@ -48,7 +48,7 @@ from typing import Any, Optional
 from activegraph.tools.base import Tool
 from activegraph.tools.context import ToolContext
 
-from .gateway import decide_policy, execute_approved_call
+from .gateway import execute_approved_call
 from .settings import ToolGatewaySettings
 from .tools import CapabilitySpec, get_capability_spec, registered_capability_keys
 from .untrusted import NEVER_LLM_CALLABLE, wrap_untrusted
@@ -65,12 +65,20 @@ def as_llm_tool(
     settings: Optional[ToolGatewaySettings] = None,
     provider_id: str = "",
     timeout_seconds: float = 30.0,
+    runtime=None,
 ) -> Tool:
     """Wrap one registered capability as an LLM-callable Tool proxy.
 
     Requires ``spec.input_schema`` — a tool with an empty parameter schema
     would be called with ``{}`` by the model, which is a misconfiguration,
     not a feature. Raises ValueError with the fix if it is missing.
+
+    *runtime* (optional) connects the proxy to the runtime's authority
+    ceiling: with it, a capability that declares an ``action_class`` is
+    evaluated through ``Runtime.evaluate_capability_authority`` (audited,
+    ceiling-aware); without it the action-class dimension evaluates
+    against ceiling ``"none"`` and grants nothing — the legacy risk
+    dimension alone decides, exactly as before.
     """
     if spec.capability_name in NEVER_LLM_CALLABLE:
         raise ValueError(
@@ -91,14 +99,26 @@ def as_llm_tool(
     gw_settings = settings or ToolGatewaySettings()
 
     def _proxy(args: Any, ctx: ToolContext) -> dict[str, Any]:
+        from .behaviors import evaluate_call_policy
+
         input_data = args.model_dump() if hasattr(args, "model_dump") else dict(args)
         frame_id = getattr(ctx.frame, "id", None)
-        decision = decide_policy(spec.risk_class, gw_settings)
+        policy = evaluate_call_policy(
+            capability_key=spec.key,
+            risk_class=spec.risk_class,
+            action_class=spec.action_class,
+            settings=gw_settings,
+            runtime=runtime,
+            actor=ctx.behavior_name or "gateway_llm_proxy",
+        )
+        decision = policy["decision"]
 
         # Audit before action: the capability_call exists (with its policy
         # outcome) before anything executes. Status is pre-decided here via
-        # decide_policy, so policy_enforcer (which only acts on 'proposed')
-        # does not double-decide; call_recorder still links the provider.
+        # evaluate_call_policy, so policy_enforcer (which only acts on
+        # 'proposed') does not double-decide; call_recorder still links the
+        # provider. The per-dimension reasoning rides in metadata whenever
+        # the capability declares an action_class.
         call = graph.add_object("capability_call", {
             "provider_id": provider_id,
             "provider_name": spec.provider_name,
@@ -106,15 +126,26 @@ def as_llm_tool(
             "input_data": input_data,
             "credential_ref_name": spec.credential_ref_name,
             "risk_class": spec.risk_class,
+            "action_class": spec.action_class,
             "status": "approved" if decision == "auto_approve" else "policy_checking",
             "proposed_by": ctx.behavior_name,
             "frame_id": frame_id,
             "proposed_at": _now_iso(),
-            "metadata": {"initiated_by": "llm_tool_loop"},
+            "metadata": {
+                "initiated_by": "llm_tool_loop",
+                **(
+                    {
+                        "granted_by": policy["granted_by"],
+                        "action_authority": policy["action_authority"],
+                    }
+                    if spec.action_class
+                    else {}
+                ),
+            },
         })
 
         if decision == "hold":
-            return {
+            held: dict[str, Any] = {
                 "status": "held_for_approval",
                 "call_id": call.id,
                 "risk_class": spec.risk_class,
@@ -124,6 +155,12 @@ def as_llm_tool(
                     "waiting for their sign-off."
                 ),
             }
+            if spec.action_class:
+                held["action_class"] = spec.action_class
+                held["action_authority_reason"] = (
+                    policy["action_authority"]["reason"]
+                )
+            return held
 
         # Auto-approved: execute inline so the result reaches the model in
         # this same tool turn. The approval object is recorded AFTER
@@ -137,13 +174,25 @@ def as_llm_tool(
             "provider_id": provider_id,
             "provider_name": spec.provider_name,
             "capability_name": spec.capability_name,
+            "action_class": spec.action_class,
             "input_data": input_data,
             "credential_ref_name": spec.credential_ref_name,
             "frame_id": frame_id,
             "policy_decision": "auto_approved",
             "approver": "gateway_llm_proxy",
             "approved_at": _now_iso(),
-            "metadata": {"risk_class": spec.risk_class, "executed": "inline"},
+            "metadata": {
+                "risk_class": spec.risk_class,
+                "executed": "inline",
+                **(
+                    {
+                        "granted_by": policy["granted_by"],
+                        "action_authority": policy["action_authority"],
+                    }
+                    if spec.action_class
+                    else {}
+                ),
+            },
         })
         # NOTE: add_relation signature is (source, target, type).
         try:
@@ -183,6 +232,7 @@ def llm_tools_for(
     *,
     settings: Optional[ToolGatewaySettings] = None,
     provider_ids: Optional[dict[str, str]] = None,
+    runtime=None,
 ) -> list[Tool]:
     """Build LLM tool proxies for the given capability keys.
 
@@ -192,6 +242,10 @@ def llm_tools_for(
 
     *provider_ids* optionally maps provider_name → capability_provider
     object id so call_recorder can link calls to their provider objects.
+
+    *runtime* (optional) is forwarded to each proxy so declared
+    action_class capabilities evaluate against the runtime's authority
+    ceiling with the runtime's audit event (see as_llm_tool).
     """
     tools: list[Tool] = []
     for key in keys:
@@ -209,5 +263,6 @@ def llm_tools_for(
             spec,
             settings=settings,
             provider_id=(provider_ids or {}).get(spec.provider_name, ""),
+            runtime=runtime,
         ))
     return tools

@@ -3,7 +3,7 @@
 
 [pack]
 name = "mcp"
-version = "0.2.2"
+version = "0.3.0"
 description = "Bidirectional MCP: outbound servers' tools become governed Tool Gateway capabilities (approval-required by default); inbound, the assistant is itself an MCP server exposing chat, subject-scoped memory search, and selected capabilities — token-authenticated, role-gated by graph-native exposure rules, fully audited."
 license = "Apache-2.0"
 
@@ -15,10 +15,10 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:d7642cfa0de6d6b6c589eefb529f2d4c3786a83fe3ccd63009bbac0f26d72445"
+content_hash = "sha256:db21672e44e6050d71c5370d63ca3d2a73d14fa24d5245a5a59bd19e3943d12c"
 
 [dependencies]
-activegraph = ">=1.7.1,<2.0"
+activegraph = ">=1.9,<2.0"
 python = ">=3.11"
 python-deps = []
 
@@ -44,6 +44,7 @@ provider = "mcp"
 capability = "set_exposure"
 risk_class = "high"
 credential_ref = ""
+action_class = "R4"
 
 [fixtures]
 entrypoint = "fixtures/run_fixtures.py"

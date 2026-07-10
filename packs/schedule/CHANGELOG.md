@@ -1,5 +1,15 @@
 # Schedule Pack Changelog
 
+## v0.2.0 — create_reminder classified R3 (2026-07-10)
+
+### Changed
+- schedule.create_reminder declares `action_class="R3"` — the
+  deliberately-higher pick of a genuine R2/R3 ambiguity: the schedule
+  object is cancellable until it fires, but its payload is a
+  pre-approved outbound message that delivers with no further gate when
+  due, so creating the reminder commits a future send. Legacy
+  risk_class stays "low" (a separate dimension; no mapping).
+
 ## v0.1.2 — Declarative capability surface (2026-07-08)
 
 ### Added

@@ -250,3 +250,66 @@ def test_unreachable_server_is_recorded_not_fatal(rt):
     assert results == {"down": []}
     (server_obj,) = list(rt.graph.objects(type="mcp_server"))
     assert server_obj.data["status"] == "unreachable"
+
+
+# ------------------------------------------- action classes (ADR 0016)
+
+
+def test_mcp_tools_default_to_r3_presumed_outward(rt):
+    """An unknown external tool is presumed outward-facing: action_class
+    defaults to R3 alongside (not derived from) the legacy 'high' risk."""
+    keys = connect_and_register("fake", MCPClient(FakeTransport()), graph=rt.graph)
+    for key in keys:
+        spec = get_capability_spec(key)
+        assert spec.action_class == "R3"
+        assert spec.risk_class == "high"  # separate dimension, unchanged
+    (server_obj,) = list(rt.graph.objects(type="mcp_server"))
+    assert server_obj.data["default_action_class"] == "R3"
+    assert server_obj.data["action_class_overrides"] == {}
+
+
+def test_mcp_r3_default_is_ineligible_for_ceiling_automation(rt):
+    """Even at the maximum ceiling with the class dimension fully raised,
+    an un-overridden MCP tool never auto-approves through the class path."""
+    from packs.tool_gateway.gateway import decide_policy_detail
+
+    connect_and_register("fake", MCPClient(FakeTransport()), graph=rt.graph)
+    spec = get_capability_spec("mcp_fake.search")
+    detail = decide_policy_detail(
+        spec.risk_class,
+        ToolGatewaySettings(auto_approve_risk_classes=[]),
+        action_class=spec.action_class,
+        authority_ceiling="R2",
+    )
+    assert detail["decision"] == "hold"
+    assert detail["action_authority"]["matched_policy"] == "approval_required_r3"
+
+
+def test_operator_action_class_override_is_explicit_per_tool(rt):
+    """Only an explicit operator override assigns a lower class — and only
+    to the named tool; risk overrides do NOT touch the action class."""
+    connect_and_register(
+        "fake", MCPClient(FakeTransport()), graph=rt.graph,
+        tool_risk_overrides={"search": "low"},
+        tool_action_class_overrides={"search": "R0"},
+    )
+    search = get_capability_spec("mcp_fake.search")
+    assert search.action_class == "R0"
+    assert search.risk_class == "low"
+    other = get_capability_spec("mcp_fake.delete_everything")
+    assert other.action_class == "R3"
+    assert other.risk_class == "high"
+    (server_obj,) = list(rt.graph.objects(type="mcp_server"))
+    assert server_obj.data["action_class_overrides"] == {"search": "R0"}
+
+
+def test_risk_override_alone_never_changes_action_class(rt):
+    """No cross-inference: trusting a tool's RISK does not reclassify its
+    consequence — the R3 presumption stands until explicitly overridden."""
+    connect_and_register(
+        "fake", MCPClient(FakeTransport()), graph=rt.graph,
+        tool_risk_overrides={"search": "low"},
+    )
+    spec = get_capability_spec("mcp_fake.search")
+    assert spec.risk_class == "low"
+    assert spec.action_class == "R3"

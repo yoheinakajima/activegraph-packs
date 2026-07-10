@@ -1,5 +1,21 @@
 # MCP Pack Changelog
 
+## v0.3.0 — External tools presumed outward: action_class R3 (2026-07-10)
+
+### Added
+- Discovered MCP tools register with `action_class` defaulting to "R3"
+  (ADR 0016): an unknown external tool is presumed outward-facing and is
+  therefore ineligible for ceiling-based auto-approval at every ceiling.
+  Only an explicit per-tool operator override assigns a lower class:
+  `tool_action_class_overrides` on the server entry /
+  connect_and_register. The legacy "high" risk default remains alongside
+  as a SEPARATE dimension; neither is derived from the other.
+- MCPSettings.default_tool_action_class (default "R3");
+  mcp_server audit objects record default_action_class and
+  action_class_overrides at discovery time.
+- mcp.set_exposure is classified R4 (changing who may reach which
+  surface is an authority change — governance-shaped, never routine).
+
 ## v0.2.2 — Capability terminology (2026-07-09)
 
 ### Changed

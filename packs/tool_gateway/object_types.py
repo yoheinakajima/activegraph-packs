@@ -97,9 +97,20 @@ class CapabilityCall(BaseModel):
     risk_class: Literal["low", "medium", "high", "critical"] = Field(
         default="medium",
         description=(
-            "Risk classification for policy gating. "
+            "LEGACY risk classification for policy gating. "
             "low=read-only/safe, medium=writes to external systems, "
-            "high=financial/legal consequences, critical=irreversible."
+            "high=financial/legal consequences, critical=irreversible. "
+            "Independent of action_class; never mapped to or from it."
+        ),
+    )
+    action_class: Literal["", "R0", "R1", "R2", "R3", "R4"] = Field(
+        default="",
+        description=(
+            "Canonical consequence class (ADR 0016): R0=observe, R1=derive, "
+            "R2=reversible action, R3=irreversible/outward, R4=governance. "
+            "'' means undeclared — the call is then ineligible for the "
+            "action-class dimension's auto-approval (fails closed to hold). "
+            "Never inferred from risk_class."
         ),
     )
     status: Literal["proposed", "policy_checking", "approved", "rejected", "executing", "done", "failed"] = Field(
@@ -137,6 +148,15 @@ class CapabilityApproval(BaseModel):
     provider_id: str = Field(default="")
     provider_name: str = Field(default="")
     capability_name: str = Field(default="")
+    action_class: Literal["", "R0", "R1", "R2", "R3", "R4"] = Field(
+        default="",
+        description=(
+            "Canonical consequence class of the approved call (ADR 0016); "
+            "'' when the capability declares none. Copied from the call so "
+            "the approval record itself names what class of action it "
+            "authorized."
+        ),
+    )
     input_data: dict[str, Any] = Field(default_factory=dict)
     credential_ref_name: Optional[str] = Field(default=None)
     credential_ref_id: Optional[str] = Field(
@@ -173,6 +193,14 @@ class CapabilityDenial(BaseModel):
     )
     provider_name: str = Field(default="")
     capability_name: str = Field(default="")
+    action_class: Literal["", "R0", "R1", "R2", "R3", "R4"] = Field(
+        default="",
+        description=(
+            "Canonical consequence class of the denied call (ADR 0016); "
+            "'' when the capability declares none. Refusals name the class "
+            "with the same weight grants do."
+        ),
+    )
     denier: str = Field(
         default="",
         description="Ref of the principal or operator that denied the call.",

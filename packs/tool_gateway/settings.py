@@ -16,9 +16,26 @@ class ToolGatewaySettings(BaseModel):
     auto_approve_risk_classes: list[Literal["low", "medium", "high", "critical"]] = Field(
         default=["low"],
         description=(
-            "Risk classes that are automatically approved without human review. "
-            "All other risk classes require explicit approval via rt.approve(). "
-            "Set to ['low', 'medium'] for a more permissive policy."
+            "LEGACY RISK DIMENSION: risk classes that are automatically "
+            "approved without human review. All other risk classes require "
+            "explicit approval via rt.approve(). Set to ['low', 'medium'] "
+            "for a more permissive policy. This dimension is independent of "
+            "action_class (ADR 0016) — neither is ever inferred from the "
+            "other."
+        ),
+    )
+
+    capability_action_ceilings: dict[str, Literal["none", "R0", "R1", "R2"]] = Field(
+        default_factory=dict,
+        description=(
+            "ACTION-CLASS DIMENSION, local lowering: per-capability "
+            "automatic-authority ceilings, keyed by 'provider.capability'. "
+            "A capability listed here auto-approves through the action-class "
+            "path only up to the STRICTER of this ceiling and the runtime "
+            "instance ceiling — local policy may always lower, never raise "
+            "(runtime CONTRACT v1.9 #2). Capabilities not listed use the "
+            "instance ceiling alone. The instance ceiling itself lives on "
+            "the Runtime (rt.set_authority_ceiling), not in pack settings."
         ),
     )
 

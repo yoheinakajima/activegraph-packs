@@ -61,5 +61,8 @@ def register_send_capability(*, api_base: str = "https://api.telegram.org"):
         input_schema=SendMessageInput,
         description="Send a text message to a Telegram chat via the Bot API.",
         risk_class="low",
+        # R3: a delivered message cannot be unsent — an outward,
+        # irreversible action regardless of the legacy risk label.
+        action_class="R3",
         credential_ref_name="TELEGRAM_BOT_TOKEN",
     )

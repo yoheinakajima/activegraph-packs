@@ -47,7 +47,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["secrets", "identity_auth"]
 pack = Pack(
     name="tool_gateway",
-    version="0.6.1",
+    version="0.7.0",
     description=(
         "Capability execution gateway. All external calls (APIs, MCP, local tools) "
         "flow through here for policy checks, credential injection by reference, "
@@ -66,8 +66,8 @@ pack = Pack(
     # loader's two-way surface check covers capabilities too. CI's AST
     # check (tests/test_manifests.py) keeps this honest against the code.
     capabilities=(
-        CapabilityDecl(provider='catalog', capability='search', risk_class='low', credential_ref=''),
-        CapabilityDecl(provider='web', capability='fetch_url', risk_class='low', credential_ref=''),
+        CapabilityDecl(provider='catalog', capability='search', risk_class='low', credential_ref='', action_class='R0'),
+        CapabilityDecl(provider='web', capability='fetch_url', risk_class='low', credential_ref='', action_class='R0'),
     ),
     settings_schema=ToolGatewaySettings,
 )

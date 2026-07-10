@@ -1,5 +1,14 @@
 # WhatsApp Adapter Pack Changelog
 
+## v0.2.0 — send_message classified R3 (2026-07-10)
+
+### Changed
+- whatsapp.send_message declares `action_class="R3"`: a delivered
+  message cannot be unsent — an outward, irreversible action. Legacy
+  risk_class stays "low" (a separate dimension; no mapping), so hosts
+  auto-approving low-risk calls keep today's behavior during migration;
+  the class dimension itself never automates R3.
+
 ## v0.1.1 — Declarative capability surface (2026-07-08)
 
 ### Added

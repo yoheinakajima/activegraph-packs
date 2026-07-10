@@ -3,7 +3,7 @@
 
 [pack]
 name = "telegram"
-version = "0.1.1"
+version = "0.2.0"
 description = "Telegram transport adapter: inbound updates become chat_input (reusing the Chat Pack's conversation machinery); approved outbound replies become policy-checked Tool Gateway capability calls with the bot token injected at execution time."
 license = "Apache-2.0"
 
@@ -15,10 +15,10 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:1184b281e9c918cf01379f99b6edd11eaf7e2434fecd9d6fd0e71fe13a819f45"
+content_hash = "sha256:6b4b84c58dcb1edf064d34824a3f1fdef8914a838066dbeec4fd83e2c0ea34e8"
 
 [dependencies]
-activegraph = ">=1.7.1,<2.0"
+activegraph = ">=1.9,<2.0"
 python = ">=3.11"
 python-deps = []
 
@@ -45,6 +45,7 @@ provider = "telegram"
 capability = "send_message"
 risk_class = "low"
 credential_ref = "TELEGRAM_BOT_TOKEN"
+action_class = "R3"
 
 [fixtures]
 entrypoint = "fixtures/run_fixtures.py"

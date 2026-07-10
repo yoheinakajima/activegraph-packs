@@ -42,7 +42,11 @@ from manifest_tools import (  # noqa: E402
 CREATED_AT = "2026-07-08T00:00:00Z"
 AUTHOR = "Yohei Nakajima"
 SOURCE_URL = "https://github.com/yoheinakajima/activegraph-packs"
-RUNTIME_RANGE = ">=1.7.1,<2.0"
+# The v1.9 contract floor (canonical action_class authority). Unreleased
+# at pin time — the repo installs the runtime from the git ref in
+# pyproject.toml; correct this floor if the contract ships under a
+# different release number, then rerun this script.
+RUNTIME_RANGE = ">=1.9,<2.0"
 PYTHON_RANGE = ">=3.11"
 DEP_RANGE = ">=0.1"  # honest floor for intra-repo pack deps
 
@@ -144,6 +148,11 @@ def generate(pack_name: str) -> str:
             f"risk_class = {_toml_str(decl['risk_class'])}",
             f"credential_ref = {_toml_str(decl['credential_ref'])}",
         ]
+        # The canonical dimension is written only when declared, so a
+        # pack without action classes keeps its exact pre-v1.9 manifest
+        # shape (mirrors the runtime's pack.loaded payload posture).
+        if decl.get("action_class"):
+            lines += [f"action_class = {_toml_str(decl['action_class'])}"]
     lines += [
         "",
         "[fixtures]",

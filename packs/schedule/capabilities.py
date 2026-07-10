@@ -50,6 +50,14 @@ def register_reminder_capability(*, risk_class: str = "low"):
     like any other approved outbound reply — reminders are ordinary
     messages that happen to originate from a tick.
 
+    Action class R3, the deliberately-higher pick of a genuine R2/R3
+    ambiguity: the schedule object itself is bounded and cancellable
+    until it fires (R2-shaped), but the payload is a PRE-APPROVED
+    outbound message that delivers on a real channel with no further
+    gate when due — creating the reminder commits a future send, and a
+    delivered message cannot be unsent. Ambiguity resolves upward per
+    ADR 0016 discipline.
+
     Requires the Tool Gateway Pack (guarded import; returns None without it).
     """
     try:
@@ -112,4 +120,5 @@ def register_reminder_capability(*, risk_class: str = "low"):
             "when due."
         ),
         risk_class=risk_class,
+        action_class="R3",
     )

@@ -6,6 +6,27 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Canonical `action_class` (R0–R4) across the gateway layer** (ADR
+  0016; runtime CONTRACT v1.9). Capability specs, registrations,
+  capability_call/approval/denial objects, the catalog, and pending
+  approvals all carry the canonical consequence class as a SEPARATE
+  dimension from the legacy `risk_class` — no mapping in either
+  direction, anywhere. `decide_policy` evaluates two explicitly named
+  dimensions (legacy `auto_approve_risk_classes` byte-for-byte as
+  before; the action-class path ceiling-aware per ADR 0016: R4 →
+  governance gate always, R3 → approval always, R0–R2 auto only at or
+  below the effective ceiling, missing class fails closed).
+  First-party capabilities are classified (reads R0; sends,
+  create_reminder R3; mcp.set_exposure and both evolution adoption
+  surfaces R4); MCP-discovered tools default to R3 (presumed outward)
+  and gain a lower class only through explicit per-tool operator
+  overrides. Runtime dependency pinned to the git ref carrying
+  CONTRACT v1.9 (see pyproject.toml) until a release lands; manifests
+  declare `>=1.9,<2.0` — correct the floor in
+  scripts/generate_manifests.py if the contract ships under a
+  different number. Per-pack details in the tool_gateway, mcp,
+  schedule, telegram, whatsapp, and evolution changelogs.
+
 - **L2 Habit closed loop.** Added a deterministic cross-pack fixture proving a
   normalizer-produced skill proposal, retry-safe exact-version usage, explicit
   helped outcome, skill reliability, reversible memory de-ranking, and two

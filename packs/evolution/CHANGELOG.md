@@ -1,5 +1,18 @@
 # Evolution Pack Changelog
 
+## v0.8.0 — Adoption surface classified R4 (2026-07-10)
+
+### Changed
+- evolution.adopt_proposal declares `action_class="R4"` — the
+  glossary's literal governance case (self-modification adoption).
+- evolution.disable_promotion declares `action_class="R4"` — the
+  deliberately-higher pick of a genuine ambiguity: disable is
+  reversible-in-spirit and safety-directional, but it acts on the same
+  self-modification/authority surface adoption governs. Both remain on
+  their existing legacy risk labels (critical/high) — separate
+  dimension, no mapping — and both were already held for verified owner
+  approval; nothing about their gating loosens.
+
 ## v0.7.3 — Platform-truthful memory containment fixture (2026-07-09)
 
 ### Fixed

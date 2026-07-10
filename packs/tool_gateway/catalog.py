@@ -44,6 +44,10 @@ def _entry(spec: CapabilitySpec, allow_list: Optional[list[str]]) -> dict[str, A
         "capability": spec.capability_name,
         "description": spec.description,
         "risk_class": spec.risk_class,
+        # Canonical consequence class (ADR 0016); "" = undeclared, which
+        # means ineligible for action-class automation. A separate
+        # dimension from risk_class — never derived from it.
+        "action_class": spec.action_class,
         "origin": spec.origin,
         "credential_ref": spec.credential_ref_name,  # name only, never a value
         "llm_exposable": (spec.input_schema is not None) and not never,
@@ -58,6 +62,7 @@ def catalog_entries(
     query: Optional[str] = None,
     risk_class: Optional[str] = None,
     origin: Optional[str] = None,
+    action_class: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """The full catalog, optionally filtered. Sorted by key for determinism.
 
@@ -65,7 +70,8 @@ def catalog_entries(
     whether the current chat allow-list grants it. *query* is a
     case-insensitive substring match over key + description. *origin*
     matches exactly ("native") or by prefix ("mcp" matches every
-    "mcp:<server>").
+    "mcp:<server>"). *risk_class* and *action_class* filter their own
+    dimensions independently.
     """
     entries = []
     for spec in _LOCAL_REGISTRY.values():
@@ -75,6 +81,8 @@ def catalog_entries(
             if query.lower() not in haystack:
                 continue
         if risk_class and entry["risk_class"] != risk_class:
+            continue
+        if action_class and entry["action_class"] != action_class:
             continue
         if origin and not (entry["origin"] == origin
                            or entry["origin"].startswith(f"{origin}:")):
@@ -91,7 +99,14 @@ class CatalogSearchInput(BaseModel):
     )
     risk_class: str = Field(
         default="",
-        description="Filter by risk class: low | medium | high | critical.",
+        description="Filter by legacy risk class: low | medium | high | critical.",
+    )
+    action_class: str = Field(
+        default="",
+        description=(
+            "Filter by canonical action class: R0 | R1 | R2 | R3 | R4 "
+            "(a separate dimension from risk_class)."
+        ),
     )
     origin: str = Field(
         default="",
@@ -114,12 +129,14 @@ def register_catalog_capability(
     """
 
     def _search(query: str = "", risk_class: str = "", origin: str = "",
+                action_class: str = "",
                 execution_context: Optional[dict] = None) -> dict:
         entries = catalog_entries(
             allow_list=allow_list_fn() if allow_list_fn else None,
             query=query or None,
             risk_class=risk_class or None,
             origin=origin or None,
+            action_class=action_class or None,
         )
         return {"count": len(entries), "capabilities": entries}
 
@@ -128,9 +145,11 @@ def register_catalog_capability(
         input_schema=CatalogSearchInput,
         description=(
             "Search the capability catalog: every registered capability with "
-            "its risk class, origin (native vs MCP-derived), and whether it "
-            "is on your current allow-list. Use this instead of guessing "
-            "tool names; ask the owner to allow-list anything you need."
+            "its risk class, action class (R0-R4), origin (native vs "
+            "MCP-derived), and whether it is on your current allow-list. Use "
+            "this instead of guessing tool names; ask the owner to "
+            "allow-list anything you need."
         ),
         risk_class=risk_class,
+        action_class="R0",
     )

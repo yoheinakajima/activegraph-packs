@@ -225,6 +225,9 @@ def register_set_exposure_capability(*, risk_class: str = "high"):
             "held for owner approval."
         ),
         risk_class=risk_class,
+        # R4: changing who may reach which surface is an authority
+        # change — governance-shaped, never routine at any ceiling.
+        action_class="R4",
     )
 
 

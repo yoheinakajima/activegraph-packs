@@ -44,7 +44,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # integrates_with=["schedule", "chat"]
 pack = Pack(
     name="evolution",
-    version="0.7.3",
+    version="0.8.0",
     description=(
         "Agent-authored packs under governance: static gates, fork trials "
         "against replayed history, bundle-hash pins, verified owner approval, "
@@ -61,9 +61,11 @@ pack = Pack(
     # which refuses unsafe configurations.
     capabilities=(
         CapabilityDecl(provider="evolution", capability="adopt_proposal",
-                       risk_class="critical", credential_ref=""),
+                       risk_class="critical", credential_ref="",
+                       action_class="R4"),
         CapabilityDecl(provider="evolution", capability="disable_promotion",
-                       risk_class="high", credential_ref=""),
+                       risk_class="high", credential_ref="",
+                       action_class="R4"),
     ),
     settings_schema=EvolutionSettings,
 )

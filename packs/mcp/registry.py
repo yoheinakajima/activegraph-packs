@@ -8,6 +8,14 @@ capability — which means every MCP tool call arrives pre-governed:
     the default gateway policy every third-party MCP tool is
     approval-required until the operator explicitly lowers its risk via
     ``tool_risk_overrides``. Breadth never outruns governance.
+  * **action-classed R3 by default** — an unknown external tool is
+    presumed outward-facing (ADR 0016): ``action_class`` defaults to
+    ``"R3"``, which is ineligible for ceiling-based automation at every
+    ceiling. Only an explicit per-tool operator override
+    (``tool_action_class_overrides``) can assign a lower class. The two
+    defaults are SEPARATE dimensions: ``high`` is the legacy risk label,
+    ``R3`` the canonical consequence class; neither derives from the
+    other.
   * **recorded** — each call is a capability_call/result pair in the graph.
   * **sanitized + injection-scanned** — MCP output flows through the same
     sanitizer and untrusted-content posture as every other capability
@@ -80,21 +88,32 @@ def connect_and_register(
     graph=None,
     default_risk: str = "high",
     tool_risk_overrides: Optional[dict[str, str]] = None,
+    default_action_class: str = "R3",
+    tool_action_class_overrides: Optional[dict[str, str]] = None,
     credential_ref_name: Optional[str] = None,
 ) -> list[str]:
     """Discover one MCP server's tools and register them as capabilities.
 
     Returns the registered capability keys (``mcp_<server>.<tool>``).
     When *graph* is provided, an ``mcp_server`` object records the
-    discovery (server info, tool list, risk classes) so the connection is
-    auditable and visible in the Inspector.
+    discovery (server info, tool list, risk and action classes) so the
+    connection is auditable and visible in the Inspector.
 
     *tool_risk_overrides* maps tool name → risk class for tools the
     operator has decided to trust (e.g. ``{"search": "low"}`` makes a
     read-only search auto-approvable). Everything else stays at
     *default_risk* — approval-required by default under gateway policy.
+
+    *tool_action_class_overrides* is the SEPARATE canonical dimension
+    (ADR 0016): tool name → action class ("R0"–"R4"). Without an
+    explicit override a discovered tool gets *default_action_class* —
+    ``"R3"``, the presumed-outward posture, ineligible for ceiling-based
+    automation at every ceiling. Assigning e.g. ``{"search": "R0"}`` is
+    an explicit operator statement about consequence, never derived
+    from (or into) the risk label.
     """
     overrides = tool_risk_overrides or {}
+    action_overrides = tool_action_class_overrides or {}
     server_info = client.initialize()
     tools = client.list_tools()
 
@@ -105,6 +124,7 @@ def connect_and_register(
         if not tool_name:
             continue
         risk = overrides.get(tool_name, default_risk)
+        action = action_overrides.get(tool_name, default_action_class)
         model = schema_model_from_json_schema(
             f"MCP_{server_name}_{tool_name}_Input", tool_def.get("inputSchema")
         )
@@ -128,6 +148,7 @@ def connect_and_register(
                 f"[MCP:{server_name}] {tool_def.get('description', '')}".strip()
             ),
             risk_class=risk,
+            action_class=action,
             credential_ref_name=credential_ref_name,
             origin=f"mcp:{server_name}",
         )
@@ -143,6 +164,8 @@ def connect_and_register(
                 "capability_keys": registered,
                 "default_risk": default_risk,
                 "risk_overrides": overrides,
+                "default_action_class": default_action_class,
+                "action_class_overrides": action_overrides,
                 "status": "connected",
                 "connected_at": datetime.now(timezone.utc).isoformat(),
             })
@@ -180,6 +203,13 @@ def register_configured_servers(settings, graph=None) -> dict[str, list[str]]:
                 graph=graph,
                 default_risk=server.get("default_risk", settings.default_tool_risk),
                 tool_risk_overrides=server.get("tool_risk_overrides"),
+                default_action_class=server.get(
+                    "default_action_class",
+                    getattr(settings, "default_tool_action_class", "R3"),
+                ),
+                tool_action_class_overrides=server.get(
+                    "tool_action_class_overrides"
+                ),
                 credential_ref_name=server.get("credential_ref_name"),
             )
         except Exception as exc:

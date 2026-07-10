@@ -3,7 +3,7 @@
 
 [pack]
 name = "whatsapp"
-version = "0.1.1"
+version = "0.2.0"
 description = "WhatsApp Cloud API transport adapter: inbound messages become chat_input (reusing the Chat Pack's conversation machinery); approved outbound replies become policy-checked Tool Gateway capability calls with the access token injected at execution time."
 license = "Apache-2.0"
 
@@ -15,10 +15,10 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:8a118a94327e3da29af4535a3d584e889d42548c71d3e8ed80bd22f5295f693c"
+content_hash = "sha256:b4db9c7431e249b53ba06c6ce7554dc6c21bf7e3ce31f2f787ceff1c0ce67228"
 
 [dependencies]
-activegraph = ">=1.7.1,<2.0"
+activegraph = ">=1.9,<2.0"
 python = ">=3.11"
 python-deps = []
 
@@ -45,6 +45,7 @@ provider = "whatsapp"
 capability = "send_message"
 risk_class = "low"
 credential_ref = "WHATSAPP_ACCESS_TOKEN"
+action_class = "R3"
 
 [fixtures]
 entrypoint = "fixtures/run_fixtures.py"
