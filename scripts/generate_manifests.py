@@ -17,6 +17,8 @@ is checked.
 Usage:
     python scripts/generate_manifests.py            # all packs
     python scripts/generate_manifests.py chat mcp   # specific packs
+    python scripts/generate_manifests.py importer_local_files
+                                                # a nested importer pack
 """
 
 from __future__ import annotations
@@ -64,9 +66,26 @@ def _parse_dep_comments(init_text: str) -> tuple[list[str], list[str]]:
     return _grab("requires"), _grab("integrates_with")
 
 
-def generate(pack_dir_name: str) -> str:
-    pack_dir = REPO / "packs" / pack_dir_name
-    module = importlib.import_module(f"packs.{pack_dir_name}")
+def generate(pack_name: str) -> str:
+    """Generate one manifest selected by its registered pack name.
+
+    Pack names and filesystem paths are intentionally separate: most packs are
+    top-level directories, while format adapters live below ``packs/importers``.
+    Keeping that mapping explicit prevents a nested importer's entry-point name
+    from leaking into its module or artifact path.
+    """
+    try:
+        relative_dir = PACK_PATHS[pack_name]
+    except KeyError as exc:
+        choices = ", ".join(PACK_PATHS)
+        raise SystemExit(
+            f"unknown pack {pack_name!r}; expected one of: {choices}"
+        ) from exc
+
+    relative_path = Path(relative_dir)
+    pack_dir = REPO / "packs" / relative_path
+    module_name = "packs." + ".".join(relative_path.parts)
+    module = importlib.import_module(module_name)
     pack = module.pack
 
     requires, integrates = _parse_dep_comments((pack_dir / "__init__.py").read_text())
@@ -140,12 +159,34 @@ def generate(pack_dir_name: str) -> str:
     return str(manifest_path.relative_to(REPO))
 
 
-ALL_PACKS = [
-    "core", "tool_gateway", "secrets", "memory_gateway", "identity_auth",
-    "agent_profile", "entity", "communication", "chat", "email", "schedule",
-    "telegram", "whatsapp", "mcp", "research", "codebase", "team_ops",
-    "meeting", "bridges", "evolution",
-]
+PACK_PATHS = {
+    "core": "core",
+    "activity_normalizer": "activity_normalizer",
+    "usage": "usage",
+    "importer_local_files": "importers/local_files",
+    "importer_chatgpt_export": "importers/chatgpt_export",
+    "tool_gateway": "tool_gateway",
+    "secrets": "secrets",
+    "memory_gateway": "memory_gateway",
+    "identity_auth": "identity_auth",
+    "agent_profile": "agent_profile",
+    "entity": "entity",
+    "communication": "communication",
+    "chat": "chat",
+    "email": "email",
+    "schedule": "schedule",
+    "telegram": "telegram",
+    "whatsapp": "whatsapp",
+    "mcp": "mcp",
+    "research": "research",
+    "codebase": "codebase",
+    "team_ops": "team_ops",
+    "meeting": "meeting",
+    "bridges": "bridges",
+    "evolution": "evolution",
+}
+
+ALL_PACKS = list(PACK_PATHS)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,14 @@
 # Evolution Pack Changelog
 
+## v0.7.3 — Platform-truthful memory containment fixture (2026-07-09)
+
+### Fixed
+- **Fixture 29 now follows the runtime's live memory-net signal.** When
+  RLIMIT_AS is live, the fixture preserves the real memory-net containment
+  path. When the net is OFF on macOS, it runs the unforced runaway path and
+  proves wall-clock containment. Linux CI still forces the net-OFF path as a
+  second pass, and the per-trial failure attribution check remains in place.
+
 ## v0.7.2 — Adoption-time supersession + narrow boot heal (2026-07-09)
 
 Resolves the two crash-safety proposals from the v0.7.1 audit

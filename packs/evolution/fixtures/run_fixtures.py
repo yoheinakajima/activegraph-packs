@@ -1085,30 +1085,47 @@ def fx_29_budget_memory_platform_aware(tmp) -> dict:
     """budget_memory protects CONTAINMENT of a runaway-memory candidate
     on both platforms, keyed off the runtime's real memory-net signal
     (not sys.platform):
-    - memory net available (Linux, real here): a fixed over-cap
+    - memory net available (Linux): a fixed over-cap
       allocation is contained by the memory net (materialization_failed).
-    - memory net OFF (macOS, forced here): an unbounded runaway is
+    - memory net OFF (macOS): an unbounded runaway is
       contained by the wall-clock kill (limits_exceeded), so the trial
       still FAILS instead of completing.
+    Linux CI also forces the memory-net-OFF path, so both platform
+    branches remain covered there.
     Plus the attribution fix: one path's child failure never renders
     under another's."""
     from packs.evolution.soak import SoakHarness
 
-    # Detection returns the truth on this (Linux) box.
+    # Detection returns the runtime's actual signal on this box.
     base = SoakHarness(os.path.join(tmp, "detect"),
                        settings=EvolutionSettings(
                            enabled=True, trial_fixture_timeout_seconds=6.0))
-    assert base._memory_net_available() is True, "Linux memory net is live"
+    live = base._memory_net_available()
 
-    # Linux branch, for real: fixed allocation contained by the memory net.
-    linux = SoakHarness(os.path.join(tmp, "linux"),
-                        settings=EvolutionSettings(
-                            enabled=True, heldout_fraction=0.5,
-                            trial_fixture_timeout_seconds=6.0))
-    linux.boot()
-    out_linux = linux._scenario_budget(1, "budget_memory")
-    assert out_linux["outcome"] in ("materialization_failed", "limits_exceeded")
-    assert "memory net" in out_linux["contained_by"]
+    if live:
+        assert live is True, "Linux memory net is live"
+
+        # Linux branch, for real: fixed allocation contained by the memory net.
+        linux = SoakHarness(os.path.join(tmp, "linux"),
+                            settings=EvolutionSettings(
+                                enabled=True, heldout_fraction=0.5,
+                                trial_fixture_timeout_seconds=6.0))
+        linux.boot()
+        out_linux = linux._scenario_budget(1, "budget_memory")
+        assert out_linux["outcome"] in (
+            "materialization_failed", "limits_exceeded")
+        assert "memory net (RLIMIT_AS)" in out_linux["contained_by"]
+        runtime_key = "linux"
+    else:
+        # macOS branch, for real and unforced: the cached runtime signal
+        # remains OFF, so the WALL-CLOCK contains the unbounded runaway.
+        linux = base
+        linux.boot()
+        out_linux = linux._scenario_budget(1, "budget_memory")
+        assert out_linux["outcome"] in (
+            "limits_exceeded", "crashed"), out_linux
+        assert "wall-clock" in out_linux["contained_by"]
+        runtime_key = "macos"
 
     # macOS branch, forced: memory net OFF, so a large RSS cap keeps the
     # memory net from firing on Linux and the WALL-CLOCK contains the
@@ -1142,7 +1159,8 @@ def fx_29_budget_memory_platform_aware(tmp) -> dict:
     attributed = linux._latest_child_failure_detail(exclude_ids=pre)
     assert "SECOND_PATH" in attributed, attributed
     assert "FIRST_PATH" not in attributed, "prior path's error must not bleed"
-    return {"linux": out_linux["outcome"], "macos_forced": out_mac["outcome"],
+    return {runtime_key: out_linux["outcome"],
+            "macos_forced": out_mac["outcome"],
             "attribution": "own-trial only"}
 
 

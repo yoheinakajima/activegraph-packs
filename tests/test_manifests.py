@@ -44,25 +44,51 @@ from manifest_tools import (
 
 REPO = Path(__file__).parents[1]
 PACKS = [
-    "core", "tool_gateway", "secrets", "memory_gateway", "identity_auth",
-    "agent_profile", "entity", "communication", "chat", "email", "schedule",
-    "telegram", "whatsapp", "mcp", "research", "codebase", "team_ops",
-    "meeting", "bridges", "evolution",
+    ("core", "core"),
+    ("activity_normalizer", "activity_normalizer"),
+    ("usage", "usage"),
+    ("importer_local_files", "importers/local_files"),
+    ("importer_chatgpt_export", "importers/chatgpt_export"),
+    ("tool_gateway", "tool_gateway"),
+    ("secrets", "secrets"),
+    ("memory_gateway", "memory_gateway"),
+    ("identity_auth", "identity_auth"),
+    ("agent_profile", "agent_profile"),
+    ("entity", "entity"),
+    ("communication", "communication"),
+    ("chat", "chat"),
+    ("email", "email"),
+    ("schedule", "schedule"),
+    ("telegram", "telegram"),
+    ("whatsapp", "whatsapp"),
+    ("mcp", "mcp"),
+    ("research", "research"),
+    ("codebase", "codebase"),
+    ("team_ops", "team_ops"),
+    ("meeting", "meeting"),
+    ("bridges", "bridges"),
+    ("evolution", "evolution"),
 ]
 
 
-def _pack_dir(name: str) -> Path:
-    return REPO / "packs" / name
+def _pack_dir(relative_path: str) -> Path:
+    return REPO / "packs" / relative_path
 
 
-@pytest.mark.parametrize("name", PACKS)
-def test_manifest_validates_and_hash_pins(name):
+def _pack_module(relative_path: str) -> str:
+    return "packs." + relative_path.replace("/", ".")
+
+
+@pytest.mark.parametrize(
+    ("name", "relative_path"), PACKS, ids=[name for name, _ in PACKS]
+)
+def test_manifest_validates_and_hash_pins(name, relative_path):
     """Runtime-side validation: schema, content hash, two-way surface."""
-    pack_dir = _pack_dir(name)
+    pack_dir = _pack_dir(relative_path)
     manifest = load_manifest(pack_dir / "manifest.toml")
     verify_content_hash(manifest, pack_dir)
 
-    pack = importlib.import_module(f"packs.{name}").pack
+    pack = importlib.import_module(_pack_module(relative_path)).pack
     verify_surface(manifest, pack)
     assert manifest.name == pack.name
     assert manifest.version == pack.version
@@ -71,12 +97,14 @@ def test_manifest_validates_and_hash_pins(name):
     assert manifest.fixtures_deterministic is True
 
 
-@pytest.mark.parametrize("name", PACKS)
-def test_capability_declarations_match_source(name):
+@pytest.mark.parametrize(
+    ("name", "relative_path"), PACKS, ids=[name for name, _ in PACKS]
+)
+def test_capability_declarations_match_source(name, relative_path):
     """This repo's AST half of the two-way check (spec §3): every literal
     register_local_capability site is declared, and vice versa; declared
     consumes covers every literal capability invocation."""
-    pack_dir = _pack_dir(name)
+    pack_dir = _pack_dir(relative_path)
     manifest = load_manifest(pack_dir / "manifest.toml")
 
     declared = {(c.provider, c.capability, c.risk_class)

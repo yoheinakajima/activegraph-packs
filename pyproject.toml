@@ -27,6 +27,10 @@ dev = [
 # Pack entry points — register each pack so `load_by_name("<name>")` works
 [project.entry-points."activegraph.packs"]
 core = "packs.core:pack"
+activity_normalizer = "packs.activity_normalizer:pack"
+usage = "packs.usage:pack"
+importer_local_files = "packs.importers.local_files:pack"
+importer_chatgpt_export = "packs.importers.chatgpt_export:pack"
 tool_gateway = "packs.tool_gateway:pack"
 secrets = "packs.secrets:pack"
 memory_gateway = "packs.memory_gateway:pack"
