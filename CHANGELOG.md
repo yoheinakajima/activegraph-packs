@@ -6,6 +6,26 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **H2: runtime-version preflight at `import packs`.** A pre-v1.9
+  runtime used to die mid-import with `CapabilityDecl.__init__() got an
+  unexpected keyword argument 'action_class'`; it now raises
+  `RuntimePreflightError` with an actionable install-from-source
+  message. Feature detection (`CapabilityDecl.action_class`) decides —
+  version strings lie in both directions for editable installs; the
+  string only feeds the message. `ACTIVEGRAPH_PACKS_SKIP_PREFLIGHT=1`
+  exists solely so the doctor can run on a broken runtime.
+
+- **H4: `python -m packs.doctor`.** Noninteractive environment
+  diagnostic built from the three real fresh-machine incidents: runtime
+  version + v1.9 feature floor (the H2 check as a pass/fail line),
+  package shadowing (a stray `activegraph` dir on `sys.path` vs the pip
+  install — resolved `__file__` always printed), and replay
+  artifact-store coherence between importer and normalizer settings
+  (the B1 `ReplayUnavailableError` gotcha). Extras: Python ≥ 3.11,
+  `--store` writability, pack entry-point resolution, and a manifest
+  content-hash spot-check. Exit 0/1; `--json` for tooling; README
+  section under "Doctor".
+
 - **P6: promotion-loop wiring (ADR 0018 automation stage).** Memory
   artifacts gain versioned promotion beyond admission: reliability
   evidence generates promote/demote proposals

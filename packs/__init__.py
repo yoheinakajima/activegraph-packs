@@ -9,4 +9,25 @@ Import individual packs directly:
 Or use a bundle:
 
     from bundles.assistant import ASSISTANT_BUNDLE, build_assistant
+
+Importing this package runs a runtime-version preflight: a pre-v1.9
+activegraph raises a clear RuntimePreflightError here instead of a
+baffling ``CapabilityDecl.__init__() got an unexpected keyword argument
+'action_class'`` somewhere mid-import. See packs/_preflight.py.
 """
+
+import os as _os
+
+from packs._preflight import (
+    RuntimePreflightError,
+    assert_runtime_compatible,
+)
+
+# ACTIVEGRAPH_PACKS_SKIP_PREFLIGHT=1 exists for exactly one caller:
+# `python -m packs.doctor` on a broken runtime, which must be able to
+# import this package to report the breakage as a diagnostic line
+# instead of dying on it here.
+if _os.environ.get("ACTIVEGRAPH_PACKS_SKIP_PREFLIGHT") != "1":
+    assert_runtime_compatible()
+
+__all__ = ["RuntimePreflightError", "assert_runtime_compatible"]
