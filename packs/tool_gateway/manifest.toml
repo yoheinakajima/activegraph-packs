@@ -3,7 +3,7 @@
 
 [pack]
 name = "tool_gateway"
-version = "0.7.0"
+version = "0.8.0"
 description = "Capability execution gateway. All external calls (APIs, MCP, local tools) flow through here for policy checks, credential injection by reference, recording, output sanitization, injection scanning, and result mapping to Core source objects. Tool output reaches models fenced as untrusted external content."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:42292c9c01d36bbe80548d86a65d6ccd015d737bbb1d97cbb891c6ecd2cc4450"
+content_hash = "sha256:6eaf2cde808e2b9c6fde4f378921bbe6ca5d0f2604cbb4682246de90c9d44bba"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -30,9 +30,9 @@ secrets = ">=0.1"
 identity_auth = ">=0.1"
 
 [surface]
-object_types = ["capability_provider", "capability_call", "capability_approval", "capability_denial", "capability_result", "injection_flag"]
+object_types = ["tool_policy", "capability_provider", "capability_call", "capability_approval", "capability_denial", "capability_result", "injection_flag"]
 relation_types = ["calls", "approved_by", "denied_by", "produces_result", "sourced_as", "flags"]
-behaviors = ["call_recorder", "policy_enforcer", "call_executor", "result_sourcer"]
+behaviors = ["call_recorder", "policy_enforcer", "call_executor", "result_sourcer", "tool_policy_reliability_guard"]
 tools = ["execute_capability", "pending_approvals", "approve_capability", "deny_capability"]
 settings_schema = "ToolGatewaySettings"
 

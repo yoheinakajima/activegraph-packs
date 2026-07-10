@@ -301,9 +301,65 @@ class InjectionFlag(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ToolPolicy(BaseModel):
+    """A standing-scope tool policy — automation as a promoted prediction.
+
+    ADR 0018's automation stage: sustained, high-confidence prediction
+    accuracy for one decision scope (action_class|capability_key)
+    generates this governed artifact as a CANDIDATE; explicit owner
+    approval promotes it; a promoted policy is what lets the gateway's
+    action-class dimension auto-approve the scope's R2 capability within
+    the runtime ceiling ("Level 3 permits a policy to auto-approve a
+    bounded reversible capability; it does not auto-approve every R2
+    capability" — SCORING_CONTRACT). Accuracy degradation demotes it,
+    observably and reversibly, naming the missed predictions.
+
+    Versioned and provenance-carrying: the evidence block records the
+    exact prediction pairs (refs, verdicts) and the versioned rule that
+    generated the candidate, so every automation traces to the
+    prediction history that earned it. R3/R4 scopes are structurally
+    unrepresentable (action_class is a closed R0-R2 set here).
+    """
+
+    policy_id: str = Field(description="Stable id, one per scope_key.")
+    policy_version: int = Field(default=1, ge=1)
+    scope_key: str = Field(description="'action_class|capability_key'.")
+    capability_key: str = Field(description="'provider.capability'.")
+    action_class: Literal["R0", "R1", "R2"] = Field(
+        description="R3/R4 can never be standing scopes (ADR 0018)."
+    )
+    status: Literal["candidate", "promoted", "demoted", "disabled"] = "candidate"
+    rule_id: str = ""
+    rule_version: int = 0
+    evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Prediction history that earned this candidate: pair refs, "
+            "counts, accuracy percent, thresholds snapshot."
+        ),
+    )
+    proposed_by: str = ""
+    approved_by: str = ""
+    promotion_history: list[dict[str, Any]] = Field(default_factory=list)
+    demotion_reason: str = ""
+    missed_prediction_refs: list[str] = Field(default_factory=list)
+    is_fixture: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 # ================================================================ ObjectType list
 
 OBJECT_TYPES = [
+    ObjectType(
+        name="tool_policy",
+        schema=ToolPolicy,
+        description=(
+            "A standing-scope tool policy: a versioned, provenance-carrying "
+            "governed artifact earned from sustained prediction accuracy "
+            "(ADR 0018). Promoted policies let the action-class dimension "
+            "auto-approve one bounded reversible capability."
+        ),
+    ),
     ObjectType(
         name="capability_provider",
         schema=CapabilityProvider,

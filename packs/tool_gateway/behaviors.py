@@ -41,6 +41,17 @@ from .object_types import CapabilityApproval
 from .settings import ToolGatewaySettings
 
 
+def _stricter_ceiling(a, b):
+    """The lower of two ceiling values; None means unconstrained."""
+
+    order = ("none", "R0", "R1", "R2")
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if order.index(a) <= order.index(b) else b
+
+
 def evaluate_call_policy(
     *,
     capability_key: str,
@@ -48,6 +59,7 @@ def evaluate_call_policy(
     action_class: str,
     settings: ToolGatewaySettings,
     runtime=None,
+    graph=None,
     caused_by=None,
     actor: str = "policy_enforcer",
 ) -> dict:
@@ -62,17 +74,49 @@ def evaluate_call_policy(
     ``authority.decision`` audit event (CONTRACT v1.9 #3). Calls without
     an action_class never touch the runtime authority path — their event
     log stays exactly as before v0.7.
+
+    P6 (ADR 0018): an ``R2`` call is auto-eligible only when a PROMOTED
+    standing scope (tool_policy) covers this capability — looked up live
+    from *graph*, so a demotion takes effect on the very next call.
+    Without one the decision holds, named
+    ``r2_requires_promoted_standing_scope`` in the gateway record, and
+    the runtime audit carries the equivalent ``R1`` capability-ceiling
+    cap (its ``stricter_local_policy`` outcome always agrees with the
+    decision; the gateway record names the precise rule). A stricter
+    ``capability_action_ceilings`` entry still wins over any promoted
+    scope: local policy may always keep a scope manual.
     """
+    from .standing_scopes import promoted_standing_scope_for
+
     capability_ceiling = settings.capability_action_ceilings.get(capability_key)
     ceiling = "none"
     if runtime is not None and hasattr(runtime, "authority_ceiling"):
         ceiling = runtime.authority_ceiling()
+
+    reader = graph
+    if reader is None and runtime is not None:
+        reader = getattr(runtime, "graph", None)
+    standing_scope = None
+    if action_class == "R2" and reader is not None:
+        standing_scope = promoted_standing_scope_for(
+            reader, capability_key, "R2"
+        )
+    # The runtime audit ceiling: without a promoted scope the R2 grant is
+    # unavailable regardless of the instance ceiling, so the audited
+    # evaluation carries the R1 cap (its stricter_local_policy outcome
+    # agrees with the gateway decision; the gateway record below names
+    # the precise rule).
+    audit_ceiling = capability_ceiling
+    if action_class == "R2" and standing_scope is None:
+        audit_ceiling = _stricter_ceiling(capability_ceiling, "R1")
+
     detail = decide_policy_detail(
         risk_class,
         settings,
         action_class=action_class,
         authority_ceiling=ceiling,
         capability_ceiling=capability_ceiling,
+        standing_scope=standing_scope,
     )
     detail["action_authority"]["capability"] = capability_key
     if (
@@ -83,7 +127,7 @@ def evaluate_call_policy(
         audited = runtime.evaluate_capability_authority(
             capability=capability_key,
             action_class=action_class,
-            capability_ceiling=capability_ceiling,
+            capability_ceiling=audit_ceiling,
             actor=actor,
             caused_by=caused_by,
         )
@@ -131,6 +175,7 @@ def call_recorder(event, graph, ctx, *, settings: ToolGatewaySettings):
     name="policy_enforcer",
     on=["object.created"],
     where={"object.type": "capability_call"},
+    view={"include_types": ["tool_policy"]},
     creates=["capability_approval"],
 )
 def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
@@ -174,6 +219,9 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
         action_class=action_class,
         settings=settings,
         runtime=getattr(ctx, "_runtime", None),
+        # BehaviorGraph exposes no type scan; the declared view carries
+        # the tool_policy objects the standing-scope lookup reads.
+        graph=ctx.view,
         caused_by=getattr(event, "id", None),
     )
 
@@ -361,4 +409,68 @@ def result_sourcer(event, graph, ctx, *, settings: ToolGatewaySettings):
         pass
 
 
-BEHAVIORS = [call_recorder, policy_enforcer, call_executor, result_sourcer]
+@behavior(
+    name="tool_policy_reliability_guard",
+    on=["reliability.changed"],
+    view={"include_types": ["tool_policy"]},
+    creates=[],
+)
+def tool_policy_reliability_guard(event, graph, ctx, *, settings: ToolGatewaySettings):
+    """Demote a promoted standing scope whose reliability turns bad.
+
+    On: reliability.changed (artifact_type=tool_policy)
+
+    A promoted tool_policy is an automation grant, so its reliability is
+    guarded more strictly than a skill's: harmful or stale verdicts
+    demote it immediately (naming the outcome evidence), and — unlike
+    skills — recovery NEVER auto-re-promotes. Re-promotion of an
+    automation grant always takes a fresh proposal plus explicit owner
+    approval (ADR 0018: promotion is never silent).
+    """
+    from .standing_scopes import demote_tool_policy_fn, find_tool_policy
+
+    payload = event.payload or {}
+    if payload.get("artifact_type") != "tool_policy":
+        return
+    verdict = str(payload.get("verdict") or "weak")
+    if verdict not in {"harmful", "stale"}:
+        return
+    artifact_id = str(payload.get("artifact_id") or "")
+    policy = None
+    try:
+        candidate = graph.get_object(artifact_id)
+        if candidate is not None and candidate.type == "tool_policy":
+            policy = candidate
+    except Exception:
+        policy = None
+    if policy is None:
+        # reliability may key the policy by its stable policy_id.
+        for obj in ctx.view.objects(type="tool_policy"):
+            if obj.data.get("policy_id") == artifact_id:
+                policy = obj
+                break
+    if policy is None or policy.data.get("status") != "promoted":
+        return
+    demote_tool_policy_fn(
+        graph,
+        policy.data.get("policy_id", ""),
+        reader=ctx.view,
+        missed_prediction_refs=[event.id],
+        observed_accuracy_percent=int(
+            (policy.data.get("evidence") or {}).get("accuracy_percent", 0)
+        ),
+        actor="tool_policy_reliability_guard",
+        reason=(
+            f"reliability verdict fell to {verdict!r} "
+            f"(outcome evidence {payload.get('latest_outcome_event_id')})"
+        ),
+    )
+
+
+BEHAVIORS = [
+    call_recorder,
+    policy_enforcer,
+    call_executor,
+    result_sourcer,
+    tool_policy_reliability_guard,
+]

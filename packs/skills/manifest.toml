@@ -3,7 +3,7 @@
 
 [pack]
 name = "skills"
-version = "0.1.0"
+version = "0.2.0"
 description = "Versioned, provenance-backed learned behavior artifacts with exact-version usage, evidence-gated promotion, and reversible eligibility."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:166bf77b4099519ba41dad3afe16c8d3cd0ba8400c72ce03e1a67771bfe8a3d6"
+content_hash = "sha256:68f61e54a33cc2596a38d674ca8292c4c9f64813c08d90a261e0ecda8154083b"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

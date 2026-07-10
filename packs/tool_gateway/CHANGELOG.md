@@ -1,5 +1,45 @@
 # Tool Gateway Pack Changelog
 
+## v0.8.0 — Standing-scope tool policies (P6, ADR 0018) (2026-07-10)
+
+Automation is a promoted prediction. The gateway completes ADR 0018's
+loop: sustained per-scope prediction accuracy becomes a governed
+`tool_policy` artifact, and ONLY a promoted one lets the action-class
+dimension auto-approve an R2 capability.
+
+### Added
+- `tool_policy` object type: a versioned, provenance-carrying standing
+  scope (candidate/promoted/demoted/disabled) whose evidence block
+  records the exact prediction pairs, counts, accuracy, and the
+  versioned rule snapshot that earned it.
+- `standing_scopes.py`: versioned thresholds
+  (`STANDING_SCOPE_RULES@1`: >= 8 resolved predictions, >= 90% integer
+  accuracy, R0-R2 only, demote below 90%);
+  `propose_standing_scope_fn` (validates thresholds + the no-backfill
+  guard: every prediction must precede its decision in the log,
+  unresolvable refs fail closed); `promote_tool_policy_fn` (verified
+  approver, re-validates evidence, emits `tool_policy.promoted` keyed
+  policy_id+policy_version); `demote_tool_policy_fn` (names the missed
+  predictions and observed accuracy; effective on the next decision);
+  `disable_tool_policy_fn` (owner veto — re-promotion needs a fresh
+  proposal); `promoted_standing_scope_for` (the gateway's live read).
+- `tool_policy_reliability_guard` behavior: harmful/stale reliability on
+  a promoted policy demotes it immediately; recovery NEVER
+  auto-re-promotes (stricter than skills — this artifact grants
+  automation).
+
+### Changed
+- **R2 is policy-specific** (SCORING_CONTRACT: a ceiling of R2 "does
+  not auto-approve every R2 capability"): the action-class dimension now
+  grants R2 only when a PROMOTED standing scope covers the capability;
+  otherwise the decision holds, named
+  `r2_requires_promoted_standing_scope`, and the runtime audit carries
+  the equivalent R1 capability-ceiling cap. R0/R1 grants and both
+  legacy-dimension behaviors are unchanged. `decide_policy` /
+  `decide_policy_detail` gain the optional `standing_scope` input
+  (fail-safe: callers that pass none get no R2 automation); a stricter
+  `capability_action_ceilings` entry still beats any promoted scope.
+
 ## v0.7.0 — Canonical action_class dimension (2026-07-10)
 
 ADR 0016 at the gateway boundary (runtime CONTRACT v1.9). Two explicitly

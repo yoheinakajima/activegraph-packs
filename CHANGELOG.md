@@ -6,6 +6,26 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **P6: promotion-loop wiring (ADR 0018 automation stage).** Memory
+  artifacts gain versioned promotion beyond admission: reliability
+  evidence generates promote/demote proposals
+  (`memory.promotion.reliability@1`), explicit approval emits
+  `memory.promoted` keyed `(artifact_id, artifact_version)` — nothing
+  promotes silently. Promoted skill and memory versions earn
+  `replay.verified` keyed `(subject_id, subject_version)` from recorded
+  re-runs (fork-trial for skills, recorded admission/retrieval re-checks
+  for memory; `reference_only` lineage fails loudly per ADR 0015).
+  Sustained prediction accuracy (>= 8 predictions, >= 90%, R0-R2 only,
+  no backfill — `tool_policy.standing_scope.prediction_accuracy@1`)
+  earns a standing-scope `tool_policy` candidate promoted only by a
+  verified approver; the gateway's R2 grant now REQUIRES a promoted
+  standing scope (SCORING_CONTRACT: the ceiling never auto-approves
+  every R2 capability); degradation demotes naming the missed
+  predictions, reliability harm demotes via the guard behavior, and
+  recovery never auto-re-promotes. Per-pack details in the
+  tool_gateway, memory_gateway, and skills changelogs.
+
+
 - **P10: packs adopt `ctx.embed`.** First-party memory-gateway embedding
   (write-time item vectors, retrieval query vectors, chat recall, the
   demo server's MCP memory surface) rides the runtime's recorded
