@@ -26,7 +26,8 @@ SourceCategory = Literal[
     "tool_automation",
     "outcome_evaluation",
 ]
-ConnectionPath = Literal["export", "mcp", "composio", "native", "local", "pack"]
+# "manual" is the paste-back transport (ADR 0025).
+ConnectionPath = Literal["export", "mcp", "composio", "native", "local", "pack", "manual"]
 SurfaceStatus = Literal["connected", "settling", "settled", "stale", "revoked", "failed"]
 
 
