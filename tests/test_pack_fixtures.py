@@ -20,6 +20,8 @@ from conftest import assert_fixture_passed, run_fixture_script
 PACKS = [
     ("activity_normalizer", "activity_normalizer"),
     ("usage", "usage"),
+    ("skills", "skills"),
+    ("eval_outcome", "eval_outcome"),
     ("agent_profile", "agent_profile"),
     ("bridges", "bridges"),
     ("chat", "chat"),

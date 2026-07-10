@@ -1,5 +1,12 @@
 # Tool Gateway Pack Changelog
 
+## v0.6.1 — Capability terminology (2026-07-09)
+
+### Changed
+- Registry documentation now calls every executable gateway surface a
+  capability. Skill remains reserved for the governed learned artifact; no
+  wire keys or persisted fields changed.
+
 ## v0.6.0 — Registration enforcement (2026-07-08)
 
 The Q8 chain closes: declaration (manifest / Pack.capabilities),

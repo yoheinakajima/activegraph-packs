@@ -422,6 +422,17 @@ def memory_retriever(event, graph, ctx, *, settings: MemoryGatewaySettings):
             results_count=len(item_ids),
             item_ids=item_ids,
             retrieved_at=now,
+            metadata={
+                "backend_results": {
+                    result["item_id"]: {
+                        "score": result.get("score", 0.0),
+                        "raw_score": result.get("raw_score", result.get("score", 0.0)),
+                        "reliability_verdict": result.get("reliability_verdict", "weak"),
+                        "reliability_multiplier": result.get("reliability_multiplier", 1.0),
+                    }
+                    for result in results
+                }
+            },
         ).model_dump(),
     )
 
@@ -466,7 +477,8 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
     if not query or not item_ids or not retrieval_id:
         return
 
-    scored: list[tuple[float, str, str]] = []
+    scored: list[tuple[float, str, str, dict]] = []
+    backend_results = (retrieval_data.get("metadata") or {}).get("backend_results", {})
 
     for item_id in item_ids:
         try:
@@ -477,13 +489,14 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
             continue
 
         item_text = item.data.get("text", "")
-        score = lexical_score(query, item_text)
-        scored.append((score, item_id, item_text))
+        backend_result = dict(backend_results.get(item_id) or {})
+        score = float(backend_result.get("score", lexical_score(query, item_text)))
+        scored.append((score, item_id, item_text, backend_result))
 
     # Sort by score descending
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    for rank, (score, item_id, item_text) in enumerate(scored, start=1):
+    for rank, (score, item_id, item_text, backend_result) in enumerate(scored, start=1):
         # Do NOT re-apply min_retrieval_score here — the retriever already
         # filtered by min_score before populating retrieval.item_ids.
         # Ranking all returned items ensures the graph audit trail is complete.
@@ -494,8 +507,13 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
                 retrieval_id=retrieval_id,
                 item_id=item_id,
                 score=round(score, 4),
-                reason=f"Lexical relevance {score:.2f} (keyword overlap/coverage) with query.",
+                reason=(
+                    f"Outcome-aware relevance {score:.2f}; reliability "
+                    f"{backend_result.get('reliability_verdict', 'weak')} at "
+                    f"×{backend_result.get('reliability_multiplier', 1.0):.2f}."
+                ),
                 rank=rank,
+                metadata=backend_result,
             ).model_dump(),
         )
 
@@ -505,4 +523,39 @@ def memory_ranker(event, graph, ctx, *, settings: MemoryGatewaySettings):
             pass
 
 
-BEHAVIORS = [candidate_evaluator, memory_writer, memory_retriever, memory_ranker]
+@behavior(
+    name="memory_reliability_applier",
+    on=["reliability.changed"],
+    creates=[],
+)
+def memory_reliability_applier(event, graph, ctx, *, settings: MemoryGatewaySettings):
+    """Apply outcome-derived reliability to retrieval, reversibly and visibly."""
+
+    payload = event.payload or {}
+    if payload.get("artifact_type") != "memory_item":
+        return
+    item_id = str(payload.get("artifact_id") or "")
+    item = graph.get_object(item_id)
+    if item is None or item.type != "memory_item":
+        return
+    verdict = str(payload.get("verdict") or "weak")
+    multiplier = float(payload.get("retrieval_multiplier", 1.0))
+    backend = get_backend(settings.backend_url)
+    backend.set_reliability(item_id, verdict, multiplier)
+    graph.patch_object(
+        item_id,
+        {
+            "reliability_verdict": verdict,
+            "reliability_multiplier": multiplier,
+            "reliability_event_id": event.id,
+        },
+    )
+
+
+BEHAVIORS = [
+    candidate_evaluator,
+    memory_writer,
+    memory_retriever,
+    memory_ranker,
+    memory_reliability_applier,
+]

@@ -6,6 +6,28 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **L2 Habit closed loop.** Added a deterministic cross-pack fixture proving a
+  normalizer-produced skill proposal, retry-safe exact-version usage, explicit
+  helped outcome, skill reliability, reversible memory de-ranking, and two
+  logged UTC interaction dates in the neutral usage vocabulary BabyAGI reads.
+
+- **L2 Habit P3: canonical outcomes and artifact reliability.** Added mutually
+  exclusive terminal outcomes, idempotent maintenance outcomes, explicit
+  correction through supersession, and a separately queryable recency-aware
+  reliability projection. Memory retrieval and skill eligibility consume the
+  graph-visible reliability handoff reversibly; no player-facing value is read
+  or written.
+
+- **L2 Habit P4: governed skills.** Added immutable semantic versions with
+  source provenance, idempotent exact-version usage, evaluation links,
+  evidence-gated promotion, reversible eligibility, and capability-call
+  routing. Reliability remains a separate artifact projection and never a
+  score input.
+
+- **L2 Habit D017: capabilities, not skills.** MCP and Tool Gateway now use
+  capability terminology for executable surfaces. Skill remains reserved for
+  the versioned, provenance-backed learned artifact; wire keys are unchanged.
+
 - **Evolution pack v0.7.3: platform-truthful memory containment fixture.**
   Fixture 29 now follows the runtime's live memory-net signal: RLIMIT_AS
   contains the real Linux path, while the unforced macOS path proves the

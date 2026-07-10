@@ -1,5 +1,15 @@
 # Memory Gateway Pack Changelog
 
+## v0.5.0 — Outcome-aware forgetting hooks (2026-07-09)
+
+### Added
+- `memory_reliability_applier` consumes graph-visible reliability changes and
+  applies reversible retrieval multipliers to memory items and backends.
+- Retrieval objects and rankings expose raw relevance, the artifact
+  reliability verdict, its multiplier, and adjusted relevance.
+- SQLite and the external-backend seam share the same reliability hook; the
+  mem0 adapter applies it after provider retrieval.
+
 ## v0.4.0 — Runtime EmbeddingProvider seam adoption (2026-07-08)
 
 ### Changed

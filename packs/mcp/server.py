@@ -9,7 +9,7 @@ connects over MCP and, depending on who it is, can:
     governed exactly like a Telegram sender.
   * ``memory_search``   — query the assistant's memory, subject-scoped to
     the caller (one agent never reads another user's memories).
-  * exposed capabilities — invoke selected gateway skills. Calls run the
+  * exposed capabilities — invoke selected gateway capabilities. Calls run the
     SAME governed path as the assistant's own tool use: recorded,
     policy-checked, held for approval when risky.
 
@@ -26,7 +26,7 @@ Three layers decide what a caller can do:
      which is also how the ASSISTANT can propose changes to its own MCP
      surface — config edits are capability calls, audited like any action.
   3. **Gateway policy** — exposed capabilities keep their risk classes; an
-     inbound caller invoking a high-risk skill gets ``held_for_approval``,
+     inbound caller invoking a high-risk capability gets ``held_for_approval``,
      not execution.
 
 Every inbound call — allowed or refused — is an ``mcp_access`` audit object.
@@ -392,7 +392,7 @@ class MCPGateway:
     def _call_capability(self, graph, key: str, arguments: dict, caller: dict) -> dict:
         """Run an exposed capability through the gateway: record → policy →
         execute-or-hold. Mirrors the LLM proxy flow with the MCP caller as
-        the proposer, so inbound skills and the assistant's own tool use
+        the proposer, so inbound capabilities and the assistant's own tool use
         share one governance path."""
         from packs.tool_gateway.gateway import decide_policy, execute_approved_call
         from packs.tool_gateway.settings import ToolGatewaySettings

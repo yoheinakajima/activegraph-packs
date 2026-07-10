@@ -3,7 +3,7 @@
 
 [pack]
 name = "tool_gateway"
-version = "0.6.0"
+version = "0.6.1"
 description = "Capability execution gateway. All external calls (APIs, MCP, local tools) flow through here for policy checks, credential injection by reference, recording, output sanitization, injection scanning, and result mapping to Core source objects. Tool output reaches models fenced as untrusted external content."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:9fcd457a78fde34066c21d96d2048672253d6f3c9fa683e5876fe5b17f6ae7d0"
+content_hash = "sha256:1fddeb923b7fa64a98350cca7e7d4477b33886c99e345b00d020eacb0a704ebd"
 
 [dependencies]
 activegraph = ">=1.7.1,<2.0"

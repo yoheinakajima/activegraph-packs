@@ -3,8 +3,8 @@
 
 [pack]
 name = "mcp"
-version = "0.2.1"
-description = "Bidirectional MCP: outbound servers' tools become governed Tool Gateway capabilities (approval-required by default); inbound, the assistant is itself an MCP server exposing chat, subject-scoped memory search, and selected skills — token-authenticated, role-gated by graph-native exposure rules, fully audited."
+version = "0.2.2"
+description = "Bidirectional MCP: outbound servers' tools become governed Tool Gateway capabilities (approval-required by default); inbound, the assistant is itself an MCP server exposing chat, subject-scoped memory search, and selected capabilities — token-authenticated, role-gated by graph-native exposure rules, fully audited."
 license = "Apache-2.0"
 
 [pack.provenance]
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:2520179ea111b96d62b16cc638dd380235ca9df4de94ac4c16ab9e2e455fba63"
+content_hash = "sha256:d7642cfa0de6d6b6c589eefb529f2d4c3786a83fe3ccd63009bbac0f26d72445"
 
 [dependencies]
 activegraph = ">=1.7.1,<2.0"
