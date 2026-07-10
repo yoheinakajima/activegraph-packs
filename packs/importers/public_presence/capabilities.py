@@ -37,10 +37,22 @@ def _fetch_page(
 ) -> dict[str, Any]:
     """Fetch one public page and reduce it to text (stdlib only)."""
     del execution_context
+    from activegraph.tools.context import ToolContext
     from activegraph.tools.web_fetch import WebFetchInput, web_fetch
 
+    # ``live_unrecorded`` is the runtime-tool dimension only: THIS fetch
+    # is recorded twice over — the gateway's capability_call/result audit
+    # pair, and the acquisition behavior's artifact-mode replay payload.
+    ctx = ToolContext(
+        behavior_name="public_presence.fetch_page",
+        event_id="",
+        frame=None,
+        idempotency_key="",
+        timeout_seconds=timeout_seconds,
+        external_io_mode="live_unrecorded",
+    )
     out = web_fetch.fn(
-        WebFetchInput(url=url, timeout_seconds=timeout_seconds), None
+        WebFetchInput(url=url, timeout_seconds=timeout_seconds), ctx
     )
     text, title = html_to_text(out.text or "")
     truncated = len(text) > max_chars
