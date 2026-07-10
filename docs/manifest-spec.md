@@ -105,6 +105,7 @@ provider = "meeting"
 capability = "export_summary"
 risk_class = "medium"
 credential_ref = ""              # name only, never a value
+action_class = "R1"              # optional canonical consequence class (ADR 0016)
 
 # Capabilities this pack's behaviors INVOKE at runtime (creates
 # capability_call objects). Decision surfaces and reviewers read this to
@@ -192,8 +193,8 @@ versa, and every capability invocation must match `consumes`.
 
 Q8 is now resolved (see §9): the runtime shipped a declarative
 `Pack.capabilities` field in v1.4, so `verify_surface` ALSO does a
-loader-side two-way check of capabilities (presence and `risk_class`)
-against the live pack — the same check it does for behaviors, tools,
+loader-side two-way check of capabilities (presence, `risk_class`,
+and since 2026-07-10 `action_class`) against the live pack — the same check it does for behaviors, tools,
 and object types. Capabilities are therefore checked on both sides
 (loader + static-AST, defense in depth); `consumes` stays static-AST
 only, a one-way check that every declared consumed capability is
@@ -203,9 +204,24 @@ actually invoked in the source.
 matching tool_gateway's `CapabilitySpec`. Validators reject anything
 else.
 
+`action_class` (added 2026-07-10; ADR 0016, runtime CONTRACT v1.9) is
+the OPTIONAL canonical consequence class: closed set
+`R0 | R1 | R2 | R3 | R4`; absent means undeclared. It is a SEPARATE
+policy dimension from `risk_class` — validators, the loader, the
+generator, and every consumer treat the two independently, and no tool
+may infer one from the other (there is no `low→R0`-style mapping,
+anywhere). A capability without an `action_class` is ineligible for
+the runtime's action-class auto-approval path (it fails closed to
+approval). `verify_surface` requires manifest/Pack agreement on
+`action_class` exactly like `risk_class`, including presence — a class
+declared on one side and absent on the other is a caught relabel. The
+generator writes the key only when declared, so packs without action
+classes keep their exact prior manifest shape.
+
 `[[surface.capabilities]]` and `consumes` entries matter to governance
 tooling: the capability catalog (task #7) and decision surfaces read
-risk classes and outbound reach from here without importing the pack.
+risk classes, action classes, and outbound reach from here without
+importing the pack.
 
 ### `[fixtures]` (required)
 
