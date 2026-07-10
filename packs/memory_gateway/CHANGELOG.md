@@ -1,5 +1,32 @@
 # Memory Gateway Pack Changelog
 
+## v0.6.0 — P10: first-party embedding rides the recorded runtime path (2026-07-10)
+
+### Changed
+- memory_writer, memory_retriever, and retrieve_memories_fn (new optional
+  `ctx=` parameter) bind the runtime's RECORDED embedding path
+  (`ctx.embed` / `Runtime.embed`, runtime CONTRACT v1.8 #6) around their
+  backend calls whenever the runtime has an embedding_provider: every
+  first-party embed now emits embedding.requested/responded events and
+  replays from the log with zero provider contact
+  (`Runtime.load(..., replay_embedding_cache=True)`). When a recorded
+  path is bound, a failing embed degrades to lexical — it never silently
+  falls back to an unrecorded direct call.
+- Direct provider calls (`set_embedder(...)` without a runtime provider)
+  remain fully supported for third-party embedders and bare-graph hosts,
+  but are no longer used by first-party packs when a runtime records
+  embeddings. Hosts migrate by passing the same embedder object to
+  `Runtime(embedding_provider=...)` — both pack embedders already
+  implement the runtime protocol.
+
+### Added
+- backend.runtime_recorded_embedding(handle): context manager binding a
+  behavior ctx (or Runtime) as the preferred embedding path; task-local
+  and nesting-safe.
+- Fixture `recorded_embedding_replay`: a stored memory + retrieval
+  round-trip is recorded, then the same retrieval replays against a
+  raise-on-contact provider and is served entirely from the log.
+
 ## v0.5.0 — Outcome-aware forgetting hooks (2026-07-09)
 
 ### Added

@@ -34,7 +34,9 @@ import json
 import math
 import re
 import sqlite3
-from typing import Any, Callable, Optional, Protocol, runtime_checkable
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Callable, Iterator, Optional, Protocol, runtime_checkable
 
 
 # ------------------------------------------------------------------ helpers
@@ -197,11 +199,91 @@ def _invoke_embedder(emb: Any, texts: list[str]) -> list[list[float]]:
         return emb.embed(texts)
 
 
-def _safe_embed(texts: list[str]) -> Optional[list[list[float]]]:
-    """Embed texts with the active embedder, swallowing any failure → None.
+# ------------------------------------------------------------------ recorded path (P10)
+#
+# The runtime's Context.embed / Runtime.embed is the RECORDED embedding
+# path: every call emits embedding.requested/embedding.responded events
+# and replays from the log with zero provider contact (runtime CONTRACT
+# v1.8 #6). First-party pack code reaches it by binding the current
+# behavior ctx (or a Runtime) around backend calls — see
+# runtime_recorded_embedding. When a recorded path is bound, _safe_embed
+# prefers it over the process-global embedder; a bound-but-failing
+# recorded call degrades to lexical (None), NEVER silently falls back to
+# the unrecorded direct embedder — falling back would reintroduce
+# unrecorded external I/O, which is exactly what P10 removes. Direct
+# provider calls (set_embedder without a runtime) remain possible for
+# third-party embedders and bare-graph hosts, but first-party packs no
+# longer use them when a runtime is present.
 
-    Guarantees the lexical path is always reachable: a misbehaving or
-    unconfigured embedder degrades to lexical instead of raising."""
+_RECORDED_EMBED: ContextVar[Optional[Callable[[list[str]], list[list[float]]]]] = (
+    ContextVar("memory_gateway_recorded_embed", default=None)
+)
+
+
+def _recorded_embed_fn(handle: Any) -> Optional[Callable[[list[str]], list[list[float]]]]:
+    """A ``texts → vectors`` closure over *handle*'s recorded embed path.
+
+    *handle* is a behavior ``ctx`` (activegraph Context) or a ``Runtime``.
+    Returns None when the handle cannot serve recorded embeddings — no
+    ``.embed``, or no ``embedding_provider`` on the (ctx's) runtime to
+    resolve the default model — so callers fall through to the legacy
+    process-global embedder unchanged."""
+    if handle is None:
+        return None
+    embed = getattr(handle, "embed", None)
+    if embed is None:
+        return None
+    runtime = getattr(handle, "_runtime", None) or handle
+    if getattr(runtime, "embedding_provider", None) is None:
+        return None
+
+    def _embed(texts: list[str]) -> list[list[float]]:
+        result: list[list[float]] = embed(texts)
+        return result
+
+    return _embed
+
+
+@contextmanager
+def runtime_recorded_embedding(handle: Any) -> Iterator[bool]:
+    """Prefer *handle*'s recorded embed path inside the ``with`` block.
+
+    ``handle`` is a behavior ``ctx`` or a ``Runtime``. Yields True when
+    the recorded path is bound (embedding.requested/responded events and
+    replay apply to every embed the block performs); False when the
+    handle cannot serve embeddings, in which case nothing changes and
+    the legacy embedder keeps working exactly as before. Bindings nest
+    and are task-local (ContextVar), so concurrent behaviors cannot see
+    one another's runtime."""
+    embed_fn = _recorded_embed_fn(handle)
+    if embed_fn is None:
+        yield False
+        return
+    token = _RECORDED_EMBED.set(embed_fn)
+    try:
+        yield True
+    finally:
+        _RECORDED_EMBED.reset(token)
+
+
+def _safe_embed(texts: list[str]) -> Optional[list[list[float]]]:
+    """Embed texts, swallowing any failure → None (lexical fallback).
+
+    Prefers a bound recorded runtime path (see
+    ``runtime_recorded_embedding``); otherwise uses the process-global
+    embedder. Guarantees the lexical path is always reachable: a
+    misbehaving or unconfigured embedder degrades to lexical instead of
+    raising — and a failing RECORDED path degrades to lexical too,
+    never to an unrecorded direct call."""
+    recorded = _RECORDED_EMBED.get()
+    if recorded is not None:
+        try:
+            vectors = recorded(texts)
+        except Exception:
+            return None
+        if not vectors or len(vectors) != len(texts):
+            return None
+        return vectors
     emb = get_embedder()
     if emb is None:
         return None

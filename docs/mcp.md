@@ -32,6 +32,11 @@ none of which raw MCP has:
   approval-required under the default policy. A model calling one gets
   `held_for_approval`; the owner resolves it in `/approvals`. Promote
   individual tools deliberately: `tool_risk_overrides={"search": "low"}`.
+- **Presumed outward-facing.** Discovered tools also get canonical
+  `action_class` `R3` (ADR 0016) — a SEPARATE dimension from the risk
+  label, never derived from it — which keeps them ineligible for
+  ceiling-based auto-approval at every ceiling. Assign a lower class
+  per tool, explicitly: `tool_action_class_overrides={"search": "R0"}`.
 - **Recorded.** Every call is a `capability_call` → `capability_result`
   pair in the graph, with the MCP caller/tool named.
 - **Sanitized + injection-scanned.** MCP output flows through the same

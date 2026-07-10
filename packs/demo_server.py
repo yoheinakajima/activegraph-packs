@@ -727,6 +727,8 @@ def _mcp_memory_fn(query: str, subject_ref: str, top_k: int = 5) -> list:
         subject_ref=subject_ref,
         subject_scoped=True,
         include_global=True,
+        # P10: recorded runtime embedding path when a provider is attached.
+        ctx=_get_rt(),
     )
 
 

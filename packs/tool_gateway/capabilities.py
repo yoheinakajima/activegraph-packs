@@ -19,6 +19,8 @@ def register_web_fetch_capability(*, risk_class: str = "low") -> CapabilitySpec:
     ToolContext, so it is safe to invoke directly). Risk class defaults to
     'low' (read-only, no side effects), making it auto-approvable under the
     default gateway policy — the canonical first tool for agentic chat.
+    Action class R0: an HTTP GET observes the outside world and changes
+    nothing in it.
     """
     from activegraph.tools.web_fetch import WebFetchInput, web_fetch
 
@@ -38,4 +40,5 @@ def register_web_fetch_capability(*, risk_class: str = "low") -> CapabilitySpec:
             "redirects, read-only)."
         ),
         risk_class=risk_class,
+        action_class="R0",
     )

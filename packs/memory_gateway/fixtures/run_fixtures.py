@@ -129,6 +129,101 @@ def _run_fixture(name: str, scenario: dict) -> tuple[bool, list[str]]:
     return (len(failures) == 0), failures
 
 
+class _CountingProvider:
+    """Runtime EmbeddingProvider double: deterministic vectors, call count."""
+
+    default_model = "fixture-embed-1"
+
+    def __init__(self):
+        self.calls = 0
+
+    def embed(self, *, texts, model):
+        self.calls += 1
+        return [[float(len(t)), float(sum(map(ord, t)) % 97), 1.0]
+                for t in texts]
+
+
+class _PoisonProvider:
+    """Raises on any embed call — proves zero external contact on replay."""
+
+    default_model = "fixture-embed-1"
+
+    def embed(self, *, texts, model):
+        raise AssertionError("external embedding contact during replay")
+
+
+def _run_recorded_embedding_fixture(tmp_dir: str) -> tuple[bool, list[str]]:
+    """P10 acceptance: a memory-gateway embedding round-trip — write-time
+    item embedding plus query embedding through ctx.embed — is recorded as
+    embedding.requested/responded events and REPLAYS from the log with
+    zero external contact (the replay runtime's provider raises if ever
+    called; the recorded cache serves the same retrieval)."""
+    import os
+
+    failures: list[str] = []
+    clear_all_backends()
+    db = os.path.join(tmp_dir, "p10_replay.db")
+    text = "the user prefers dark mode everywhere"
+    settings = MemoryGatewaySettings(
+        acceptance_threshold=0.6,
+        auto_accept_categories=["preference"],
+    )
+
+    live_provider = _CountingProvider()
+    live = Runtime(Graph(), persist_to=db, embedding_provider=live_provider)
+    live.load_pack(core_pack, settings=CoreSettings())
+    live.load_pack(mg_pack, settings=settings)
+    live.graph.add_object("memory_candidate", {
+        "text": text, "confidence": 0.85, "source_ids": [],
+        "observation_ids": [], "category": "preference",
+        "subject_ref": None, "accepted": False, "evaluation_id": None,
+        "frame_id": "frame_p10",
+    })
+    live.run_until_idle()
+    req = live.graph.add_object("memory_retrieval_request", {
+        "query": text, "top_k": 5, "min_score": 0.0,
+        "behavior_name": "p10_fixture",
+    })
+    live.run_until_idle()
+    retrievals = [o for o in live.graph.objects(type="memory_retrieval")
+                  if o.data.get("request_id") == req.id]
+    live_items = list(retrievals[-1].data.get("item_ids") or []) if retrievals else []
+    if not live_items:
+        failures.append("  live run: stored memory was not recalled")
+    if live_provider.calls != 2:
+        failures.append(f"  live run: expected 2 recorded embeds (write+query), got {live_provider.calls}")
+    pairs = [e for e in live.graph.events if e.type in ("embedding.requested", "embedding.responded")]
+    if len(pairs) != 4:
+        failures.append(f"  live run: expected 2 embedding event pairs, got {len(pairs)} events")
+
+    replay = Runtime.load(db, embedding_provider=_PoisonProvider(),
+                          replay_embedding_cache=True)
+    replay.load_pack(core_pack, settings=CoreSettings())
+    replay.load_pack(mg_pack, settings=settings)
+    req = replay.graph.add_object("memory_retrieval_request", {
+        "query": text, "top_k": 5, "min_score": 0.0,
+        "behavior_name": "p10_fixture",
+    })
+    try:
+        replay.run_until_idle()
+    except AssertionError as exc:
+        failures.append(f"  replay contacted the provider: {exc}")
+        return (False, failures)
+    retrievals = [o for o in replay.graph.objects(type="memory_retrieval")
+                  if o.data.get("request_id") == req.id]
+    replay_items = list(retrievals[-1].data.get("item_ids") or []) if retrievals else []
+    if replay_items != live_items:
+        failures.append(f"  replay retrieval {replay_items} != live {live_items}")
+    hits = [e for e in replay.graph.events
+            if e.type == "embedding.requested" and e.payload.get("cache_hit") is True]
+    if not hits:
+        failures.append("  replay retrieval did not hit the recorded embedding cache")
+
+    print("  recorded write+query embeds, then replayed the same retrieval")
+    print("  against a raise-on-contact provider: served from the log")
+    return (len(failures) == 0), failures
+
+
 def main():
     _HERE = Path(__file__).parent
     fixtures = sorted(_HERE.glob("*.yaml"))
@@ -146,6 +241,16 @@ def main():
         print("  PASS" if passed else f"  FAIL:")
         for f in failures:
             print(f)
+
+    import tempfile
+    name = "recorded_embedding_replay"
+    print(f"\n{'='*60}\nFixture: {name}\n{'='*60}")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        passed, failures = _run_recorded_embedding_fixture(tmp_dir)
+    results.append((name, passed))
+    print("  PASS" if passed else f"  FAIL:")
+    for f in failures:
+        print(f)
 
     total = len(results)
     passed_count = sum(1 for _, ok in results if ok)

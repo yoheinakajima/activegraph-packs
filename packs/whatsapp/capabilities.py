@@ -83,5 +83,8 @@ def register_send_capability(
         input_schema=SendMessageInput,
         description="Send a text message via the WhatsApp Cloud API.",
         risk_class="low",
+        # R3: a delivered message cannot be unsent — an outward,
+        # irreversible action regardless of the legacy risk label.
+        action_class="R3",
         credential_ref_name="WHATSAPP_ACCESS_TOKEN",
     )

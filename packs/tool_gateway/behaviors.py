@@ -36,9 +36,59 @@ from datetime import datetime, timezone
 
 from activegraph.packs import behavior
 
-from .gateway import decide_policy, execute_approved_call
+from .gateway import decide_policy_detail, execute_approved_call
 from .object_types import CapabilityApproval
 from .settings import ToolGatewaySettings
+
+
+def evaluate_call_policy(
+    *,
+    capability_key: str,
+    risk_class: str,
+    action_class: str,
+    settings: ToolGatewaySettings,
+    runtime=None,
+    caused_by=None,
+    actor: str = "policy_enforcer",
+) -> dict:
+    """Both policy dimensions for one call, runtime-audited when possible.
+
+    The legacy risk dimension and the action-class dimension are
+    evaluated independently (see gateway.decide_policy_detail — no
+    cross-inference). The instance authority ceiling comes from the
+    Runtime when one is available; a call WITH a declared action_class
+    is additionally evaluated through
+    ``Runtime.evaluate_capability_authority`` so the runtime emits its
+    ``authority.decision`` audit event (CONTRACT v1.9 #3). Calls without
+    an action_class never touch the runtime authority path — their event
+    log stays exactly as before v0.7.
+    """
+    capability_ceiling = settings.capability_action_ceilings.get(capability_key)
+    ceiling = "none"
+    if runtime is not None and hasattr(runtime, "authority_ceiling"):
+        ceiling = runtime.authority_ceiling()
+    detail = decide_policy_detail(
+        risk_class,
+        settings,
+        action_class=action_class,
+        authority_ceiling=ceiling,
+        capability_ceiling=capability_ceiling,
+    )
+    detail["action_authority"]["capability"] = capability_key
+    if (
+        action_class
+        and runtime is not None
+        and hasattr(runtime, "evaluate_capability_authority")
+    ):
+        audited = runtime.evaluate_capability_authority(
+            capability=capability_key,
+            action_class=action_class,
+            capability_ceiling=capability_ceiling,
+            actor=actor,
+            caused_by=caused_by,
+        )
+        detail["action_authority"]["audit_event_id"] = audited.event_id
+    return detail
 
 
 # ------------------------------------------------------------------ behaviors
@@ -91,15 +141,22 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
              for call_executor behavior
     Side effects: patches capability_call.status to 'approved' or 'policy_checking'
 
-    Auto-approves calls whose risk_class is in settings.auto_approve_risk_classes.
-    For auto-approved calls, creates a CapabilityApproval which triggers
-    call_executor. All other risk classes set status='policy_checking'.
+    Two independent dimensions decide (gateway.decide_policy_detail):
+    the legacy risk dimension (risk_class in
+    settings.auto_approve_risk_classes — exactly the pre-v0.7 behavior)
+    and the action-class dimension (canonical action_class vs the
+    runtime instance ceiling and any stricter per-capability ceiling;
+    R3/R4 and missing classes never auto-approve here). Auto-approved
+    calls get a CapabilityApproval which triggers call_executor; held
+    calls go to status='policy_checking' carrying the per-dimension
+    reasons in metadata so the approvals surface can say WHY.
     """
     obj = event.payload.get("object", {})
     call_id = obj.get("id")
     call_data = obj.get("data", {})
 
     risk_class = call_data.get("risk_class", "medium")
+    action_class = call_data.get("action_class", "")
     current_status = call_data.get("status", "proposed")
 
     if current_status != "proposed":
@@ -107,7 +164,20 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
 
     now = datetime.now(timezone.utc).isoformat()
 
-    if decide_policy(risk_class, settings) == "auto_approve":
+    capability_key = (
+        f"{call_data.get('provider_name', '')}."
+        f"{call_data.get('capability_name', '')}"
+    )
+    policy = evaluate_call_policy(
+        capability_key=capability_key,
+        risk_class=risk_class,
+        action_class=action_class,
+        settings=settings,
+        runtime=getattr(ctx, "_runtime", None),
+        caused_by=getattr(event, "id", None),
+    )
+
+    if policy["decision"] == "auto_approve":
         # Patch the call status
         try:
             graph.patch_object(call_id, {"status": "approved"})
@@ -123,6 +193,7 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
                 provider_id=call_data.get("provider_id", ""),
                 provider_name=call_data.get("provider_name", ""),
                 capability_name=call_data.get("capability_name", ""),
+                action_class=action_class,
                 input_data=call_data.get("input_data", {}),
                 credential_ref_name=call_data.get("credential_ref_name"),
                 credential_ref_id=call_data.get("credential_ref_id"),
@@ -130,7 +201,20 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
                 policy_decision="auto_approved",
                 approver="policy_enforcer",
                 approved_at=now,
-                metadata={"risk_class": risk_class},
+                metadata={
+                    "risk_class": risk_class,
+                    # Which dimension(s) granted, and the action-class
+                    # reasoning — the two dimensions stay separately
+                    # named all the way into the audit object.
+                    **(
+                        {
+                            "granted_by": policy["granted_by"],
+                            "action_authority": policy["action_authority"],
+                        }
+                        if action_class
+                        else {}
+                    ),
+                },
             ).model_dump(),
         )
 
@@ -145,6 +229,19 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
             graph.patch_object(call_id, {"status": "policy_checking"})
         except Exception:
             pass
+        # Record WHY the action-class path declined (missing class /
+        # above ceiling / stricter policy / R3 / R4) on the call, so
+        # pending_approvals can display it. Only when the new field is
+        # in play — calls without an action_class keep their exact
+        # legacy event shape.
+        if action_class:
+            try:
+                merged = dict(call_data.get("metadata", {}) or {})
+                merged["action_authority"] = policy["action_authority"]
+                merged["granted_by"] = policy["granted_by"]
+                graph.patch_object(call_id, {"metadata": merged})
+            except Exception:
+                pass
 
 
 @behavior(

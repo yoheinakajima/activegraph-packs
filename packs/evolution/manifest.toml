@@ -3,7 +3,7 @@
 
 [pack]
 name = "evolution"
-version = "0.7.3"
+version = "0.8.0"
 description = "Agent-authored packs under governance: static gates, fork trials against replayed history, bundle-hash pins, verified owner approval, quiescent promote adoption, immediate disable. Ships disabled."
 license = "Apache-2.0"
 
@@ -15,10 +15,10 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:69649ec0d0b2f64f5438fab7aebc5369e9a496810ee3da5d6872ab3d17469078"
+content_hash = "sha256:f34c735f8a210153ccf1cee647212756afd527a3435da70cc79517da37f4fad7"
 
 [dependencies]
-activegraph = ">=1.7.1,<2.0"
+activegraph = ">=1.9,<2.0"
 python = ">=3.11"
 python-deps = []
 
@@ -43,12 +43,14 @@ provider = "evolution"
 capability = "adopt_proposal"
 risk_class = "critical"
 credential_ref = ""
+action_class = "R4"
 
 [[surface.capabilities]]
 provider = "evolution"
 capability = "disable_promotion"
 risk_class = "high"
 credential_ref = ""
+action_class = "R4"
 
 [fixtures]
 entrypoint = "fixtures/run_fixtures.py"

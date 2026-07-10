@@ -86,8 +86,10 @@ On top of the structure, three deterministic layers make injection
 | `ToolGatewaySettings.injection_scan` | `True` | Scan capability output, create flags. |
 | `ToolGatewaySettings.envelope_llm_output` | `True` | Fence tool output at the LLM boundary. |
 | `ToolGatewaySettings.sanitize_output` | `True` | Redact secrets from output. |
-| `ToolGatewaySettings.auto_approve_risk_classes` | `["low"]` | What runs without a human. |
+| `ToolGatewaySettings.auto_approve_risk_classes` | `["low"]` | Legacy risk dimension: what runs without a human. |
+| `ToolGatewaySettings.capability_action_ceilings` | `{}` | Action-class dimension: per-capability ceilings that LOWER the runtime's instance ceiling (`rt.set_authority_ceiling`, default `none`). |
 | `MCPSettings.default_tool_risk` | `"high"` | Discovered MCP tools start approval-required. |
+| `MCPSettings.default_tool_action_class` | `"R3"` | Discovered MCP tools are presumed outward-facing (ADR 0016) — never auto-approved through the action-class ceiling without an explicit per-tool override. |
 
 Verify the posture: `pytest tests/test_injection_posture.py` and fixture
 [2] in `packs/mcp/fixtures/run_fixtures.py` (a poisoned MCP response,

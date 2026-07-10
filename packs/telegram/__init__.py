@@ -50,7 +50,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # integrates_with=["tool_gateway", "secrets", "identity_auth"]
 pack = Pack(
     name="telegram",
-    version="0.1.1",
+    version="0.2.0",
     description=(
         "Telegram transport adapter: inbound updates become chat_input "
         "(reusing the Chat Pack's conversation machinery); approved outbound "
@@ -68,7 +68,7 @@ pack = Pack(
     # loader's two-way surface check covers capabilities too. CI's AST
     # check (tests/test_manifests.py) keeps this honest against the code.
     capabilities=(
-        CapabilityDecl(provider='telegram', capability='send_message', risk_class='low', credential_ref='TELEGRAM_BOT_TOKEN'),
+        CapabilityDecl(provider='telegram', capability='send_message', risk_class='low', credential_ref='TELEGRAM_BOT_TOKEN', action_class='R3'),
     ),
     settings_schema=TelegramSettings,
 )

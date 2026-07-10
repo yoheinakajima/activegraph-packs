@@ -3,7 +3,7 @@
 
 [pack]
 name = "memory_gateway"
-version = "0.5.0"
+version = "0.6.0"
 description = "Memory lifecycle manager. Evaluates memory_candidates from Core Pack, accepts high-confidence items into durable MemoryItems, and provides hybrid, outcome-aware retrieval with reversible reliability de-ranking. Default backend: SQLite; external stores (mem0, …) plug in via register_backend()."
 license = "Apache-2.0"
 
@@ -15,10 +15,10 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:30bac35f9e1ed640442634aeb4c86c69b807e5bfe4ab4c0086ee2c9cbfe7f0ff"
+content_hash = "sha256:3420df27570396084039b9a9859acf5defdc6cdc10c200adb9ec8d046b712d3d"
 
 [dependencies]
-activegraph = ">=1.7.1,<2.0"
+activegraph = ">=1.9,<2.0"
 python = ">=3.11"
 python-deps = []
 

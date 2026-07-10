@@ -45,7 +45,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # integrates_with=["identity_auth", "chat", "memory_gateway", "secrets"]
 pack = Pack(
     name="mcp",
-    version="0.2.2",
+    version="0.3.0",
     description=(
         "Bidirectional MCP: outbound servers' tools become governed Tool "
         "Gateway capabilities (approval-required by default); inbound, the "
@@ -64,7 +64,7 @@ pack = Pack(
     # loader's two-way surface check covers capabilities too. CI's AST
     # check (tests/test_manifests.py) keeps this honest against the code.
     capabilities=(
-        CapabilityDecl(provider='mcp', capability='set_exposure', risk_class='high', credential_ref=''),
+        CapabilityDecl(provider='mcp', capability='set_exposure', risk_class='high', credential_ref='', action_class='R4'),
     ),
     settings_schema=MCPSettings,
 )

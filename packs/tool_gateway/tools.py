@@ -36,6 +36,12 @@ class CapabilitySpec:
     parameter schema; without it a capability can still be executed
     graph-side but cannot be offered to a model (an empty schema would
     make the model call it with {}).
+
+    action_class is the canonical consequence class (ADR 0016; runtime
+    CONTRACT v1.9): "R0"–"R4", or "" when undeclared. It is a separate
+    policy dimension from risk_class and is NEVER derived from it — an
+    undeclared action_class simply makes the capability ineligible for
+    the action-class dimension's automation (it fails closed to hold).
     """
 
     provider_name: str
@@ -50,6 +56,7 @@ class CapabilitySpec:
     # server. The catalog (catalog.py) surfaces this so governance tooling
     # can distinguish first-party capabilities from third-party breadth.
     origin: str = "native"
+    action_class: str = ""
 
     @property
     def key(self) -> str:
@@ -70,12 +77,18 @@ def register_local_capability(
     risk_class: str = "low",
     credential_ref_name: Optional[str] = None,
     origin: str = "native",
+    action_class: str = "",
 ) -> CapabilitySpec:
     """Register a local Python function as a capability.
 
     The key is "{provider_name}.{capability_name}" (case-sensitive).
     The keyword metadata is what makes the capability LLM-exposable via
     llm_tools_for / as_llm_tool — see llm_tools.py.
+
+    action_class ("R0"–"R4", ADR 0016) is the canonical consequence
+    class; omit it ("") for capabilities that have not been classified —
+    they stay ineligible for the action-class dimension's automation.
+    It is never inferred from risk_class or vice versa.
 
     Example:
         class LookupInput(BaseModel):
@@ -89,18 +102,25 @@ def register_local_capability(
             input_schema=LookupInput,
             description="Look up a company in the CRM.",
             risk_class="low",
+            action_class="R0",
         )
 
     Once the host arms enforcement (registration_check.
     arm_registration_enforcement), every native registration is checked
     against graph-derived pack declarations and refuses undeclared
-    (provider, capability) pairs, risk-class drift, and registrations
-    claiming a disabled pack's surface.
+    (provider, capability) pairs, risk-class drift, action-class drift,
+    and registrations claiming a disabled pack's surface.
     """
     from .registration_check import check_registration
 
+    if action_class not in ("", "R0", "R1", "R2", "R3", "R4"):
+        raise ValueError(
+            f"capability {provider_name}.{capability_name}: action_class "
+            f"{action_class!r} must be one of R0|R1|R2|R3|R4 (or omitted). "
+            f"Legacy risk labels are a different dimension and never map."
+        )
     check_registration(provider_name, capability_name, risk_class,
-                       origin=origin)
+                       origin=origin, action_class=action_class)
     spec = CapabilitySpec(
         provider_name=provider_name,
         capability_name=capability_name,
@@ -110,6 +130,7 @@ def register_local_capability(
         risk_class=risk_class,
         credential_ref_name=credential_ref_name,
         origin=origin,
+        action_class=action_class,
     )
     _LOCAL_REGISTRY[spec.key] = spec
     return spec
@@ -296,17 +317,54 @@ def pending_approvals_fn(graph) -> list[dict[str, Any]]:
     The graph is the single source of truth for approval state: a pending
     approval IS a capability_call at status='policy_checking'. Returns
     display-ready dicts sorted oldest-first (approval queues are FIFO).
+
+    Each entry names both policy dimensions: the legacy ``risk_class``
+    and the canonical ``action_class`` (ADR 0016; "" = undeclared), plus
+    ``auto_approve_declined_because`` — WHY the action-class ceiling
+    path did not auto-approve this call (missing class, above ceiling,
+    stricter local policy, R3, R4, …), from the policy_enforcer's
+    recorded reasoning or derived at display time for calls that carry
+    no class at all. This feeds the product's permission surfaces.
     """
     pending = []
     try:
         for obj in graph.objects(type="capability_call"):
             if obj.data.get("status") != "policy_checking":
                 continue
+            action_class = obj.data.get("action_class", "")
+            authority = (obj.data.get("metadata") or {}).get(
+                "action_authority"
+            ) or {}
+            if authority:
+                declined_because = {
+                    "matched_policy": authority.get("matched_policy", ""),
+                    "reason": authority.get("reason", ""),
+                    "ceiling": authority.get("ceiling", ""),
+                    "capability_ceiling": authority.get("capability_ceiling"),
+                }
+            elif not action_class:
+                # No recorded reasoning and no class: the ceiling path is
+                # trivially closed. Derived at display time so legacy
+                # calls need no new graph writes.
+                declined_because = {
+                    "matched_policy": "fail_closed_missing_action_class",
+                    "reason": (
+                        "no canonical action_class is declared for this "
+                        "capability; it is ineligible for action-class "
+                        "auto-approval (ADR 0016)"
+                    ),
+                    "ceiling": None,
+                    "capability_ceiling": None,
+                }
+            else:
+                declined_because = None
             pending.append({
                 "call_id": obj.id,
                 "provider_name": obj.data.get("provider_name", ""),
                 "capability_name": obj.data.get("capability_name", ""),
                 "risk_class": obj.data.get("risk_class", "medium"),
+                "action_class": action_class,
+                "auto_approve_declined_because": declined_because,
                 "input_data": obj.data.get("input_data", {}),
                 "proposed_by": obj.data.get("proposed_by"),
                 "proposed_at": obj.data.get("proposed_at"),
@@ -366,6 +424,7 @@ def approve_capability_fn(
         "provider_id": call.data.get("provider_id", ""),
         "provider_name": call.data.get("provider_name", ""),
         "capability_name": call.data.get("capability_name", ""),
+        "action_class": call.data.get("action_class", ""),
         "input_data": call.data.get("input_data", {}),
         "credential_ref_name": call.data.get("credential_ref_name"),
         "credential_ref_id": call.data.get("credential_ref_id"),
@@ -433,6 +492,7 @@ def deny_capability_fn(
         "call_id": call_id,
         "provider_name": call.data.get("provider_name", ""),
         "capability_name": call.data.get("capability_name", ""),
+        "action_class": call.data.get("action_class", ""),
         "denier": approver_ref,
         "reason": reason,
         "denied_at": now,

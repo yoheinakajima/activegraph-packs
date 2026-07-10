@@ -67,7 +67,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["communication", "tool_gateway"]
 pack = Pack(
     name="schedule",
-    version="0.1.2",
+    version="0.2.0",
     description=(
         "Graph-native scheduling: schedules declare when to fire and what to "
         "emit; ticks are event-first records of due moments; a host driver "
@@ -85,7 +85,7 @@ pack = Pack(
     # loader's two-way surface check covers capabilities too. CI's AST
     # check (tests/test_manifests.py) keeps this honest against the code.
     capabilities=(
-        CapabilityDecl(provider='schedule', capability='create_reminder', risk_class='low', credential_ref=''),
+        CapabilityDecl(provider='schedule', capability='create_reminder', risk_class='low', credential_ref='', action_class='R3'),
     ),
     settings_schema=ScheduleSettings,
 )

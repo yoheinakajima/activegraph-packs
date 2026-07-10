@@ -179,3 +179,172 @@ def test_pack_embedders_satisfy_runtime_protocol():
     backend.store_item("m1", "dark mode preference", category="preference")
     results = backend.retrieve_by_query("dark mode", top_k=5, min_score=0.0)
     assert any(r["item_id"] == "m1" for r in results)
+
+
+# ---------------------------------------------------------------- P10:
+# first-party embedding rides the runtime's RECORDED path (ctx.embed).
+
+
+class CountingProvider:
+    """Runtime EmbeddingProvider double: deterministic vectors, call count."""
+
+    default_model = "fixture-embed-1"
+
+    def __init__(self):
+        self.calls = 0
+
+    def embed(self, *, texts: list[str], model: str) -> list[list[float]]:
+        self.calls += 1
+        return [
+            [float(len(t)), float(sum(map(ord, t)) % 97), 1.0] for t in texts
+        ]
+
+
+class PoisonProvider:
+    """Raises on any embed call — proves zero external contact on replay."""
+
+    default_model = "fixture-embed-1"
+
+    def embed(self, *, texts: list[str], model: str) -> list[list[float]]:
+        raise AssertionError(
+            "external embedding contact during replay — the recorded "
+            "cache should have served this request"
+        )
+
+
+def _memory_runtime(provider, persist_to=None, load_from=None):
+    from activegraph import Graph, Runtime
+    from packs.core import pack as core_pack
+    from packs.memory_gateway import pack as mg_pack, MemoryGatewaySettings
+
+    settings = MemoryGatewaySettings(
+        acceptance_threshold=0.6,
+        auto_accept_categories=["preference"],
+    )
+    if load_from is not None:
+        rt = Runtime.load(
+            load_from,
+            embedding_provider=provider,
+            replay_embedding_cache=True,
+        )
+    elif persist_to is not None:
+        rt = Runtime(Graph(), persist_to=persist_to, embedding_provider=provider)
+    else:
+        rt = Runtime(Graph(), embedding_provider=provider)
+    rt.load_pack(core_pack)
+    rt.load_pack(mg_pack, settings=settings)
+    return rt
+
+
+def _store_one_memory(rt, text: str) -> None:
+    rt.graph.add_object("memory_candidate", {
+        "text": text,
+        "confidence": 0.85,
+        "source_ids": [],
+        "observation_ids": [],
+        "category": "preference",
+        "subject_ref": None,
+        "accepted": False,
+        "evaluation_id": None,
+        "frame_id": "frame_p10",
+    })
+    rt.run_until_idle()
+
+
+def _retrieve(rt, query: str) -> list[str]:
+    req = rt.graph.add_object("memory_retrieval_request", {
+        "query": query,
+        "top_k": 5,
+        "min_score": 0.0,
+        "behavior_name": "p10_fixture",
+    })
+    rt.run_until_idle()
+    retrievals = [
+        o for o in rt.graph.objects(type="memory_retrieval")
+        if o.data.get("request_id") == req.id
+    ]
+    assert retrievals, "memory_retriever did not fulfill the request"
+    return list(retrievals[-1].data.get("item_ids") or [])
+
+
+def test_p10_first_party_embedding_is_runtime_recorded(tmp_path):
+    """Write-time and query-time embeddings emit the runtime's
+    embedding.requested/responded event pairs, and the direct pack-level
+    embedder is NOT used when the runtime has a provider."""
+    from packs.memory_gateway.backend import clear_all_backends
+
+    clear_all_backends()
+    legacy = FakeEmbedder()
+    legacy.calls = 0
+    real_embed = legacy.embed
+
+    def counting_legacy(texts):
+        legacy.calls += 1
+        return real_embed(texts)
+
+    legacy.embed = counting_legacy
+    set_embedder(legacy)  # present, but must stay unused (P10)
+
+    provider = CountingProvider()
+    rt = _memory_runtime(provider, persist_to=str(tmp_path / "p10.db"))
+    _store_one_memory(rt, "the user prefers dark mode everywhere")
+    item_ids = _retrieve(rt, "the user prefers dark mode everywhere")
+
+    assert item_ids, "stored memory should be recalled"
+    assert provider.calls == 2  # one embed at write time, one per query
+    assert legacy.calls == 0, (
+        "first-party pack code must not call the direct embedder when the "
+        "runtime records embeddings (P10)"
+    )
+    requested = [e for e in rt.graph.events if e.type == "embedding.requested"]
+    responded = [e for e in rt.graph.events if e.type == "embedding.responded"]
+    assert len(requested) == 2 and len(responded) == 2
+    assert all(e.payload.get("cache_hit") is False for e in requested)
+
+
+def test_p10_memory_round_trip_replays_with_zero_external_contact(tmp_path):
+    """The P10 acceptance fixture: a recorded memory-gateway embedding
+    round-trip replays from the log — the SAME retrieval re-runs against a
+    provider that raises on any call, succeeds, and reports a cache hit."""
+    from packs.memory_gateway.backend import clear_all_backends
+
+    clear_all_backends()
+    db = str(tmp_path / "p10_replay.db")
+    text = "the user prefers dark mode everywhere"
+
+    live_provider = CountingProvider()
+    live = _memory_runtime(live_provider, persist_to=db)
+    _store_one_memory(live, text)
+    live_items = _retrieve(live, text)
+    assert live_items and live_provider.calls == 2
+
+    # Reload the run from its log. The poison provider proves that the
+    # replayed embedding comes from the recorded events, not the network.
+    replay = _memory_runtime(PoisonProvider(), load_from=db)
+    replay_items = _retrieve(replay, text)
+
+    assert replay_items == live_items
+    new_requests = [
+        e for e in replay.graph.events
+        if e.type == "embedding.requested"
+        and e.payload.get("cache_hit") is True
+    ]
+    assert new_requests, "replayed retrieval should hit the recorded cache"
+
+
+def test_p10_without_runtime_provider_legacy_embedder_still_works(tmp_path):
+    """Back-compat: no embedding_provider on the Runtime → the bound
+    recorded path is skipped and the process-global embedder behaves
+    exactly as before (no events, vectors still computed)."""
+    from packs.memory_gateway.backend import clear_all_backends
+
+    clear_all_backends()
+    legacy = FakeEmbedder()
+    set_embedder(legacy)
+    rt = _memory_runtime(None)
+    _store_one_memory(rt, "the user prefers dark mode everywhere")
+    item_ids = _retrieve(rt, "dark mode")
+    assert item_ids
+    assert not [
+        e for e in rt.graph.events if e.type.startswith("embedding.")
+    ]

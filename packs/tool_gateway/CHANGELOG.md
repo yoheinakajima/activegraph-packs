@@ -1,5 +1,48 @@
 # Tool Gateway Pack Changelog
 
+## v0.7.0 — Canonical action_class dimension (2026-07-10)
+
+ADR 0016 at the gateway boundary (runtime CONTRACT v1.9). Two explicitly
+named, independent policy dimensions; no cross-inference anywhere.
+
+### Added
+- CapabilitySpec / register_local_capability gain `action_class`
+  ("R0"-"R4", "" = undeclared). Registration validates the closed set;
+  armed registration_check refuses action-class drift against pack
+  declarations exactly like risk drift (including presence drift).
+- decide_policy gains the action-class dimension: auto-approve iff the
+  LEGACY dimension grants (risk_class in auto_approve_risk_classes —
+  byte-for-byte the old behavior) OR the class dimension grants (class
+  within R0-R2 at or below the effective ceiling). R3 requires approval
+  and R4 routes to the governance gate at every ceiling; a missing or
+  invalid class fails closed. decide_policy_detail returns the
+  per-dimension record; the legacy two-argument call shape is unchanged.
+- ToolGatewaySettings.capability_action_ceilings: per-capability local
+  ceilings ("provider.capability" -> none|R0|R1|R2) — local policy may
+  always lower the instance ceiling, never raise it. The instance
+  ceiling itself lives on the Runtime (rt.set_authority_ceiling).
+- policy_enforcer and the LLM proxies evaluate calls that declare an
+  action_class through Runtime.evaluate_capability_authority when a
+  runtime handle is available, so every class-path decision is an
+  `authority.decision` audit event. as_llm_tool / llm_tools_for accept
+  runtime=. Calls without an action_class never touch the new path —
+  legacy hosts see identical decisions and zero authority.* events.
+- capability_call / capability_approval / capability_denial carry
+  action_class; approvals/denials stamp it from the call. Pending
+  approvals name both dimensions plus auto_approve_declined_because —
+  why the ceiling path declined (missing class / above ceiling /
+  stricter local policy / R3 / R4).
+- Catalog entries carry action_class and it is filterable
+  (catalog.search gains the parameter). catalog.search and
+  web.fetch_url are classified R0.
+
+### Migration
+- No action required. Hosts that never declare an action_class keep
+  exact pre-0.7 decisions and event shapes (the capability_call schema
+  gains the field with default ""). Automation through the class path
+  additionally requires the host to raise the runtime ceiling — off by
+  default.
+
 ## v0.6.1 — Capability terminology (2026-07-09)
 
 ### Changed

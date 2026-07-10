@@ -51,7 +51,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # integrates_with=["tool_gateway", "secrets", "identity_auth"]
 pack = Pack(
     name="whatsapp",
-    version="0.1.1",
+    version="0.2.0",
     description=(
         "WhatsApp Cloud API transport adapter: inbound messages become "
         "chat_input (reusing the Chat Pack's conversation machinery); approved "
@@ -69,7 +69,7 @@ pack = Pack(
     # loader's two-way surface check covers capabilities too. CI's AST
     # check (tests/test_manifests.py) keeps this honest against the code.
     capabilities=(
-        CapabilityDecl(provider='whatsapp', capability='send_message', risk_class='low', credential_ref='WHATSAPP_ACCESS_TOKEN'),
+        CapabilityDecl(provider='whatsapp', capability='send_message', risk_class='low', credential_ref='WHATSAPP_ACCESS_TOKEN', action_class='R3'),
     ),
     settings_schema=WhatsAppSettings,
 )

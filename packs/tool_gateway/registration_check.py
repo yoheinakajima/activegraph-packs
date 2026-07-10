@@ -51,9 +51,12 @@ def disarm_registration_enforcement() -> None:
 
 
 def _pack_states(graph) -> dict[str, dict[str, Any]]:
-    """{pack_name: {"disabled": bool, "capabilities": {(prov, cap): risk}}}
+    """{pack_name: {"disabled": bool,
+                    "capabilities": {(prov, cap): (risk, action)}}}
     derived from the graph's pack.loaded / pack.disabled events, latest
-    event wins (a re-load after a disable re-enables)."""
+    event wins (a re-load after a disable re-enables). The action class
+    is "" when the declaration omitted it (pre-v1.9 payloads carry no
+    action_class key at all)."""
     states: dict[str, dict[str, Any]] = {}
     for event in graph.events:
         if event.type == "pack.loaded":
@@ -63,7 +66,8 @@ def _pack_states(graph) -> dict[str, dict[str, Any]]:
                 "disabled": False,
                 "capabilities": {
                     (str(c.get("provider", "")), str(c.get("capability", ""))):
-                        str(c.get("risk_class", ""))
+                        (str(c.get("risk_class", "")),
+                         str(c.get("action_class", "")))
                     for c in (payload.get("capabilities") or [])
                 },
             }
@@ -76,7 +80,8 @@ def _pack_states(graph) -> dict[str, dict[str, Any]]:
 
 
 def check_registration(provider_name: str, capability_name: str,
-                       risk_class: str, origin: str = "native") -> None:
+                       risk_class: str, origin: str = "native",
+                       action_class: str = "") -> None:
     """Raises ValueError when an armed graph refuses the registration.
 
     No-op when unarmed or when the origin is not native (MCP-origin
@@ -106,7 +111,8 @@ def check_registration(provider_name: str, capability_name: str,
             f"by disabled pack(s) ({names}). Disable means disabled; "
             f"re-enable is a fresh adoption, not a registry write."
         )
-    declared_risks = {state["capabilities"][pair] for state in enabled.values()}
+    declared_risks = {state["capabilities"][pair][0]
+                      for state in enabled.values()}
     if risk_class not in declared_risks:
         declared = ", ".join(sorted(declared_risks))
         raise ValueError(
@@ -115,4 +121,19 @@ def check_registration(provider_name: str, capability_name: str,
             f"{risk_class!r}. Risk drift between the reviewed manifest "
             f"and the live registry is exactly the swap the decision "
             f"surface must not miss; fix the declaration or the call."
+        )
+    # The same drift rule for the canonical dimension (ADR 0016): a
+    # capability reviewed as R0 must not register as R2 — and one
+    # reviewed WITHOUT a class must not register with one (or vice
+    # versa), because presence itself changes automation eligibility.
+    declared_actions = {state["capabilities"][pair][1]
+                        for state in enabled.values()}
+    if action_class not in declared_actions:
+        declared = ", ".join(sorted(repr(a) for a in declared_actions))
+        raise ValueError(
+            f"registration refused: capability {key!r} declared "
+            f"action_class {declared} but the registration call says "
+            f"{action_class!r}. Action-class drift between the reviewed "
+            f"manifest and the live registry changes authority; fix the "
+            f"declaration or the call."
         )

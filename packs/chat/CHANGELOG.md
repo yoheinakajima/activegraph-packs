@@ -1,5 +1,14 @@
 # Chat Pack Changelog
 
+## v0.5.0 — Recall embedding rides the recorded runtime path (2026-07-10)
+
+### Changed
+- chat_memory_context passes its behavior ctx to retrieve_memories_fn, so
+  the recall query embedding goes through the runtime's recorded
+  ctx.embed path (embedding.requested/responded events, replayable) when
+  the runtime has an embedding provider (P10). Hosts without one see the
+  exact previous behavior.
+
 ## v0.4.0 — Provider shims retired (activegraph >=1.3) (2026-07-08)
 
 ### Removed

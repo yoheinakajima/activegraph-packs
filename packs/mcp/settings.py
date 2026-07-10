@@ -23,6 +23,8 @@ class MCPSettings(BaseModel):
             "{'name': str, 'transport': 'http'|'stdio', 'url': str (http), "
             "'command': [str] (stdio), 'headers': {str: str} (http auth), "
             "'default_risk': str, 'tool_risk_overrides': {tool: risk}, "
+            "'default_action_class': str, "
+            "'tool_action_class_overrides': {tool: action_class}, "
             "'credential_ref_name': str}. The demo server reads this from "
             "ACTIVEGRAPH_MCP_SERVERS (JSON)."
         ),
@@ -31,10 +33,25 @@ class MCPSettings(BaseModel):
     default_tool_risk: Literal["low", "medium", "high", "critical"] = Field(
         default="high",
         description=(
-            "Risk class assigned to discovered MCP tools with no explicit "
-            "override. 'high' means approval-required under the default "
-            "gateway policy — third-party tools start untrusted and are "
-            "promoted deliberately, per tool, via tool_risk_overrides."
+            "LEGACY risk class assigned to discovered MCP tools with no "
+            "explicit override. 'high' means approval-required under the "
+            "default gateway policy — third-party tools start untrusted and "
+            "are promoted deliberately, per tool, via tool_risk_overrides. "
+            "Independent of default_tool_action_class; the two dimensions "
+            "never map onto each other."
+        ),
+    )
+
+    default_tool_action_class: Literal["R0", "R1", "R2", "R3", "R4"] = Field(
+        default="R3",
+        description=(
+            "Canonical action class (ADR 0016) assigned to discovered MCP "
+            "tools with no explicit override. 'R3' presumes an unknown "
+            "external tool is outward-facing, which makes it ineligible for "
+            "ceiling-based auto-approval at every ceiling — only an explicit "
+            "per-tool operator override (tool_action_class_overrides on the "
+            "server entry) can assign a lower class. Never derived from the "
+            "legacy risk label."
         ),
     )
 

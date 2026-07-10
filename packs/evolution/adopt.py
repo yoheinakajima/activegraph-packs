@@ -28,6 +28,15 @@ from .trial import load_trial_fork
 
 ADOPT_RISK = "critical"
 DISABLE_RISK = "high"
+# Canonical action classes (ADR 0016) — a separate dimension from the
+# legacy risk labels above; never derived from them. Adoption is the
+# glossary's literal R4 case (self-modification adoption). Disable is
+# the deliberately-higher pick of a genuine R2/R4 ambiguity: it is
+# reversible-in-spirit (re-adoption exists) and safety-directional, but
+# it acts on the same self-modification/authority surface adoption
+# governs — ambiguity resolves upward per ADR 0016 discipline.
+ADOPT_ACTION_CLASS = "R4"
+DISABLE_ACTION_CLASS = "R4"
 
 
 def _now() -> str:
@@ -134,6 +143,7 @@ def register_adoption_capabilities(*, gateway_settings, graph) -> None:
                      "and promote its trial state. Critical risk: always held "
                      "for a verified owner approval."),
         risk_class=ADOPT_RISK,
+        action_class=ADOPT_ACTION_CLASS,
     )
     register_local_capability(
         "evolution", "disable_promotion", _disable_executor,
@@ -141,6 +151,7 @@ def register_adoption_capabilities(*, gateway_settings, graph) -> None:
         description=("Disable an adopted pack: immediate deregistration plus "
                      "boot-time exclusion."),
         risk_class=DISABLE_RISK,
+        action_class=DISABLE_ACTION_CLASS,
     )
 
 

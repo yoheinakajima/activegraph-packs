@@ -120,16 +120,20 @@ def extract_capability_registrations(pack_dir: str | Path) -> list[dict]:
 
             risk = _RISK_DEFAULT
             credential_ref = ""
+            action_class = ""  # registry default: undeclared
             for kw in node.keywords:
                 if kw.arg == "risk_class":
                     risk = _resolve(kw.value) or risk
                 if kw.arg == "credential_ref_name":
                     credential_ref = _resolve(kw.value) or ""
+                if kw.arg == "action_class":
+                    action_class = _resolve(kw.value) or ""
             declarations.append({
                 "provider": provider,
                 "capability": capability,
                 "risk_class": risk,
                 "credential_ref": credential_ref,
+                "action_class": action_class,
             })
     declarations.sort(key=lambda d: (d["provider"], d["capability"]))
     return declarations

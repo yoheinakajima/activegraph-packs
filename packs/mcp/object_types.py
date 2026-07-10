@@ -31,6 +31,22 @@ class MCPServer(BaseModel):
     capability_keys: list[str] = Field(default_factory=list)
     default_risk: str = Field(default="high")
     risk_overrides: dict[str, str] = Field(default_factory=dict)
+    default_action_class: str = Field(
+        default="R3",
+        description=(
+            "Canonical action class assigned to this server's tools with no "
+            "explicit override (ADR 0016). R3 = presumed outward-facing, "
+            "ineligible for ceiling automation. Separate from default_risk; "
+            "never derived from it."
+        ),
+    )
+    action_class_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Explicit per-tool operator action-class assignments "
+            "(tool name -> R0-R4) recorded at discovery time."
+        ),
+    )
     status: str = Field(default="connected", description="connected | unreachable")
     error: Optional[str] = Field(default=None)
     connected_at: str = Field(default="")
