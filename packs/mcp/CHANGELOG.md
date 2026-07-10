@@ -1,5 +1,12 @@
 # MCP Pack Changelog
 
+## v0.2.2 — Capability terminology (2026-07-09)
+
+### Changed
+- Inbound MCP descriptions now call gateway-exposed executable surfaces
+  capabilities. The word skill is reserved for governed learned artifacts;
+  no wire keys or persisted fields changed.
+
 ## v0.2.1 — Declarative capability surface (2026-07-08)
 
 ### Added

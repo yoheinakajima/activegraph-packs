@@ -45,12 +45,12 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # integrates_with=["identity_auth", "chat", "memory_gateway", "secrets"]
 pack = Pack(
     name="mcp",
-    version="0.2.1",
+    version="0.2.2",
     description=(
         "Bidirectional MCP: outbound servers' tools become governed Tool "
         "Gateway capabilities (approval-required by default); inbound, the "
         "assistant is itself an MCP server exposing chat, subject-scoped "
-        "memory search, and selected skills — token-authenticated, "
+        "memory search, and selected capabilities — token-authenticated, "
         "role-gated by graph-native exposure rules, fully audited."
     ),
     object_types=OBJECT_TYPES,

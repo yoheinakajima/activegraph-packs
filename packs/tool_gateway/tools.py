@@ -48,7 +48,7 @@ class CapabilitySpec:
     # Where this capability came from: "native" for locally registered
     # Python functions, "mcp:<server>" for tools discovered from an MCP
     # server. The catalog (catalog.py) surfaces this so governance tooling
-    # can distinguish first-party skills from third-party breadth.
+    # can distinguish first-party capabilities from third-party breadth.
     origin: str = "native"
 
     @property

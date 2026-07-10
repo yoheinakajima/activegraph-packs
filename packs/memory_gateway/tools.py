@@ -49,8 +49,9 @@ def retrieve_memories_fn(
             False for strict per-user isolation (no shared/legacy NULL rows).
 
     Returns:
-        List of dicts sorted by score descending:
-        [{item_id, text, score, category, confidence}]
+        List of dicts sorted by outcome-adjusted relevance:
+        [{item_id, text, score, raw_score, reliability_verdict,
+          reliability_multiplier, category, confidence}]
     """
     from .backend import get_backend
 
@@ -83,7 +84,7 @@ def retrieve_memories_fn(
     name="retrieve_memories",
     description=(
         "Retrieve relevant MemoryItems for a query. "
-        "Returns a list of dicts: [{item_id, text, score, category, confidence}]. "
+        "Returns outcome-adjusted relevance plus raw relevance and reliability. "
         "Use this instead of querying the graph directly for memory context."
     ),
 )

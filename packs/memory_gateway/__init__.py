@@ -11,7 +11,8 @@ Key invariants:
   - Default backend: in-memory SQLite (no persistence across runs)
 
 Object types: memory_item, memory_retrieval, memory_ranking
-Behaviors:    candidate_evaluator, memory_writer, memory_ranker
+Behaviors:    candidate_evaluator, memory_writer, memory_ranker,
+              memory_reliability_applier
 Tools:        retrieve_memories
 Backend:      SqliteMemoryBackend (packs/memory_gateway/backend.py)
 
@@ -44,14 +45,15 @@ from .tools import TOOLS
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# requires=["core"], integrates_with=["tool_gateway"]
+# requires=["core"], integrates_with=["tool_gateway", "eval_outcome"]
 pack = Pack(
     name="memory_gateway",
-    version="0.4.0",
+    version="0.5.0",
     description=(
         "Memory lifecycle manager. Evaluates memory_candidates from Core Pack, "
         "accepts high-confidence items into durable MemoryItems, and provides "
-        "hybrid (lexical + optional embedding) retrieval. Default backend: "
+        "hybrid, outcome-aware retrieval with reversible reliability de-ranking. "
+        "Default backend: "
         "SQLite; external stores (mem0, …) plug in via register_backend()."
     ),
     object_types=OBJECT_TYPES,

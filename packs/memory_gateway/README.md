@@ -1,6 +1,6 @@
-# Memory Gateway Pack v0.1
+# Memory Gateway Pack v0.5
 
-> Full memory lifecycle management: candidate evaluation, storage, and retrieval.
+> Full memory lifecycle management: candidate evaluation, storage, outcome-aware retrieval, and reversible forgetting.
 
 ## Overview
 
@@ -26,6 +26,11 @@ memory_retrieval.created
   → memory_ranker
       creates memory_ranking for each item (keyword overlap score)
       creates scored_by(memory_ranking → memory_retrieval) relation
+
+reliability.changed (artifact_type=memory_item)
+  → memory_reliability_applier
+      patches the item reliability verdict + multiplier
+      updates the backend's reversible retrieval weighting
 ```
 
 ```mermaid
@@ -39,13 +44,15 @@ graph LR
     MR[memory_retrieval.created] --> RK[memory_ranker]
     RK --> MRK[memory_ranking]
     RK --> SREL[scored_by relation]
+    OR[reliability.changed] --> MRA[memory_reliability_applier]
+    MRA --> MI
 ```
 
 ## Object Types
 
 | Type | Description | Key Fields |
 |------|-------------|------------|
-| `memory_item` | A durable stored memory | `text`, `category`, `confidence`, `source_ids`, `candidate_id`, `created_at`, `last_retrieved_at`, `retrieval_count` |
+| `memory_item` | A durable stored memory | `text`, `category`, `confidence`, `source_ids`, `reliability_verdict`, `reliability_multiplier` |
 | `memory_retrieval` | Records a retrieval request | `query`, `behavior_name`, `frame_id`, `results_count`, `item_ids`, `retrieved_at` |
 | `memory_ranking` | Relevance score for a retrieval result | `retrieval_id`, `item_id`, `score`, `reason`, `rank` |
 
@@ -61,7 +68,7 @@ graph LR
 
 ```python
 requires = ["core"]
-integrates_with = ["tool_gateway"]
+integrates_with = ["tool_gateway", "eval_outcome"]
 ```
 
 ## Backend
@@ -79,6 +86,12 @@ MemoryGatewaySettings(backend_url="memory.db")
 long stored sentences — and, when an embedder is registered (see
 `embedders.py`), a cosine signal blended as `max(cosine, lexical)`: a memory
 is as relevant as its strongest signal. No key → pure lexical, never errors.
+
+**Forgetting is an outcome-aware ranking behavior, not silent deletion.** A
+harmful, contradicted, or stale memory keeps its object, provenance, and
+history, but its retrieval relevance is multiplied by the separately
+queryable reliability state. A later helped outcome restores the multiplier.
+Every change names the causing outcome event through `reliability.changed`.
 
 **External stores plug in via URL scheme.** `mem0` ships as a working adapter:
 

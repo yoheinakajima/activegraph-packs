@@ -47,6 +47,8 @@ PACKS = [
     ("core", "core"),
     ("activity_normalizer", "activity_normalizer"),
     ("usage", "usage"),
+    ("skills", "skills"),
+    ("eval_outcome", "eval_outcome"),
     ("importer_local_files", "importers/local_files"),
     ("importer_chatgpt_export", "importers/chatgpt_export"),
     ("tool_gateway", "tool_gateway"),

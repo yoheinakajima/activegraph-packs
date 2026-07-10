@@ -103,8 +103,6 @@ class Mem0Backend(ExternalMemoryBackend):
                 normalized = self._normalize(entry)
                 if normalized is None:
                     continue
-                if normalized["score"] < min_score:
-                    continue
                 meta = normalized.pop("_metadata")
                 if category and meta.get("category") != category:
                     continue
@@ -117,8 +115,7 @@ class Mem0Backend(ExternalMemoryBackend):
                 normalized["confidence"] = meta.get("confidence", 0.7)
                 results.append(normalized)
 
-        results.sort(key=lambda r: r["score"], reverse=True)
-        return results[:top_k]
+        return self.apply_reliability(results, min_score=min_score, top_k=top_k)
 
     def _search(self, query: str, user_id: str, limit: int) -> list[dict]:
         try:

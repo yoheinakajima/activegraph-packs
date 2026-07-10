@@ -12,7 +12,7 @@ it makes all retrieval requests observable and auditable.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +74,9 @@ class MemoryItem(BaseModel):
         description="Opaque reference to who/what this memory is about.",
     )
     metadata: dict[str, Any] = Field(default_factory=dict)
+    reliability_verdict: Literal["supported", "weak", "harmful", "stale"] = "weak"
+    reliability_multiplier: float = Field(default=1.0, ge=0.0, le=1.0)
+    reliability_event_id: Optional[str] = None
 
 
 class MemoryRetrievalRequest(BaseModel):

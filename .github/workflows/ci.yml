@@ -51,6 +51,12 @@ jobs:
       - name: usage fixtures
         run: python packs/usage/fixtures/run_fixtures.py
 
+      - name: skills fixtures
+        run: python packs/skills/fixtures/run_fixtures.py
+
+      - name: eval_outcome fixtures
+        run: python packs/eval_outcome/fixtures/run_fixtures.py
+
       - name: importer_local_files fixtures
         run: python packs/importers/local_files/fixtures/run_fixtures.py
 
@@ -118,6 +124,9 @@ jobs:
 
       - name: Cross-pack integration (Tool Gateway → Core → Memory Gateway)
         run: python packs/fixtures/cross_pack_integration.py
+
+      - name: Cross-pack integration (L2 Habit closed loop)
+        run: python packs/fixtures/l2_habit_integration.py
 
       - name: Cross-pack integration (Communication + Chat + Email + Identity)
         run: python packs/fixtures/comm_chat_email_integration.py

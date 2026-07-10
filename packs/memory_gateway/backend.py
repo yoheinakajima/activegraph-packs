@@ -261,6 +261,7 @@ class MemoryBackend(Protocol):
     def get_subject(self, item_id: str) -> Optional[str]: ...
     def enforce_limit(self, max_items: int) -> None: ...
     def update_retrieval(self, item_id: str) -> None: ...
+    def set_reliability(self, item_id: str, verdict: str, multiplier: float) -> None: ...
     def clear(self) -> None: ...
     def count(self) -> int: ...
     def close(self) -> None: ...
@@ -279,6 +280,7 @@ class ExternalMemoryBackend:
 
     def __init__(self, url: str):
         self.db_url = url
+        self._reliability: dict[str, tuple[str, float]] = {}
 
     def store_item(self, item_id, text, category=None, confidence=0.7,
                    metadata=None, subject_ref=None) -> None:
@@ -303,6 +305,28 @@ class ExternalMemoryBackend:
 
     def update_retrieval(self, item_id) -> None:
         pass
+
+    def set_reliability(self, item_id, verdict, multiplier) -> None:
+        """Store the shared reliability hook for adapters that apply it."""
+        self._reliability[item_id] = (verdict, max(0.0, min(1.0, float(multiplier))))
+
+    def apply_reliability(self, results, min_score=0.2, top_k=10):
+        """Apply the common reversible reliability multiplier to adapter results."""
+        adjusted = []
+        for result in results:
+            row = dict(result)
+            verdict, multiplier = self._reliability.get(
+                str(row.get("item_id") or ""), ("weak", 1.0)
+            )
+            raw_score = float(row.get("score", 0.0))
+            row["raw_score"] = round(raw_score, 4)
+            row["reliability_verdict"] = verdict
+            row["reliability_multiplier"] = multiplier
+            row["score"] = round(raw_score * multiplier, 4)
+            if row["score"] >= min_score:
+                adjusted.append(row)
+        adjusted.sort(key=lambda item: item["score"], reverse=True)
+        return adjusted[:top_k]
 
     def clear(self) -> None:
         pass
@@ -343,7 +367,9 @@ class SqliteMemoryBackend:
                 last_retrieved_at TEXT,
                 retrieval_count INTEGER DEFAULT 0,
                 embedding TEXT,
-                subject_ref TEXT
+                subject_ref TEXT,
+                reliability_verdict TEXT DEFAULT 'weak',
+                reliability_multiplier REAL DEFAULT 1.0
             )
         """)
         # Migration-safe: a DB file written by an older version may lack the
@@ -356,6 +382,14 @@ class SqliteMemoryBackend:
             self._conn.execute("ALTER TABLE memory_items ADD COLUMN embedding TEXT")
         if "subject_ref" not in cols:
             self._conn.execute("ALTER TABLE memory_items ADD COLUMN subject_ref TEXT")
+        if "reliability_verdict" not in cols:
+            self._conn.execute(
+                "ALTER TABLE memory_items ADD COLUMN reliability_verdict TEXT DEFAULT 'weak'"
+            )
+        if "reliability_multiplier" not in cols:
+            self._conn.execute(
+                "ALTER TABLE memory_items ADD COLUMN reliability_multiplier REAL DEFAULT 1.0"
+            )
         self._conn.commit()
 
     def store_item(
@@ -500,7 +534,10 @@ class SqliteMemoryBackend:
                 # Strict isolation: only the caller's own (non-NULL) memories.
                 where.append("subject_ref = ?")
                 params.append(subject_ref)
-        sql = "SELECT item_id, text, category, confidence, embedding, metadata FROM memory_items"
+        sql = (
+            "SELECT item_id, text, category, confidence, embedding, metadata, "
+            "reliability_verdict, reliability_multiplier FROM memory_items"
+        )
         if where:
             sql += " WHERE " + " AND ".join(where)
         cursor = self._conn.execute(sql, tuple(params))
@@ -514,7 +551,16 @@ class SqliteMemoryBackend:
 
         scored = []
         for row in rows:
-            item_id, text, cat, conf, embedding_json, metadata_json = row
+            (
+                item_id,
+                text,
+                cat,
+                conf,
+                embedding_json,
+                metadata_json,
+                reliability_verdict,
+                reliability_multiplier,
+            ) = row
             # Same-frame exclusion: a memory born in the frame that is asking
             # must not answer it. This turns what used to be a timing accident
             # (writes land in a later cascade than reads) into a designed
@@ -532,6 +578,8 @@ class SqliteMemoryBackend:
                     score = max(score, _cosine(query_vec, json.loads(embedding_json)))
                 except Exception:
                     pass  # bad stored vector → lexical signal already in place
+            raw_score = score
+            score = raw_score * float(reliability_multiplier or 0.0)
             if score >= min_score:
                 scored.append({
                     "item_id": item_id,
@@ -539,6 +587,9 @@ class SqliteMemoryBackend:
                     "category": cat,
                     "confidence": conf,
                     "score": round(score, 4),
+                    "raw_score": round(raw_score, 4),
+                    "reliability_verdict": reliability_verdict or "weak",
+                    "reliability_multiplier": float(reliability_multiplier or 0.0),
                 })
 
         scored.sort(key=lambda x: x["score"], reverse=True)
@@ -575,6 +626,18 @@ class SqliteMemoryBackend:
             WHERE item_id = ?
             """,
             (now, item_id),
+        )
+        self._conn.commit()
+
+    def set_reliability(self, item_id: str, verdict: str, multiplier: float):
+        """Set the outcome-derived retrieval multiplier for one memory item."""
+        self._conn.execute(
+            """
+            UPDATE memory_items
+            SET reliability_verdict = ?, reliability_multiplier = ?
+            WHERE item_id = ?
+            """,
+            (verdict, max(0.0, min(1.0, float(multiplier))), item_id),
         )
         self._conn.commit()
 
