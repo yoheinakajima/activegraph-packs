@@ -6,6 +6,31 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Evolution pack v0.7.3: platform-truthful memory containment fixture.**
+  Fixture 29 now follows the runtime's live memory-net signal: RLIMIT_AS
+  contains the real Linux path, while the unforced macOS path proves the
+  runaway is contained by the wall clock. Linux CI still forces the net-OFF
+  path as a second pass, preserving coverage of both containment modes.
+
+- **L1 Coverage P2: neutral usage and settlement projections.** Added the
+  closed seven-category source model, provider-neutral connection surfaces,
+  immutable named/versioned settling gates, normalizer-identity coverage,
+  interaction and observed-outcome statistics, explicit lifecycle facts, and
+  an explicit-event-horizon product query API. The default gate settles per
+  surface at 25 unique identities or three UTC provider-time coverage days;
+  fixtures remain visible but excluded. Added all seven P2 acceptance cases
+  and source-zero dogfood using the vision repo plus a ChatGPT export across
+  two settled categories.
+
+- **L1 Coverage P1: activity normalization and historical importers.** Added
+  the strict acquired-item/content contract, normalizer-owned logical evidence
+  identity with idempotent revisions and supersession, content-addressed and
+  reference-only replay modes, stable backfill cursors, deterministic
+  versioned candidate extraction, and extractor invalidation. Added bounded
+  `local_files` and official ChatGPT export adapters (including canonical tree
+  paths plus abandoned edit/regeneration evidence), nested-pack manifest/CI
+  support, and the full seven-case P1 acceptance suite.
+
 - **Evolution pack v0.7.2: adoption-time supersession + narrow boot heal.**
   Resolves both crash-safety proposals from the v0.7.1 audit, per the
   owner's decisions. The per-pack invariant (at most one active promotion

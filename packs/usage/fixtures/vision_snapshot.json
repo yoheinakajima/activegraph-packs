@@ -1,0 +1,32 @@
+{
+  "snapshot_id": "activegraph-vision-bounded-v0",
+  "description": "Deterministic offline source-zero fallback used when /tmp/vision is unavailable.",
+  "files": [
+    {"path": "00-north-star.md", "content": "# North Star\nActivity should compound into better agent behavior."},
+    {"path": "01-glossary-event.md", "content": "# Event\nAn event is an immutable record in the graph log."},
+    {"path": "02-glossary-evidence.md", "content": "# Evidence\nEvidence retains provenance and replay metadata."},
+    {"path": "03-glossary-candidate.md", "content": "# Candidate\nA candidate is a proposal awaiting governed promotion."},
+    {"path": "04-ingestion-pipeline.md", "content": "# Pipeline\nImporter, normalizer, extractor, then promotion policy."},
+    {"path": "05-acquired-item.md", "content": "# Acquired Item\nFormat adapters emit stable source identity and replay metadata."},
+    {"path": "06-evidence-identity.md", "content": "# Identity\nThe activity normalizer owns evidence identity and revisions."},
+    {"path": "07-replay-inline.md", "content": "# Inline Replay\nSmall ephemeral inputs may be retained inline."},
+    {"path": "08-replay-artifact.md", "content": "# Artifact Replay\nPersistent inputs use an immutable content-addressed artifact."},
+    {"path": "09-reference-only.md", "content": "# Reference Only\nExplicit policy may trade complete replay for reduced retention."},
+    {"path": "10-backfill.md", "content": "# Backfill\nHistorical ingestion is bounded and explicitly extendable."},
+    {"path": "11-cursors.md", "content": "# Cursors\nStable provider references are used instead of page offsets."},
+    {"path": "12-idempotency.md", "content": "# Idempotency\nRepeated snapshots and overlapping pages do not duplicate evidence."},
+    {"path": "13-revisions.md", "content": "# Revisions\nChanged content supersedes an older revision without changing logical identity."},
+    {"path": "14-extractors.md", "content": "# Extractors\nExtractor versions and configuration identities accompany candidates."},
+    {"path": "15-determinism.md", "content": "# Determinism\nThe zero-key floor uses deterministic structure and heuristics."},
+    {"path": "16-connection.md", "content": "# Connection\nConnection proves access but does not prove useful ingestion."},
+    {"path": "17-settlement.md", "content": "# Settlement\nA named and versioned gate determines when a source counts."},
+    {"path": "18-volume.md", "content": "# Volume Gate\nTwenty-five unique evidence identities satisfy the default volume gate."},
+    {"path": "19-coverage.md", "content": "# Coverage Gate\nThree provider-time coverage days satisfy the default span gate."},
+    {"path": "20-categories.md", "content": "# Categories\nCanonical source categories are closed and provider-neutral."},
+    {"path": "21-usage.md", "content": "# Usage\nThe usage pack exposes neutral observational projections."},
+    {"path": "22-event-horizon.md", "content": "# Event Horizon\nDerived state evaluates through one explicit canonical event horizon."},
+    {"path": "23-fixtures.md", "content": "# Fixtures\nSynthetic fixture evidence remains visible but never qualifies."},
+    {"path": "24-game-boundary.md", "content": "# Boundary\nPacks expose facts while BabyAGI owns score, badges, and levels."},
+    {"path": "25-source-zero.md", "content": "# Source Zero\nThe vision repository is the first local knowledge dogfood source."}
+  ]
+}
