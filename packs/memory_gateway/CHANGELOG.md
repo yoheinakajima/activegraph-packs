@@ -1,5 +1,29 @@
 # Memory Gateway Pack Changelog
 
+## v0.7.0 — Versioned promotion beyond admission (P6) (2026-07-10)
+
+### Added
+- `memory_item` gains `promotion_status` (admitted/promoted/demoted),
+  `artifact_version` (fixed at admission; new text = new item, never an
+  in-place bump), and `promotion_history`.
+- `memory_promotion_proposal` object type +
+  `memory_promotion_proposer` behavior: reliability evidence GENERATES
+  proposals (versioned rule `memory.promotion.reliability@1`: supported
+  verdict + >= 2 helped outcomes -> promote candidate; harmful/stale on
+  a promoted version -> demote candidate). Proposals carry the exact
+  reliability evidence event ids.
+- `promotion.resolve_memory_promotion_fn`: the ONLY promote/demote path
+  — explicit approver required; approval emits `memory.promoted` keyed
+  `(artifact_id, artifact_version)` (the SCORING_CONTRACT identity, so
+  re-promotion of the same version can never re-score) or
+  `memory.demoted`. Nothing promotes silently.
+- `promotion.verify_memory_replay_fn`: `replay.verified` for promoted
+  versions keyed `(subject_id, subject_version)` from recorded checks
+  (admission re-derivation + stored-artifact retrieval through the
+  recorded embedding path). Fails LOUDLY on `reference_only` /
+  replay-incomplete source lineage (ADR 0015) and on failed checks;
+  emits once per version.
+
 ## v0.6.0 — P10: first-party embedding rides the recorded runtime path (2026-07-10)
 
 ### Changed

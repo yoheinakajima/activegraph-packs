@@ -47,7 +47,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["secrets", "identity_auth"]
 pack = Pack(
     name="tool_gateway",
-    version="0.7.0",
+    version="0.8.0",
     description=(
         "Capability execution gateway. All external calls (APIs, MCP, local tools) "
         "flow through here for policy checks, credential injection by reference, "

@@ -36,6 +36,7 @@ def decide_policy(
     action_class: str = "",
     authority_ceiling: str = "none",
     capability_ceiling: Optional[str] = None,
+    standing_scope: Optional[dict[str, Any]] = None,
 ) -> Literal["auto_approve", "hold"]:
     """The gateway's one policy decision: may this call run unattended?
 
@@ -51,7 +52,12 @@ def decide_policy(
         ceiling, default ``"none"`` = grants nothing) and any stricter
         *capability_ceiling*? R4 always routes to the governance gate,
         R3 always requires approval, missing/invalid class fails closed
-        — see the runtime's ``evaluate_action_authority``.
+        — see the runtime's ``evaluate_action_authority``. **R2 is
+        additionally policy-specific** (SCORING_CONTRACT: a ceiling of
+        R2 "does not auto-approve every R2 capability"): it grants only
+        when *standing_scope* names a PROMOTED tool_policy covering this
+        capability (ADR 0018's earned automation). Callers that pass no
+        scope get the fail-safe: R2 never auto-grants.
 
     The call is auto-approved iff EITHER dimension explicitly grants it;
     the action-class dimension can only ADD automation within R0–R2
@@ -66,6 +72,7 @@ def decide_policy(
         action_class=action_class,
         authority_ceiling=authority_ceiling,
         capability_ceiling=capability_ceiling,
+        standing_scope=standing_scope,
     )["decision"]
 
 
@@ -76,6 +83,7 @@ def decide_policy_detail(
     action_class: str = "",
     authority_ceiling: str = "none",
     capability_ceiling: Optional[str] = None,
+    standing_scope: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """`decide_policy` with the per-dimension record the surfaces keep.
 
@@ -86,7 +94,8 @@ def decide_policy_detail(
           "legacy_risk": {"risk_class", "auto_approve"},
           "action_authority": {"action_class", "decision",
                                "matched_policy", "reason", "ceiling",
-                               "capability_ceiling", "effective_ceiling"},
+                               "capability_ceiling", "effective_ceiling",
+                               "standing_scope"},
           "granted_by": "legacy_risk" | "action_authority"
                         | "legacy_risk+action_authority" | "",
         }
@@ -94,10 +103,16 @@ def decide_policy_detail(
     ``action_authority`` comes verbatim from the runtime's pure
     ``evaluate_action_authority`` (the same rules the runtime audits),
     so a held call can say WHY the ceiling path declined it: missing
-    class, above ceiling, or stricter local policy. A runtime-side
-    ``authority.decision`` audit event is the caller's job when a
-    Runtime handle is available (behaviors have one; see
-    behaviors.policy_enforcer) — this function stays graph-free.
+    class, above ceiling, or stricter local policy. One gateway rule
+    layers on top (P6, ADR 0018): an ``R2`` grant additionally requires
+    *standing_scope* — the promoted tool_policy record from
+    ``standing_scopes.promoted_standing_scope_for`` — else the action
+    dimension holds with ``r2_requires_promoted_standing_scope``. A
+    runtime-side ``authority.decision`` audit event is the caller's job
+    when a Runtime handle is available (behaviors have one; see
+    behaviors.evaluate_call_policy, which passes the equivalent stricter
+    capability ceiling so the audit and this record agree) — this
+    function stays graph-free.
     """
     from activegraph.runtime.authority import evaluate_action_authority
 
@@ -108,7 +123,35 @@ def decide_policy_detail(
         ceiling=authority_ceiling,
         capability_ceiling=capability_ceiling,
     )
-    action_grants = authority.decision == "auto_approve"
+    action_record = {
+        "action_class": authority.action_class,
+        "decision": authority.decision,
+        "matched_policy": authority.matched_policy,
+        "reason": authority.reason,
+        "ceiling": authority.ceiling,
+        "capability_ceiling": authority.capability_ceiling,
+        "effective_ceiling": authority.effective_ceiling,
+        "standing_scope": standing_scope,
+    }
+    # SCORING_CONTRACT: "Level 3 permits a policy to auto-approve a
+    # bounded reversible capability; it does not auto-approve every R2
+    # capability." The ceiling is the bound; the promoted standing scope
+    # is the policy selection. R0/R1 need no scope; R3/R4 never reach
+    # here (they hold/gate above).
+    if (
+        action_class == "R2"
+        and action_record["decision"] == "auto_approve"
+        and standing_scope is None
+    ):
+        action_record["decision"] = "require_approval"
+        action_record["matched_policy"] = "r2_requires_promoted_standing_scope"
+        action_record["reason"] = (
+            "R2 is within the ceiling but auto-approval of a bounded "
+            "reversible capability requires a PROMOTED standing scope "
+            "(tool_policy) covering it; none is promoted for this "
+            "capability (ADR 0018)"
+        )
+    action_grants = action_record["decision"] == "auto_approve"
     granted = [
         name
         for name, grants in (
@@ -123,15 +166,7 @@ def decide_policy_detail(
             "risk_class": risk_class,
             "auto_approve": legacy_grants,
         },
-        "action_authority": {
-            "action_class": authority.action_class,
-            "decision": authority.decision,
-            "matched_policy": authority.matched_policy,
-            "reason": authority.reason,
-            "ceiling": authority.ceiling,
-            "capability_ceiling": authority.capability_ceiling,
-            "effective_ceiling": authority.effective_ceiling,
-        },
+        "action_authority": action_record,
         "granted_by": "+".join(granted),
     }
 

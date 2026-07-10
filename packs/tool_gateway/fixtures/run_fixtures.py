@@ -281,6 +281,108 @@ def _run_action_class_fixture() -> tuple[bool, list[str]]:
     return (len(failures) == 0), failures
 
 
+def _run_standing_scope_fixture() -> tuple[bool, list[str]]:
+    """P6 / ADR 0018 automation stage: a deterministic prediction history
+    earns a standing-scope candidate; owner approval promotes it; the
+    scope's R2 capability then auto-approves within the ceiling with the
+    provenance on the approval; degradation demotes it naming the missed
+    predictions and the next call holds again."""
+    from packs.tool_gateway.standing_scopes import (
+        accuracy_percent,
+        demote_tool_policy_fn,
+        promote_tool_policy_fn,
+        propose_standing_scope_fn,
+    )
+
+    failures: list[str] = []
+    graph = Graph()
+    rt = Runtime(graph)
+    rt.load_pack(core_pack, settings=CoreSettings())
+    rt.load_pack(tg_pack, settings=ToolGatewaySettings(
+        auto_approve_risk_classes=[],
+    ))
+    rt.set_authority_ceiling("R2", actor="fixture_owner", reason="L3 mapping")
+
+    def add_r2_call():
+        call = graph.add_object("capability_call", {
+            "provider_id": "", "provider_name": "notes",
+            "capability_name": "hold_slot", "input_data": {},
+            "risk_class": "medium", "action_class": "R2",
+            "status": "proposed", "proposed_at": "2026-07-10T00:00:00Z",
+        })
+        rt.run_until_idle()
+        return graph.get_object(call.id)
+
+    held = add_r2_call()
+    if held.data.get("status") != "policy_checking":
+        failures.append("  R2 without a promoted scope must hold")
+    named = (held.data.get("metadata") or {}).get("action_authority", {})
+    if named.get("matched_policy") != "r2_requires_promoted_standing_scope":
+        failures.append("  the hold must name r2_requires_promoted_standing_scope")
+
+    pairs = []
+    for index in range(10):
+        prediction = graph.add_object("approval_prediction", {
+            "prediction_id": f"pred_{index}", "predicted_verdict": "approve",
+        })
+        decided = graph.add_object("decision_fact", {
+            "decision_id": f"dec_{index}",
+            "verdict": "approved" if index < 9 else "rejected",
+        })
+        pairs.append({
+            "prediction_ref": prediction.id, "decided_ref": decided.id,
+            "predicted_verdict": "approve",
+            "actual_verdict": "approved" if index < 9 else "rejected",
+        })
+    out = propose_standing_scope_fn(
+        graph, capability_key="notes.hold_slot", action_class="R2",
+        prediction_pairs=pairs, proposed_by="babyagi.reflection",
+        is_fixture=True,
+    )
+    policy_id = out["policy"].data["policy_id"]
+    promote_tool_policy_fn(graph, policy_id, "user:owner", note="handle these")
+
+    auto = add_r2_call()
+    if auto.data.get("status") != "done":
+        failures.append(f"  promoted scope must auto-approve; status={auto.data.get('status')}")
+    approvals = [a for a in graph.objects(type="capability_approval")
+                 if a.data.get("call_id") == auto.id]
+    scope_meta = ((approvals[0].data.get("metadata") or {})
+                  .get("action_authority", {}).get("standing_scope")
+                  if approvals else None)
+    if not scope_meta or scope_meta.get("prediction_count") != 10:
+        failures.append("  the approval must carry the scope's prediction provenance")
+
+    missed = []
+    for index in range(3):
+        prediction = graph.add_object("approval_prediction", {
+            "prediction_id": f"miss_{index}", "predicted_verdict": "approve",
+        })
+        decided = graph.add_object("decision_fact", {
+            "decision_id": f"missdec_{index}", "verdict": "rejected",
+        })
+        missed.append({
+            "prediction_ref": prediction.id, "decided_ref": decided.id,
+            "predicted_verdict": "approve", "actual_verdict": "rejected",
+        })
+    observed = accuracy_percent(pairs + missed)
+    demote_tool_policy_fn(
+        graph, policy_id,
+        missed_prediction_refs=[m["prediction_ref"] for m in missed],
+        observed_accuracy_percent=observed, actor="babyagi.reflection",
+    )
+    after = add_r2_call()
+    if after.data.get("status") != "policy_checking":
+        failures.append("  demotion must hold the very next call")
+    demoted = [e for e in graph.events if e.type == "tool_policy.demoted"]
+    if not demoted or len(demoted[0].payload.get("missed_prediction_refs", [])) != 3:
+        failures.append("  demotion must name the missed predictions")
+
+    print("  hold -> earn(9/10) -> approve -> auto-run w/ provenance ->")
+    print("  degrade(9/13) -> demote naming misses -> hold again")
+    return (len(failures) == 0), failures
+
+
 def main():
     _HERE = Path(__file__).parent
     fixtures = sorted(_HERE.glob("*.yaml"))
@@ -302,6 +404,17 @@ def main():
             print(f"  FAIL — {len(failures)} failure(s):")
             for f in failures:
                 print(f)
+
+    name = "standing_scope_loop"
+    print(f"\n{'='*60}\nFixture: {name}\n{'='*60}")
+    passed, failures = _run_standing_scope_fixture()
+    results.append((name, passed))
+    if passed:
+        print("  PASS")
+    else:
+        print(f"  FAIL — {len(failures)} failure(s):")
+        for f in failures:
+            print(f)
 
     name = "action_class_authority"
     print(f"\n{'='*60}\nFixture: {name}\n{'='*60}")

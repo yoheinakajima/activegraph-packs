@@ -224,6 +224,91 @@ def _run_recorded_embedding_fixture(tmp_dir: str) -> tuple[bool, list[str]]:
     return (len(failures) == 0), failures
 
 
+def _run_promotion_fixture(tmp_dir: str) -> tuple[bool, list[str]]:
+    """P6: reliability generates a promotion proposal; explicit approval
+    promotes with the contract key; the promoted version earns
+    replay.verified; a hurt outcome generates a demotion proposal whose
+    approval demotes — every transition explainable to evidence."""
+    import os
+
+    from packs.eval_outcome import pack as eval_outcome_pack
+    from packs.eval_outcome.tools import record_terminal_outcome_fn
+    from packs.memory_gateway.promotion import (
+        resolve_memory_promotion_fn,
+        verify_memory_replay_fn,
+    )
+
+    failures: list[str] = []
+    clear_all_backends()
+    rt = Runtime(Graph(), persist_to=os.path.join(tmp_dir, "p6_memory.db"))
+    rt.load_pack(core_pack, settings=CoreSettings())
+    rt.load_pack(eval_outcome_pack)
+    rt.load_pack(mg_pack, settings=MemoryGatewaySettings(
+        acceptance_threshold=0.6, auto_accept_categories=["preference"],
+    ))
+
+    rt.graph.add_object("memory_candidate", {
+        "text": "the user prefers dark mode everywhere", "confidence": 0.85,
+        "source_ids": [], "observation_ids": [], "category": "preference",
+        "subject_ref": None, "accepted": False, "evaluation_id": None,
+        "frame_id": "frame_p6",
+    })
+    rt.run_until_idle()
+    item = list(rt.graph.objects(type="memory_item"))[-1]
+
+    def record(kind, rationale):
+        ev = rt.graph.add_object("evaluation", {
+            "subject_id": item.id, "subject_type": "memory_item",
+            "judgment": "accepted", "rationale": rationale,
+            "evaluator": "owner:fixture",
+        })
+        record_terminal_outcome_fn(
+            rt.graph, kind, evaluation_id=ev.id, rationale=rationale,
+            actor="owner", artifact_id=item.id, artifact_type="memory_item",
+            artifact_version="1",
+        )
+        rt.run_until_idle()
+
+    record("outcome.helped", "helped once")
+    record("outcome.helped", "helped twice")
+    proposals = [o for o in rt.graph.objects(type="memory_promotion_proposal")
+                 if o.data.get("status") == "proposed"]
+    if len(proposals) != 1 or proposals[0].data["direction"] != "promote":
+        failures.append(f"  expected one open promote proposal, got {len(proposals)}")
+        return (False, failures)
+    if [e for e in rt.graph.events if e.type == "memory.promoted"]:
+        failures.append("  nothing may promote before approval")
+
+    resolve_memory_promotion_fn(rt.graph, proposals[0].data["proposal_id"],
+                                approve=True, approver="user:owner")
+    promoted = [e for e in rt.graph.events if e.type == "memory.promoted"]
+    if len(promoted) != 1 or promoted[0].payload.get("artifact_version") != "1":
+        failures.append("  memory.promoted must carry (artifact_id, artifact_version)")
+
+    out = verify_memory_replay_fn(rt.graph, item.id, runtime=rt)
+    verified = [e for e in rt.graph.events if e.type == "replay.verified"]
+    if not out.get("created") or len(verified) != 1:
+        failures.append("  promoted version must earn replay.verified once")
+    elif verified[0].payload.get("subject_id") != item.id:
+        failures.append("  replay.verified must be keyed by subject_id")
+
+    record("outcome.hurt", "it misled a reply")
+    demotes = [o for o in rt.graph.objects(type="memory_promotion_proposal")
+               if o.data.get("status") == "proposed"
+               and o.data.get("direction") == "demote"]
+    if len(demotes) != 1:
+        failures.append("  harmful reliability must generate a demotion proposal")
+    else:
+        resolve_memory_promotion_fn(rt.graph, demotes[0].data["proposal_id"],
+                                    approve=True, approver="user:owner")
+        if rt.graph.get_object(item.id).data["promotion_status"] != "demoted":
+            failures.append("  approved demotion must demote the version")
+
+    print("  proposal -> approval -> memory.promoted -> replay.verified ->")
+    print("  hurt -> demotion proposal -> approved demotion: all evidenced")
+    return (len(failures) == 0), failures
+
+
 def main():
     _HERE = Path(__file__).parent
     fixtures = sorted(_HERE.glob("*.yaml"))
@@ -243,6 +328,15 @@ def main():
             print(f)
 
     import tempfile
+    name = "memory_promotion_loop"
+    print(f"\n{'='*60}\nFixture: {name}\n{'='*60}")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        passed, failures = _run_promotion_fixture(tmp_dir)
+    results.append((name, passed))
+    print("  PASS" if passed else f"  FAIL:")
+    for f in failures:
+        print(f)
+
     name = "recorded_embedding_replay"
     print(f"\n{'='*60}\nFixture: {name}\n{'='*60}")
     with tempfile.TemporaryDirectory() as tmp_dir:

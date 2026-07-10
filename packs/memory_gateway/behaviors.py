@@ -559,10 +559,94 @@ def memory_reliability_applier(event, graph, ctx, *, settings: MemoryGatewaySett
     )
 
 
+@behavior(
+    name="memory_promotion_proposer",
+    on=["reliability.changed"],
+    view={"include_types": ["memory_promotion_proposal", "memory_item"]},
+    creates=["memory_promotion_proposal"],
+)
+def memory_promotion_proposer(event, graph, ctx, *, settings: MemoryGatewaySettings):
+    """Generate promote/demote proposals from reliability evidence (P6).
+
+    On: reliability.changed (artifact_type=memory_item)
+    Creates: memory_promotion_proposal (direction=promote|demote)
+
+    The versioned rule (promotion.MEMORY_PROMOTION_RULES): a SUPPORTED
+    item with repeated helped outcomes becomes a promotion candidate; a
+    PROMOTED item whose verdict turns harmful/stale becomes a demotion
+    candidate. This behavior only PROPOSES — resolution (and the
+    memory.promoted / memory.demoted event) requires an explicit
+    approver through resolve_memory_promotion_fn. Nothing promotes
+    silently.
+    """
+    from .promotion import (
+        MEMORY_PROMOTION_RULES,
+        open_proposal_for,
+        propose_memory_promotion_fn,
+    )
+
+    payload = event.payload or {}
+    if payload.get("artifact_type") != "memory_item":
+        return
+    item_id = str(payload.get("artifact_id") or "")
+    item = graph.get_object(item_id)
+    if item is None or item.type != "memory_item":
+        return
+    verdict = str(payload.get("verdict") or "weak")
+    tallies = payload.get("tallies") or {}
+    helped = int(tallies.get("helped", 0))
+    status = item.data.get("promotion_status", "admitted")
+    evidence = list(payload.get("evidence_event_ids") or [])
+    if event.id not in evidence:
+        evidence.append(event.id)
+
+    rules = MEMORY_PROMOTION_RULES
+    if (
+        verdict == rules["required_verdict"]
+        and helped >= rules["min_helped_outcomes"]
+        and status != "promoted"
+        and open_proposal_for(ctx.view, item_id, "promote") is None
+    ):
+        propose_memory_promotion_fn(
+            graph,
+            item_id,
+            direction="promote",
+            reader=ctx.view,
+            reliability_verdict=verdict,
+            helped_outcomes=helped,
+            evidence_event_ids=evidence,
+            rationale=(
+                f"reliability is {verdict!r} with {helped} helped outcomes "
+                f"(rule {rules['rule_id']}@{rules['rule_version']})"
+            ),
+            is_fixture=bool(payload.get("is_fixture", False)),
+        )
+    elif (
+        verdict in rules["demote_on_verdicts"]
+        and status == "promoted"
+        and open_proposal_for(ctx.view, item_id, "demote") is None
+    ):
+        propose_memory_promotion_fn(
+            graph,
+            item_id,
+            direction="demote",
+            reader=ctx.view,
+            reliability_verdict=verdict,
+            helped_outcomes=helped,
+            evidence_event_ids=evidence,
+            rationale=(
+                f"reliability fell to {verdict!r} for a promoted version "
+                f"(rule {rules['rule_id']}@{rules['rule_version']})"
+            ),
+            is_fixture=bool(payload.get("is_fixture", False)),
+        )
+
+
 BEHAVIORS = [
     candidate_evaluator,
     memory_writer,
     memory_retriever,
     memory_ranker,
     memory_reliability_applier,
+    memory_promotion_proposer,
 ]

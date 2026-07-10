@@ -109,6 +109,7 @@ def as_llm_tool(
             action_class=spec.action_class,
             settings=gw_settings,
             runtime=runtime,
+            graph=graph,
             actor=ctx.behavior_name or "gateway_llm_proxy",
         )
         decision = policy["decision"]

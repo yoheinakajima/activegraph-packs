@@ -14,7 +14,7 @@ from .tools import TOOLS
 # integrates_with=["activity_normalizer", "tool_gateway", "eval_outcome"]
 pack = Pack(
     name="skills",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Versioned, provenance-backed learned behavior artifacts with exact-version "
         "usage, evidence-gated promotion, and reversible eligibility."
