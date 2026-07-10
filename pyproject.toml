@@ -11,18 +11,16 @@ requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 
 dependencies = [
-    # Pinned to the runtime branch carrying CONTRACT v1.9 (canonical
+    # The v1.9.0 PyPI release carries CONTRACT v1.9 (canonical
     # action_class authority) — these packs import
     # activegraph.runtime.authority and Runtime.evaluate_capability_authority.
-    # Replace with "activegraph[llm]>=1.9,<2.0" (or whichever released
-    # version ships the v1.9 contract) once it lands on PyPI.
-    "activegraph[llm] @ git+https://github.com/yoheinakajima/activegraph@fb87db15da20034278ade83ba8d4a6cf96c49e45",
+    "activegraph[llm]>=1.9,<2.0",
     "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "activegraph[llm] @ git+https://github.com/yoheinakajima/activegraph@fb87db15da20034278ade83ba8d4a6cf96c49e45",
+    "activegraph[llm]>=1.9,<2.0",
     "pydantic>=2.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
