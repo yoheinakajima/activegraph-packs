@@ -24,7 +24,10 @@ SourceCategory = Literal[
     "tool_automation",
     "outcome_evaluation",
 ]
-ConnectionPath = Literal["export", "mcp", "composio", "native", "local", "pack"]
+# "manual" is the paste-back transport (ADR 0025): owner-pasted content a
+# connected assistant could equally push over "mcp" — one surface, the
+# transport is connection-path metadata, and evidence identity is unchanged.
+ConnectionPath = Literal["export", "mcp", "composio", "native", "local", "pack", "manual"]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 

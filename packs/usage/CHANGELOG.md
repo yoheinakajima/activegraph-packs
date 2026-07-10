@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0 — 2026-07-10
+
+- Added `"manual"` to the connection-path closed set (ADR 0025): the
+  paste-back transport. Additive; not a live path (paste-back is
+  snapshot-shaped), so `LIVE_CONNECTION_PATHS` is unchanged.
+
 ## v0.1.0 — Initial release
 
 - Added closed source-category validation and provider-neutral connection surfaces.

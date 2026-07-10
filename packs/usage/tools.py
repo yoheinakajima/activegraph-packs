@@ -29,7 +29,9 @@ SOURCE_CATEGORIES = (
     "outcome_evaluation",
 )
 SOURCE_CATEGORY_SET = frozenset(SOURCE_CATEGORIES)
-CONNECTION_PATHS = frozenset({"export", "mcp", "composio", "native", "local", "pack"})
+CONNECTION_PATHS = frozenset(
+    {"export", "mcp", "composio", "native", "local", "pack", "manual"}
+)
 PRIVACY_SCOPES = frozenset({"source", "account", "folder", "label", "workspace"})
 SURFACE_STATUSES = frozenset({"connected", "settling", "settled", "stale", "revoked", "failed"})
 EXPLICIT_LIFECYCLE_STATUSES = frozenset({"connected", "stale", "revoked", "failed"})

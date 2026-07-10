@@ -3,7 +3,7 @@
 
 [pack]
 name = "usage"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deterministic connection, settlement, coverage, interaction, and outcome observations."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:bdd2f436eb46b0bb2fb86dae8232662b3540911399239f85d1458c1171b08625"
+content_hash = "sha256:4de500d7fdbfd96f5e2fb7f574f15cfdafdd657f00f2b95cf6a6df75719013fa"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
