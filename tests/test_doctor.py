@@ -144,6 +144,13 @@ def test_artifact_store_fails_on_divergent_dirs() -> None:
     assert "importer_local_files=/data/b" in result.detail
 
 
+requires_permission_enforcement = pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="chmod-based unwritability fixtures are ineffective as root",
+)
+
+
+@requires_permission_enforcement
 def test_artifact_store_fails_on_unwritable_dir(tmp_path) -> None:
     locked = tmp_path / "locked"
     locked.mkdir()
@@ -194,6 +201,7 @@ def test_store_path_accepts_sqlite_url_and_plain_path(tmp_path) -> None:
     assert check_store_path(str(tmp_path / "plain.db")).status == PASS
 
 
+@requires_permission_enforcement
 def test_store_path_fails_on_unwritable_parent(tmp_path) -> None:
     locked = tmp_path / "locked"
     locked.mkdir()
@@ -212,6 +220,7 @@ def test_store_path_fails_on_directory_target(tmp_path) -> None:
     assert "is a directory, not a SQLite file" in result.detail
 
 
+@requires_permission_enforcement
 def test_store_path_fails_on_readonly_existing_file(tmp_path) -> None:
     db = tmp_path / "babyagi.db"
     db.write_bytes(b"")
@@ -304,6 +313,7 @@ def test_cli_json_is_parseable_and_reports_ok(capsys, tmp_path) -> None:
     assert all(c["status"] in {"pass", "skip"} for c in report["checks"])
 
 
+@requires_permission_enforcement
 def test_cli_broken_store_exits_one(capsys, tmp_path) -> None:
     locked = tmp_path / "locked"
     locked.mkdir()
