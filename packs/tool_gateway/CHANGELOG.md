@@ -1,5 +1,16 @@
 # Tool Gateway Pack Changelog
 
+## Unreleased
+
+### Fixed
+- `register_web_fetch_capability` now passes an explicit live ToolContext
+  (`external_io_mode="live_unrecorded"`) to the runtime's reference
+  `web_fetch` instead of `None`. The v1.9 runtime fails closed on
+  ctx-less external I/O, so the shared capability errored the moment it
+  was exercised live; the fetch stays recorded by the gateway's
+  capability_call/result audit pair (same fix public_presence applied
+  in slice 5a).
+
 ## v0.8.0 — Standing-scope tool policies (P6, ADR 0018) (2026-07-10)
 
 Automation is a promoted prediction. The gateway completes ADR 0018's
