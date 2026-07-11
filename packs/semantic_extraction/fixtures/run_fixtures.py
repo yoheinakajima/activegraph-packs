@@ -90,9 +90,17 @@ def _build() -> tuple[Graph, Runtime]:
 def run_eager_annotation_fixture() -> dict:
     graph, runtime = _build()
     runtime.run_until_idle()
-    profiles = graph.objects(type="extraction_profile")
-    assert len(profiles) == 1, "profile not seeded"
-    assert profiles[0].data["status"] == "active"
+    profiles = sorted(
+        graph.objects(type="extraction_profile"),
+        key=lambda obj: obj.data["version"],
+    )
+    # v1 seed + v2 (the normalizer's shared-path selection, ADR 0026).
+    assert [p.data["version"] for p in profiles] == [1, 2], "profile not seeded"
+    assert [p.data["status"] for p in profiles] == ["superseded", "active"]
+    assert all(
+        ref == "activity.structure@0.2.0"
+        for ref in profiles[1].data["extractor_by_facet"].values()
+    )
 
     _acquire(graph)
     runtime.run_until_idle()
@@ -120,10 +128,13 @@ def run_eager_annotation_fixture() -> dict:
     assert "2023-03-28" in dates and "2026-06" in dates, dates
 
     runs = graph.objects(type="extraction_run")
-    assert len(runs) == 1
+    assert {run.data["extractor_id"] for run in runs} == {
+        "semantic.deterministic",
+        "activity.structure",
+    }
     coverage = annotation_coverage_fn(graph)
-    assert len(coverage) == 1
-    assert coverage[0]["processed_facets"], coverage
+    assert len(coverage) == len(runs)
+    assert all(record["processed_facets"] for record in coverage), coverage
 
     profile_candidates = graph.objects(type="profile_candidate")
     assert profile_candidates, "no profile candidates projected"
@@ -218,10 +229,13 @@ def run_invalidation_fixture() -> dict:
     assert result["demoted_profile_candidates"] > 0
 
     statuses = {
-        annotation.data["status"]
+        annotation.data["extractor_id"]: annotation.data["status"]
         for annotation in graph.objects(type="semantic_annotation")
     }
-    assert statuses == {"invalidated"}, statuses
+    # Only the invalidated extractor identity's annotations demote; the
+    # structure emitter's stay active (different extractor identity).
+    assert statuses["semantic.deterministic"] == "invalidated", statuses
+    assert statuses.get("activity.structure", "active") == "active", statuses
     candidate_statuses = {
         candidate.data["status"]
         for candidate in graph.objects(type="profile_candidate")
@@ -277,11 +291,14 @@ def run_llm_upgrade_trial_fixture() -> dict:
         runtime.load_pack(semantic_pack, settings=settings)
         runtime.run_until_idle()
 
-        (profile,) = graph.objects(type="extraction_profile")
-        assert profile.data["extractor_by_facet"] == {
-            "event_mention": "semantic.llm@0.1.0",
-            "relation_mention": "semantic.llm@0.1.0",
-        }, profile.data
+        (profile,) = [
+            p for p in graph.objects(type="extraction_profile")
+            if p.data["status"] == "active"
+        ]
+        routed = profile.data["extractor_by_facet"]
+        assert routed["event_mention"] == "semantic.llm@0.1.0", routed
+        assert routed["relation_mention"] == "semantic.llm@0.1.0", routed
+        assert "assertion" not in routed, routed
         states = graph.objects(type="annotation_extractor_state")
         assert any(
             state.data["extractor_id"] == "semantic.llm"

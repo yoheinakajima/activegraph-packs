@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:edde6c877fd2a88b7f6ad358b4e707108f29b8811a0e1bc0a16c826f44e306b6"
+content_hash = "sha256:fdd69ac043736f80001183e2e2d955af7537a883b9457ebd4f6488540921809c"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -28,7 +28,7 @@ core = ">=0.1"
 [surface]
 object_types = ["entity", "entity_mention", "merge_candidate", "merge_decision"]
 relation_types = ["mentions", "refers_to", "merge_candidate_for", "decided_by", "merged_into"]
-behaviors = ["entity_registry_recorder", "entity_extractor", "entity_resolver", "merge_candidate_detector"]
+behaviors = ["entity_registry_recorder", "entity_extractor", "entity_mention_from_annotation", "entity_resolver", "merge_candidate_detector"]
 tools = ["register_entity", "decide_merge"]
 settings_schema = "EntitySettings"
 

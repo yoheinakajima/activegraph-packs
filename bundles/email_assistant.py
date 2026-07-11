@@ -85,7 +85,15 @@ def build_email_assistant(
     )
 
     rt.load_pack(email_pack, settings=email_settings or EmailSettings())
-    rt.load_pack(entity_pack, settings=entity_settings or EntitySettings())
+    # Email sources are raw `source` objects that do not flow through the
+    # shared extraction layer yet, so this bundle explicitly selects the
+    # pack's own source-scanning path (ADR 0026 step 4 keeps it off by
+    # default; bridging email onto the shared layer is a follow-up).
+    rt.load_pack(
+        entity_pack,
+        settings=entity_settings
+        or EntitySettings(extract_from_raw_sources=True),
+    )
 
     return rt
 

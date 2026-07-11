@@ -71,7 +71,15 @@ def pipeline(tmp_path: Path) -> _Pipeline:
     source_dir = tmp_path / "source"
     artifact_dir = tmp_path / "artifacts"
     source_dir.mkdir()
-    settings = ActivityNormalizerSettings(artifact_store_dir=str(artifact_dir))
+    # This suite exercises the retained legacy extraction machinery
+    # (direct evidence→candidate writes, replay re-extraction, version
+    # disable). Post-migration (ADR 0026 step 3) that path is off by
+    # default and must be selected explicitly; the shared-path behavior
+    # is covered by tests/test_shared_extraction_migration.py.
+    settings = ActivityNormalizerSettings(
+        artifact_store_dir=str(artifact_dir),
+        legacy_extraction_enabled=True,
+    )
 
     runtime = Runtime(Graph())
     runtime.load_pack(core_pack, settings=CoreSettings())

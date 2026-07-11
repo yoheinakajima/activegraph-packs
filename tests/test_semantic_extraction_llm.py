@@ -249,17 +249,21 @@ def test_no_provider_means_byte_identical_behavior_to_today(tmp_path):
     _acquire(graph)
     runtime.run_until_idle()
 
-    (profile,) = graph.objects(type="extraction_profile")
-    assert profile.data["extractor_by_facet"] == {}
-    assert sorted(profile.data["default_facets"]) == [
-        "assertion", "entity_mention", "preference_expression",
-        "question", "temporal_expression",
+    (active,) = [
+        p for p in graph.objects(type="extraction_profile")
+        if p.data["status"] == "active"
     ]
+    # Post-migration the active profile routes the activity.* structure
+    # facets — but nothing references semantic.llm without a provider.
+    assert all(
+        ref == "activity.structure@0.2.0"
+        for ref in active.data["extractor_by_facet"].values()
+    )
     extractor_ids = {
         annotation.data["extractor_id"]
         for annotation in graph.objects(type="semantic_annotation")
     }
-    assert extractor_ids == {"semantic.deterministic"}
+    assert extractor_ids == {"semantic.deterministic", "activity.structure"}
     assert not any(
         state.data.get("extractor_id") == "semantic.llm"
         for state in graph.objects(type="annotation_extractor_state")
@@ -278,11 +282,19 @@ def test_provider_upgrades_default_profile_for_the_two_missing_facets(tmp_path):
     _acquire(graph)
     runtime.run_until_idle()
 
-    (profile,) = graph.objects(type="extraction_profile")
-    assert profile.data["extractor_by_facet"] == {
-        "event_mention": "semantic.llm@0.1.0",
-        "relation_mention": "semantic.llm@0.1.0",
-    }
+    (active,) = [
+        p for p in graph.objects(type="extraction_profile")
+        if p.data["status"] == "active"
+    ]
+    routed = active.data["extractor_by_facet"]
+    assert routed["event_mention"] == "semantic.llm@0.1.0"
+    assert routed["relation_mention"] == "semantic.llm@0.1.0"
+    # Nothing else routes to the LLM — the floor stands (D041).
+    assert all(
+        ref == "activity.structure@0.2.0"
+        for facet, ref in routed.items()
+        if facet not in ("event_mention", "relation_mention")
+    )
     by_extractor: dict[str, set] = {}
     for annotation in graph.objects(type="semantic_annotation"):
         by_extractor.setdefault(
@@ -295,10 +307,10 @@ def test_provider_upgrades_default_profile_for_the_two_missing_facets(tmp_path):
     }
     # The LLM serves exactly the two facets the floor cannot.
     assert by_extractor["semantic.llm"] == {"event_mention", "relation_mention"}
-    # Two cache-identified runs, one per extractor group.
+    # One cache-identified run per extractor group.
     runs = graph.objects(type="extraction_run")
     assert {run.data["extractor_id"] for run in runs} == {
-        "semantic.deterministic", "semantic.llm",
+        "semantic.deterministic", "semantic.llm", "activity.structure",
     }
 
 
@@ -409,10 +421,10 @@ def test_trial_records_promotion_evidence_and_promotion_is_explicit(tmp_path):
         p for p in graph.objects(type="extraction_profile")
         if p.data["status"] == "active"
     ]
-    assert profile.data["extractor_by_facet"] == {
-        "event_mention": "semantic.llm@0.1.0",
-        "relation_mention": "semantic.llm@0.1.0",
-    }
+    routed_before = profile.data["extractor_by_facet"]
+    assert routed_before["event_mention"] == "semantic.llm@0.1.0"
+    assert routed_before["relation_mention"] == "semantic.llm@0.1.0"
+    assert "assertion" not in routed_before
 
     # Promotion requires an approver and cites the evidence.
     with pytest.raises(ValueError):

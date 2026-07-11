@@ -244,9 +244,11 @@ OBJECT_TYPES = [
 RELATION_TYPES = [
     RelationType(
         name="mentions",
-        source_types=("source",),
+        # activity_evidence joined when entity-mention ownership moved to
+        # the shared extraction contract (ADR 0026 step 4).
+        source_types=("source", "activity_evidence"),
         target_types=("entity_mention",),
-        description="A source contains an entity mention.",
+        description="A source or evidence revision contains an entity mention.",
     ),
     RelationType(
         name="refers_to",

@@ -25,10 +25,15 @@ from packs.usage.tools import connect_surface_fn, record_usage_fn
 
 
 def _runtime() -> Runtime:
+    from packs.semantic_extraction import pack as semantic_pack
+
     clear_all_backends()
     runtime = Runtime(Graph(clock=TickingClock("2026-07-09T08:00:00Z", step_seconds=1)))
     runtime.load_pack(core_pack)
     runtime.load_pack(activity_normalizer_pack)
+    # ADR 0026: ingestion candidates flow annotation-first — the shared
+    # layer extracts, the normalizer's compat projectors mint candidates.
+    runtime.load_pack(semantic_pack)
     runtime.load_pack(usage_pack)
     runtime.load_pack(skills_pack)
     runtime.load_pack(

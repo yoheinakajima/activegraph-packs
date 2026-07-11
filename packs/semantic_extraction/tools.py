@@ -227,12 +227,37 @@ def invalidate_annotation_extractor_fn(
             )
             demoted_memory += 1
 
+    # The activity_normalizer compatibility projectors (ADR 0026 step 2)
+    # mint these from activity.* annotations; same demotion rule.
+    demoted_compat = 0
+    for candidate_type in (
+        "preference_candidate", "task_candidate",
+        "skill_candidate", "eval_candidate",
+    ):
+        try:
+            candidates = graph.objects(type=candidate_type)
+        except Exception:
+            continue  # type not registered in this graph
+        for candidate in candidates:
+            metadata = candidate.data.get("metadata") or {}
+            if (
+                metadata.get("annotation_id") in invalidated_annotation_ids
+                and candidate.data.get("status") == "candidate"
+            ):
+                graph.patch_object(
+                    candidate.id,
+                    {"status": "invalidated", "invalidation_reason": reason},
+                    rationale=reason,
+                )
+                demoted_compat += 1
+
     return {
         "ok": True,
         "invalidated_runs": invalidated_runs,
         "invalidated_annotations": len(invalidated_annotation_ids),
         "demoted_profile_candidates": demoted_profile,
         "demoted_memory_candidates": demoted_memory,
+        "demoted_compat_candidates": demoted_compat,
     }
 
 

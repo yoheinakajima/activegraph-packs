@@ -263,7 +263,17 @@ OBJECT_TYPES = [
     ),
 ]
 
-_PROJECTED_CANDIDATE_TYPES = ("profile_candidate", "memory_candidate")
+# Every candidate type a projector may mint from annotations — the
+# semantic_extraction projectors (profile, memory) plus the
+# activity_normalizer compatibility projectors (ADR 0026 step 2).
+_PROJECTED_CANDIDATE_TYPES = (
+    "profile_candidate",
+    "memory_candidate",
+    "preference_candidate",
+    "task_candidate",
+    "skill_candidate",
+    "eval_candidate",
+)
 
 RELATION_TYPES = [
     RelationType(
