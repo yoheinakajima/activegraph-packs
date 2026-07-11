@@ -339,6 +339,54 @@ The demo server also loads all fixture data on startup — `POST /reset` re-seed
 
 ---
 
+## LLM provider configuration — what a key unlocks
+
+Everything in this repo runs with **zero keys**: the deterministic
+extraction floor, replay, doctor, and every test. Providing an LLM key
+is an upgrade, never a requirement (D009/D025).
+
+There is one packs-level configuration point, `packs.llm_provider`.
+Resolution order:
+
+1. **Explicit setting** — `configure_llm_provider(LLMProviderSettings(provider="anthropic" | "openai", model=..., api_key_env=...))`.
+   An explicit setting always wins, including on conflict with the
+   environment.
+2. **Environment fallback** — `ANTHROPIC_API_KEY` if present, else
+   `OPENAI_API_KEY`. When both are present with no explicit setting,
+   Anthropic wins (set `provider` explicitly to override).
+3. **Neither** — no provider: the deterministic floor serves every
+   facet. This is a supported mode, not an error.
+
+The module constructs the runtime's own `AnthropicProvider` /
+`OpenAIProvider` — it never reimplements a client, and it handles env
+var *names* only: key material never appears in logs, events, errors,
+or doctor output (asserted in tests).
+
+**What a key unlocks today:** LLM-backed extraction
+(`semantic.llm@0.1.0`) at the shared annotation seam — richer
+`entity_mention` / `assertion` / `preference_expression` results plus
+the two facets the deterministic floor doesn't implement
+(`relation_mention`, `event_mention`). With a provider configured, the
+default extraction profile upgrades `relation_mention` and
+`event_mention` to the LLM extractor and keeps the deterministic floor
+for everything else. All LLM calls run on the recorded provider seam:
+re-extraction replays from cache and never re-contacts the provider.
+
+**What it does not unlock:** nothing else changes. No pack starts
+making network calls, promotion gates are identical (an LLM annotation
+is never more trusted for being fluent), and scoring/settlement are
+untouched.
+
+**How declining is recorded:** with no key, the extraction profile
+keeps every facet on `semantic.deterministic@0.1.0` and behavior is
+byte-identical to today. Facets only the LLM extractor implements are
+recorded in each run's `extraction_coverage` as skipped
+(`not_implemented`) — the graph says what was not extracted instead of
+silently claiming completeness. Doctor reports the zero-key state as
+`PASS llm-provider none — deterministic floor only`.
+
+---
+
 ## Doctor
 
 When a fresh machine misbehaves, run the noninteractive environment
@@ -359,8 +407,14 @@ repo as `activegraph-src`, never `activegraph`); **replay artifact-store
 coherence** (importer and normalizer must share one `artifact_store_dir`,
 or every imported item dies at replay with `ReplayUnavailableError`);
 the **Python floor** (≥ 3.11); **`--store` writability** when given;
-**pack entry points** resolvable; and a **manifest content-hash
-spot-check** of one pack (the same condition CI's drift gate enforces).
+**pack entry points** resolvable; a **manifest content-hash
+spot-check** of one pack (the same condition CI's drift gate enforces);
+and the **LLM provider** resolution (which provider is configured and
+from where — setting vs environment — or "none: deterministic floor
+only", which is a pass, not a failure). The llm-provider check makes no
+network calls by default; `python -m packs.doctor --live` allows it one
+minimal authenticated ping. No check ever prints key material — only
+the env var *name* the provider reads.
 
 If the environment is so broken that even `import packs` raises, the
 preflight error is itself the diagnosis; to run the remaining checks
