@@ -15,18 +15,30 @@ from .tools import CapabilitySpec, register_local_capability
 def register_web_fetch_capability(*, risk_class: str = "low") -> CapabilitySpec:
     """Register ``web.fetch_url`` — read-only page fetch, stdlib only.
 
-    Backed by the runtime's reference ``web_fetch`` tool (which ignores its
-    ToolContext, so it is safe to invoke directly). Risk class defaults to
-    'low' (read-only, no side effects), making it auto-approvable under the
-    default gateway policy — the canonical first tool for agentic chat.
+    Backed by the runtime's reference ``web_fetch`` tool. The v1.9 runtime
+    fails closed on ctx-less external I/O, so the capability passes an
+    explicit ToolContext with ``external_io_mode="live_unrecorded"`` —
+    that is the runtime-tool dimension only: the fetch is still recorded
+    by the gateway's capability_call/result audit pair. Risk class defaults
+    to 'low' (read-only, no side effects), making it auto-approvable under
+    the default gateway policy — the canonical first tool for agentic chat.
     Action class R0: an HTTP GET observes the outside world and changes
     nothing in it.
     """
+    from activegraph.tools.context import ToolContext
     from activegraph.tools.web_fetch import WebFetchInput, web_fetch
 
     def _fetch(url: str = "", timeout_seconds: float = 10.0) -> dict:
+        ctx = ToolContext(
+            behavior_name="tool_gateway.web.fetch_url",
+            event_id="",
+            frame=None,
+            idempotency_key="",
+            timeout_seconds=timeout_seconds,
+            external_io_mode="live_unrecorded",
+        )
         out = web_fetch.fn(
-            WebFetchInput(url=url, timeout_seconds=timeout_seconds), None
+            WebFetchInput(url=url, timeout_seconds=timeout_seconds), ctx
         )
         # Size limiting happens at the gateway (max_output_chars) — return
         # the full result and let policy own truncation.

@@ -294,8 +294,14 @@ def entity_extractor(event, graph, ctx, *, settings: EntitySettings):
     Uses regex and capitalization heuristics to find emails, person names,
     organization names, and optionally GitHub repos in source content.
 
-    In v0.2, an LLM extraction path will be added for rich text sources.
+    ADR 0026 step 4: this duplicate extraction path is DISABLED by
+    default — entity-mention ownership moved to the shared extraction
+    contract (entity_mention_from_annotation below). Enable
+    ``extract_from_raw_sources`` only for pipelines whose sources do not
+    flow through the shared layer yet.
     """
+    if not settings.extract_from_raw_sources:
+        return
     obj = event.payload.get("object", {})
     source_id = obj.get("id")
     source_data = obj.get("data", {})
@@ -337,6 +343,91 @@ def entity_extractor(event, graph, ctx, *, settings: EntitySettings):
             graph.add_relation(source_id, mention.id, "mentions")
         except Exception:
             pass
+
+
+# Map shared-layer entity_mention body kinds to this pack's entity types.
+_ENTITY_TYPE_BY_ANNOTATION_KIND: dict[str, str] = {
+    "person": "person",
+    "organization": "organization",
+    "place": "other",
+    "product": "product",
+    "proper_noun": "other",
+    "handle": "person",
+    "email": "person",
+    "url": "other",
+    "other": "other",
+}
+
+
+@behavior(
+    name="entity_mention_from_annotation",
+    on=["object.created"],
+    where={"object.type": "semantic_annotation"},
+    view={"include_types": ["entity_mention"]},
+    creates=["entity_mention"],
+)
+def entity_mention_from_annotation(event, graph, ctx, *, settings: EntitySettings):
+    """Consume the shared layer's entity_mention annotations (ADR 0026
+    step 4).
+
+    Entity-mention *extraction* is owned by the extraction contract now;
+    this behavior only materializes the pack's EntityMention object from
+    an annotation so the resolver (canonical resolution — still solely
+    this pack's) can run unchanged. Dedup is by annotation id.
+    """
+    if not settings.consume_entity_mention_annotations:
+        return
+    wrapper = event.payload.get("object", {})
+    data = wrapper.get("data", {})
+    if data.get("facet") != "entity_mention" or data.get("status") != "active":
+        return
+    confidence = data.get("confidence", 0.0)
+    if confidence < settings.extraction_min_confidence:
+        return
+    annotation_id = wrapper.get("id")
+    for existing in ctx.view.objects(type="entity_mention"):
+        if (existing.data.get("metadata") or {}).get("annotation_id") == annotation_id:
+            return
+
+    body = data.get("body") or {}
+    text = body.get("text", "")
+    if not text:
+        return
+    kind = body.get("kind", "other")
+    entity_type_hint = _ENTITY_TYPE_BY_ANNOTATION_KIND.get(kind, "other")
+    metadata: dict[str, Any] = {
+        "annotation_id": annotation_id,
+        "annotation_identity": data.get("annotation_identity"),
+        "kind": kind,
+    }
+    normalized = body.get("normalized") or text
+    if kind == "email":
+        local_part = text.split("@")[0].replace(".", " ").replace("_", " ").title()
+        metadata["normalized_name"] = local_part
+        metadata["email"] = normalized
+    elif normalized != text:
+        metadata["normalized_name"] = normalized
+
+    evidence_id = data.get("evidence_id", "")
+    selector = data.get("selector") or {}
+    mention = graph.add_object(
+        "entity_mention",
+        EntityMention(
+            text=text,
+            source_id=evidence_id,
+            entity_id=None,
+            entity_type_hint=entity_type_hint,
+            confidence=confidence,
+            context_snippet=selector.get("exact", text),
+            extraction_method="annotation",
+            frame_id=None,
+            metadata=metadata,
+        ).model_dump(),
+    )
+    try:
+        graph.add_relation(evidence_id, mention.id, "mentions")
+    except Exception:
+        pass
 
 
 @behavior(
@@ -525,6 +616,7 @@ def merge_candidate_detector(event, graph, ctx, *, settings: EntitySettings):
 BEHAVIORS = [
     entity_registry_recorder,
     entity_extractor,
+    entity_mention_from_annotation,
     entity_resolver,
     merge_candidate_detector,
 ]

@@ -438,8 +438,92 @@ def check_manifest_hash(
     )
 
 
+def check_llm_provider(
+    settings: Any = ...,
+    env: Mapping[str, str] | None = None,
+    live: bool = False,
+    live_ping: Any = None,
+) -> CheckResult:
+    """Report which LLM provider is configured and from where.
+
+    Zero-key is a supported mode (D009/D025), so "none" is a PASS with a
+    note, never a failure. Output carries provider kind, source (setting
+    vs env), and the env var NAME — never key material. No network calls
+    by default; ``live=True`` does one minimal authenticated ping.
+    """
+    name = "llm-provider"
+    try:
+        from packs.llm_provider import (
+            LLMProviderSettings,
+            build_llm_provider,
+            resolve_llm_provider,
+        )
+    except Exception as exc:  # pragma: no cover - import is same-package
+        return CheckResult(name, FAIL, f"packs.llm_provider import failed: {exc}")
+
+    explicit: LLMProviderSettings | None = None if settings is ... else settings
+    resolved = resolve_llm_provider(explicit, env)
+    if resolved.provider is None:
+        return CheckResult(
+            name,
+            PASS,
+            "none — deterministic floor only (supported zero-key mode; "
+            "set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable LLM "
+            "extraction)",
+        )
+
+    environ = os.environ if env is None else env
+    if not environ.get(resolved.api_key_env or ""):
+        return CheckResult(
+            name,
+            FAIL,
+            f"{resolved.provider} configured via {resolved.source} but "
+            f"{resolved.api_key_env} is not set in the environment",
+        )
+
+    detail = (
+        f"{resolved.provider} (from {resolved.source}, key env "
+        f"{resolved.api_key_env})"
+    )
+    if not live:
+        return CheckResult(name, PASS, detail)
+
+    try:
+        ping = live_ping or _default_live_ping
+        ping(build_llm_provider(resolved))
+    except Exception as exc:
+        return CheckResult(
+            name,
+            FAIL,
+            f"{detail}; live ping failed: {type(exc).__name__}: {exc}",
+        )
+    return CheckResult(name, PASS, f"{detail}; live ping ok")
+
+
+def _default_live_ping(provider: Any) -> None:
+    """One minimal authenticated call — smallest possible completion."""
+    provider.complete(
+        system="Reply with the single word: ok",
+        messages=[_ping_message()],
+        model=getattr(provider, "default_model", ""),
+        max_tokens=8,
+        temperature=0.0,
+        top_p=1.0,
+        output_schema=None,
+        timeout_seconds=15.0,
+    )
+
+
+def _ping_message() -> Any:
+    from activegraph.llm import LLMMessage
+
+    return LLMMessage(role="user", content="ok?")
+
+
 def run_doctor(
-    store: str | None = None, artifact_dir: str | None = None
+    store: str | None = None,
+    artifact_dir: str | None = None,
+    live: bool = False,
 ) -> list[CheckResult]:
     return [
         check_runtime_version(),
@@ -449,6 +533,7 @@ def run_doctor(
         check_store_path(store),
         check_entry_points(),
         check_manifest_hash(),
+        check_llm_provider(live=live),
     ]
 
 
@@ -486,8 +571,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="replay artifact store directory to check instead of the "
         "settings default",
     )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="allow the llm-provider check one minimal authenticated "
+        "ping (default: no network calls)",
+    )
     args = parser.parse_args(argv)
-    results = run_doctor(store=args.store, artifact_dir=args.artifact_dir)
+    results = run_doctor(
+        store=args.store, artifact_dir=args.artifact_dir, live=args.live
+    )
     ok = not any(r.status == FAIL for r in results)
     if args.json:
         print(

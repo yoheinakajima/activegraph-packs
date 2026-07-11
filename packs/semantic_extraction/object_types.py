@@ -169,6 +169,14 @@ class ExtractionProfile(_StrictModel):
     status: Literal["active", "superseded"] = "active"
     default_facets: list[str]
     facets_by_source_category: dict[str, list[str]] = Field(default_factory=dict)
+    extractor_by_facet: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "facet → 'extractor_id@version'. Facets absent from the map "
+            "run on the settings default extractor; an empty map is the "
+            "single-extractor behavior."
+        ),
+    )
     created_by: str = Field(min_length=1)
     rationale: str = ""
     supersedes_profile_id: Optional[str] = None
@@ -186,8 +194,39 @@ class AnnotationExtractorState(_StrictModel):
     state_identity: str = Field(min_length=1)
     extractor_id: str = Field(min_length=1)
     extractor_version: str = Field(min_length=1)
-    status: Literal["enabled", "disabled"] = "enabled"
+    # "candidate" and "promoted" carry the fork-trial-promote lifecycle
+    # (ADR 0014): a new extractor version lands as a candidate
+    # configuration; recorded trial evidence plus an explicit approval
+    # promote it. "disabled" demotes annotations via provenance.
+    status: Literal["enabled", "disabled", "candidate", "promoted"] = "enabled"
     reason: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExtractorPromotionEvidence(_StrictModel):
+    """One recorded extractor trial — the ADR 0014 promotion-evidence shape.
+
+    A candidate extractor version is compared against the baseline on
+    recorded content (both extractors, same facets, same evidence); the
+    per-facet comparison is the evidence an explicit promotion cites.
+    The trial itself changes no policy — promotion is a separate,
+    approver-named step.
+    """
+
+    evidence_identity: str = Field(min_length=1)
+    candidate_extractor_id: str = Field(min_length=1)
+    candidate_extractor_version: str = Field(min_length=1)
+    baseline_extractor_id: str = Field(min_length=1)
+    baseline_extractor_version: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(min_length=1)
+    facets: list[str] = Field(min_length=1)
+    # Per-facet counts: {"facet": {"baseline": n, "candidate": n,
+    # "candidate_only": n, "baseline_only": n, "selector_drops": n}}
+    comparison: dict[str, dict[str, int]] = Field(default_factory=dict)
+    verdict: Literal["candidate_richer", "baseline_richer", "neutral"]
+    rationale: str = ""
+    created_by: str = Field(min_length=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 OBJECT_TYPES = [
@@ -216,9 +255,25 @@ OBJECT_TYPES = [
         AnnotationExtractorState,
         "Eligibility state of an annotation-extractor version.",
     ),
+    ObjectType(
+        "extractor_promotion_evidence",
+        ExtractorPromotionEvidence,
+        "A recorded extractor trial: candidate vs baseline on recorded "
+        "content (ADR 0014 promotion evidence).",
+    ),
 ]
 
-_PROJECTED_CANDIDATE_TYPES = ("profile_candidate", "memory_candidate")
+# Every candidate type a projector may mint from annotations — the
+# semantic_extraction projectors (profile, memory) plus the
+# activity_normalizer compatibility projectors (ADR 0026 step 2).
+_PROJECTED_CANDIDATE_TYPES = (
+    "profile_candidate",
+    "memory_candidate",
+    "preference_candidate",
+    "task_candidate",
+    "skill_candidate",
+    "eval_candidate",
+)
 
 RELATION_TYPES = [
     RelationType(
@@ -260,6 +315,7 @@ __all__ = [
     "ExtractionCoverage",
     "ExtractionProfile",
     "AnnotationExtractorState",
+    "ExtractorPromotionEvidence",
     "Attribution",
     "Modality",
     "Polarity",

@@ -34,5 +34,33 @@ class ActivityNormalizerSettings(BaseModel):
     encoding: str = "utf-8"
     emit_custom_events: bool = True
 
+    # -- shared-extraction migration (ADR 0026 steps 2-3) ---------------
+    legacy_extraction_enabled: bool = Field(
+        default=False,
+        description=(
+            "Re-enable the direct evidence→candidate write path. OFF by "
+            "default: extraction now runs on the shared annotation layer "
+            "and the compatibility projectors mint the same candidates "
+            "from annotations (no long legacy window, D041)."
+        ),
+    )
+    select_shared_extraction: bool = Field(
+        default=True,
+        description=(
+            "When the shared layer seeds its extraction_profile, mint the "
+            "next version routing the activity.* structure facets to "
+            "activity.structure@0.2.0 so ingestion candidates flow "
+            "annotation-first."
+        ),
+    )
+    compat_candidate_projectors: bool = Field(
+        default=True,
+        description=(
+            "Project the legacy candidate types (memory/preference/task/"
+            "profile/skill/eval) from activity.* annotations, with the "
+            "legacy identity scheme for cross-boundary idempotency."
+        ),
+    )
+
 
 __all__ = ["ActivityNormalizerSettings"]

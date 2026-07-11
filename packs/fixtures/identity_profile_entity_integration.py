@@ -60,6 +60,10 @@ def run_identity_profile_entity_composition() -> bool:
         extraction_min_confidence=0.6,
         resolution_similarity_threshold=0.75,
         auto_accept_exact_identifier_match=True,
+        # This pipeline works on raw source objects that do not flow
+        # through the shared extraction layer yet (ADR 0026 step 4);
+        # the source-scanning path must be selected explicitly.
+        extract_from_raw_sources=True,
     ))
 
     # --- Step 1: Register the agent profile (before the email arrives) ---

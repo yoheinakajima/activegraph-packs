@@ -1,5 +1,20 @@
 # Entity Pack Changelog
 
+## Unreleased — ADR 0026 step 4: entity-mention ownership on the shared layer
+
+- Entity-mention *extraction* moved to the shared extraction contract. New
+  behavior `entity_mention_from_annotation` consumes the shared layer's
+  `entity_mention` annotations and materializes this pack's `EntityMention`
+  objects; canonical resolution (mention → canonical `entity`) stays solely
+  in this pack (`entity_resolver`, unchanged).
+- The pack's own `entity_extractor` (raw `source.created` scanning) is
+  disabled by default — the duplicate extraction path. Re-enable with
+  `extract_from_raw_sources=True` for sources that don't flow through the
+  shared layer yet (e.g. the email assistant bundle).
+- New settings: `extract_from_raw_sources` (default False),
+  `consume_entity_mention_annotations` (default True). The `mentions`
+  relation now also accepts `activity_evidence` sources.
+
 ## v0.1.2 — activegraph 1.3 compatibility (2026-07-08)
 
 ### Fixed

@@ -31,5 +31,35 @@ class SemanticExtractionSettings(BaseModel):
     mint_profile_candidates: bool = Field(default=True)
     mint_memory_candidates: bool = Field(default=True)
 
+    # -- LLM-backed extractor (semantic.llm, D025 stage two) -------------
+    llm_upgrade_enabled: bool = Field(
+        default=True,
+        description=(
+            "With a provider configured, seed the default profile with "
+            "relation_mention/event_mention routed to semantic.llm. "
+            "No provider → this flag changes nothing."
+        ),
+    )
+    llm_model: str = Field(
+        default="",
+        description=(
+            "Model for semantic.llm; empty resolves the configured "
+            "provider's default_model. Part of the extractor's cache "
+            "identity — pin it explicitly when replaying records."
+        ),
+    )
+    llm_record_dir: str = Field(
+        default="",
+        description=(
+            "Directory of recorded LLM responses (the runtime's "
+            "prompt-hash-keyed fixture format). Replays are served from "
+            "here first; only unseen prompts reach the live provider. "
+            "Empty disables the record layer (the extraction_run cache "
+            "still prevents same-identity re-runs)."
+        ),
+    )
+    llm_max_output_tokens: int = Field(default=4_096, ge=256, le=32_000)
+    llm_timeout_seconds: float = Field(default=60.0, gt=0.0, le=600.0)
+
 
 __all__ = ["SemanticExtractionSettings"]

@@ -395,16 +395,20 @@ class DeterministicExtractorV1:
 _REGISTRY: dict[tuple[str, str], AnnotationExtractor] = {}
 
 
-def register_annotation_extractor(extractor: AnnotationExtractor) -> None:
+def register_annotation_extractor(
+    extractor: AnnotationExtractor, *, replace: bool = False
+) -> None:
     """Register by immutable (extractor_id, extractor_version).
 
     This is the upgrade seam: an LLM-backed extractor registers here with
     its own id, and the extraction_profile / settings select it — the
     envelope, cache identity, and coverage contract are unchanged.
+    ``replace=True`` is for provider-bound extractors whose instance is
+    rebuilt when settings change; the identity key never changes.
     """
     key = (extractor.extractor_id, extractor.extractor_version)
     existing = _REGISTRY.get(key)
-    if existing is not None and existing is not extractor:
+    if existing is not None and existing is not extractor and not replace:
         raise ValueError(f"extractor already registered: {key}")
     _REGISTRY[key] = extractor
 

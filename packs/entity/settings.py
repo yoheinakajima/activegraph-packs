@@ -74,3 +74,24 @@ class EntitySettings(BaseModel):
         ge=1,
         description="Maximum number of EntityMentions to extract from a single source.",
     )
+
+    # -- shared-extraction migration (ADR 0026 step 4) -------------------
+    extract_from_raw_sources: bool = Field(
+        default=False,
+        description=(
+            "Re-enable the pack's own source.created extraction path. OFF "
+            "by default: entity-mention ownership moved to the shared "
+            "extraction contract, and this pack consumes entity_mention "
+            "annotations instead. Enable only for pipelines whose sources "
+            "do not flow through the shared layer yet (raw email/source "
+            "objects)."
+        ),
+    )
+    consume_entity_mention_annotations: bool = Field(
+        default=True,
+        description=(
+            "Mint EntityMention objects from the shared layer's "
+            "entity_mention annotations. Canonical resolution (mention → "
+            "canonical entity) stays solely in this pack either way."
+        ),
+    )

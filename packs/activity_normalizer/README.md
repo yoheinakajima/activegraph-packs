@@ -6,10 +6,31 @@
 
 Importers parse one format and emit strict `acquired_item` records. This pack
 alone owns logical evidence identity, duplicate reconciliation, revisions,
-supersession, replay metadata, and versioned extraction. It stops at
-candidates; promotion belongs to later policy. Settlement belongs to `usage`.
-Packs compose through graph objects and `source.event_ingested` events, never
-direct cross-pack calls.
+supersession, and replay metadata. Extraction has moved onto the shared
+annotation layer (ADR 0026 steps 2-3): the `activity.structure` heuristics are
+now an **annotation emitter** and the legacy candidate types are minted by
+**compatibility projectors** from `activity.*` annotations. The direct
+evidence→candidate write path is disabled by default (opt back in with
+`legacy_extraction_enabled=True` for rollback). Promotion still belongs to
+later policy. Settlement belongs to `usage`. Packs compose through graph
+objects and `source.event_ingested` events, never direct cross-pack calls.
+
+### Shared-extraction migration (ADR 0026 steps 2-3)
+
+- `activity.structure@0.2.0` registers at the shared extraction seam and
+  emits the same findings the 0.1.0 candidate extractor did, now as
+  source-anchored annotations under namespaced facets (`activity.memory`,
+  `activity.preference`, `activity.task`, `activity.profile`,
+  `activity.skill`, `activity.eval`).
+- `select_shared_extraction` mints the next `extraction_profile` version
+  routing those facets to `activity.structure@0.2.0` the moment the shared
+  layer seeds its default — curated selection of the shared path, no long
+  legacy window (D041).
+- `project_structure_candidates` mints the legacy candidate types from those
+  annotations, keyed by the **legacy candidate identity**, so re-running
+  ingestion over evidence a pre-migration graph already extracted creates no
+  new candidates and no duplicates (byte-level idempotency across the
+  migration boundary; see `tests/test_shared_extraction_migration.py`).
 
 Facts live here; the game lives in BabyAGI. This pack has no score, badge, or
 level logic.

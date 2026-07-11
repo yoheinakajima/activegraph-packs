@@ -141,8 +141,12 @@ def test_every_annotation_carries_the_full_envelope():
         assert selector["kind"] == "char_span"
         exact = evidence.data["normalized_content"][selector["start"]:selector["end"]]
         assert exact == selector["exact"], (data["facet"], exact, selector)
-        assert data["extractor_id"] == "semantic.deterministic"
-        assert data["extractor_version"] == "0.1.0"
+        # Two extractors share the envelope post-migration (ADR 0026):
+        # the deterministic floor and the normalizer's structure emitter.
+        assert data["extractor_id"] in ("semantic.deterministic", "activity.structure")
+        assert data["extractor_version"] == (
+            "0.1.0" if data["extractor_id"] == "semantic.deterministic" else "0.2.0"
+        )
         assert len(data["config_hash"]) == 64
         assert 0.0 <= data["confidence"] <= 1.0
         assert data["attribution"] == "author_about_subject"
@@ -276,9 +280,13 @@ def test_coverage_recorded_and_queryable():
     runtime.run_until_idle()
     evidence = graph.objects(type="activity_evidence")[0]
     records = annotation_coverage_fn(graph, evidence_id=evidence.id)
-    assert len(records) == 1
-    record = records[0]
-    assert sorted(record["processed_facets"]) == sorted(DEFAULT_EAGER_FLOOR)
+    # One coverage record per extractor group: the deterministic floor
+    # plus the structure emitter (ADR 0026 migration).
+    assert len(records) == 2
+    (record,) = [
+        r for r in records
+        if sorted(r["processed_facets"]) == sorted(DEFAULT_EAGER_FLOOR)
+    ]
     assert record["content_chars_total"] == len(SUMMARY)
     assert record["content_chars_processed"] == len(SUMMARY)
     assert record["truncated"] is False
@@ -302,10 +310,20 @@ def test_truncation_is_visible_in_coverage():
 def test_profile_seeded_once_and_versioned_update_supersedes():
     graph, runtime = _build()
     runtime.run_until_idle()
-    profiles = graph.objects(type="extraction_profile")
-    assert len(profiles) == 1
-    assert profiles[0].data["version"] == 1
+    profiles = sorted(
+        graph.objects(type="extraction_profile"),
+        key=lambda obj: obj.data["version"],
+    )
+    # v1 is the seeded floor; the normalizer immediately supersedes it
+    # with v2 routing the activity.* facets onto the shared layer
+    # (ADR 0026 — no long legacy window).
+    assert [profile.data["version"] for profile in profiles] == [1, 2]
+    assert [profile.data["status"] for profile in profiles] == [
+        "superseded",
+        "active",
+    ]
     assert sorted(profiles[0].data["default_facets"]) == sorted(DEFAULT_EAGER_FLOOR)
+    assert set(DEFAULT_EAGER_FLOOR) <= set(profiles[1].data["default_facets"])
 
     result = update_extraction_profile_fn(
         graph,
@@ -313,19 +331,20 @@ def test_profile_seeded_once_and_versioned_update_supersedes():
         rationale="narrow ai_activity",
     )
     runtime.run_until_idle()
-    assert result["version"] == 2
+    assert result["version"] == 3
     profiles = sorted(
         graph.objects(type="extraction_profile"),
         key=lambda obj: obj.data["version"],
     )
     assert [profile.data["status"] for profile in profiles] == [
         "superseded",
+        "superseded",
         "active",
     ]
 
     _acquire(graph)
     runtime.run_until_idle()
-    run = graph.objects(type="extraction_run")[0]
+    (run,) = graph.objects(type="extraction_run")
     assert run.data["requested_facets"] == ["assertion", "topic_tag"]
 
 
@@ -359,16 +378,24 @@ def test_version_invalidation_demotes_via_provenance_evidence_intact():
     assert result["invalidated_annotations"] > 0
     assert result["demoted_profile_candidates"] == len(profile_candidates)
 
+    invalidated_annotation_ids = set()
     for annotation in graph.objects(type="semantic_annotation"):
-        assert annotation.data["status"] == "invalidated"
-        assert annotation.data["invalidation_reason"] == "bad heuristic"
+        if annotation.data["extractor_id"] == "semantic.deterministic":
+            assert annotation.data["status"] == "invalidated"
+            assert annotation.data["invalidation_reason"] == "bad heuristic"
+            invalidated_annotation_ids.add(annotation.id)
+        else:
+            # The structure emitter's annotations are a different
+            # extractor identity — untouched by this invalidation.
+            assert annotation.data["status"] == "active"
     for candidate in graph.objects(type="profile_candidate"):
         if (candidate.data.get("metadata") or {}).get("projector") == (
             "semantic_extraction.profile"
         ):
             assert candidate.data["status"] == "invalidated"
     for candidate in graph.objects(type="memory_candidate"):
-        if candidate.data.get("observation_ids"):
+        observation_ids = set(candidate.data.get("observation_ids") or [])
+        if observation_ids & invalidated_annotation_ids:
             assert candidate.data["accepted"] is False
             assert candidate.data["confidence"] == 0.0
 
@@ -394,6 +421,7 @@ def test_disabled_extractor_blocks_new_runs():
         run
         for run in graph.objects(type="extraction_run")
         if run.data["status"] == "completed"
+        and run.data["extractor_id"] == "semantic.deterministic"
     ]
     assert not runs, "disabled extractor must not produce new completed runs"
 
@@ -403,14 +431,26 @@ def test_disabled_extractor_blocks_new_runs():
 
 def test_extraction_run_produces_annotations_never_candidates():
     """ADR 0026 rule 6: candidates come from projectors, not extraction."""
-    graph, runtime = _build(
-        SemanticExtractionSettings(
+    from activegraph import Graph, Runtime
+    from packs.activity_normalizer import ActivityNormalizerSettings
+
+    graph = Graph()
+    runtime = Runtime(graph)
+    runtime.load_pack(core_pack)
+    runtime.load_pack(
+        normalizer_pack,
+        settings=ActivityNormalizerSettings(compat_candidate_projectors=False),
+    )
+    runtime.load_pack(
+        semantic_pack,
+        settings=SemanticExtractionSettings(
             mint_profile_candidates=False, mint_memory_candidates=False
-        )
+        ),
     )
     _acquire(graph)
     runtime.run_until_idle()
     assert graph.objects(type="semantic_annotation")
+    # Every projector disabled → extraction alone minted zero candidates.
     for candidate in graph.objects(type="profile_candidate"):
         metadata = candidate.data.get("metadata") or {}
         assert metadata.get("projector") != "semantic_extraction.profile"

@@ -76,7 +76,14 @@ def test_one_set_of_annotations_across_transports():
                                      is_fixture=True)
     runtime.run_until_idle()
     assert len(graph.objects(type="semantic_annotation")) == annotations
-    assert len(graph.objects(type="extraction_run")) == 1
+    # One extraction_run per extractor group under the migrated default
+    # profile (the deterministic floor + the activity.structure emitter),
+    # and re-importing via a second transport adds none.
+    runs = graph.objects(type="extraction_run")
+    assert {run.data["extractor_id"] for run in runs} == {
+        "semantic.deterministic", "activity.structure",
+    }
+    assert len(runs) == 2
 
 
 def test_distinct_summaries_are_distinct_identities():

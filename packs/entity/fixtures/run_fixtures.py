@@ -40,6 +40,12 @@ def run_entity_lifecycle() -> bool:
         resolution_similarity_threshold=0.75,
         merge_candidate_threshold=0.85,
         auto_accept_exact_identifier_match=True,
+        # This fixture drives raw `source` objects directly (not the
+        # shared extraction layer), so it selects the pack's own
+        # source-scanning path, off by default post-migration (ADR 0026
+        # step 4). The annotation-consuming path is covered by
+        # tests/test_shared_extraction_migration.py.
+        extract_from_raw_sources=True,
     ))
 
     # --- Source 1: email mentioning Alice Chen ---

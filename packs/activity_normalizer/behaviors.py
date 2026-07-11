@@ -446,32 +446,39 @@ def normalize_acquired_item(event, graph, ctx, *, settings: ActivityNormalizerSe
         if current is not None:
             graph.add_relation(evidence_obj.id, current.id, "supersedes")
 
-        try:
-            run_extraction(
-                graph,
-                evidence_obj,
-                normalized_content,
-                evidence_data["normalized_metadata"],
-                settings=settings,
-                extractor_id=settings.default_extractor_id,
-                extractor_version=settings.default_extractor_version,
-                extraction_config_id=settings.default_extraction_config_id,
-                read_view=ctx.view,
-            )
-        except Exception as exc:
-            record_failure(
-                graph,
-                stage="extraction",
-                error_code="extractor_failed",
-                message=f"{type(exc).__name__}: {exc}",
-                source_surface_id=item["source_surface_id"],
-                acquired_item_id=acquired_item_id,
-                source_ref=item["source_ref"],
-                importer_id=item["importer_id"],
-                importer_version=item["importer_version"],
-                extractor_id=settings.default_extractor_id,
-                extractor_version=settings.default_extractor_version,
-            )
+        # ADR 0026 step 3: the direct evidence→candidate write path is
+        # disabled. Extraction runs on the shared annotation layer (the
+        # semantic_extraction pack annotates this evidence eagerly) and
+        # the compatibility projectors below mint the same candidates
+        # from annotations. The legacy path stays available only as an
+        # explicit opt-in for rollback.
+        if settings.legacy_extraction_enabled:
+            try:
+                run_extraction(
+                    graph,
+                    evidence_obj,
+                    normalized_content,
+                    evidence_data["normalized_metadata"],
+                    settings=settings,
+                    extractor_id=settings.default_extractor_id,
+                    extractor_version=settings.default_extractor_version,
+                    extraction_config_id=settings.default_extraction_config_id,
+                    read_view=ctx.view,
+                )
+            except Exception as exc:
+                record_failure(
+                    graph,
+                    stage="extraction",
+                    error_code="extractor_failed",
+                    message=f"{type(exc).__name__}: {exc}",
+                    source_surface_id=item["source_surface_id"],
+                    acquired_item_id=acquired_item_id,
+                    source_ref=item["source_ref"],
+                    importer_id=item["importer_id"],
+                    importer_version=item["importer_version"],
+                    extractor_id=settings.default_extractor_id,
+                    extractor_version=settings.default_extractor_version,
+                )
 
         if settings.emit_custom_events:
             emit_domain_event(
@@ -553,7 +560,224 @@ def publish_cursor_patch(event, graph, ctx, *, settings: ActivityNormalizerSetti
         _emit_cursor_event(graph, cursor, event.id)
 
 
-BEHAVIORS = [normalize_acquired_item, publish_cursor_created, publish_cursor_patch]
+# ------------------------------------------------- ADR 0026 steps 2-3:
+# the shared-extraction selection + the compatibility candidate projectors.
+
+from .annotation_extractor import (  # noqa: E402  (registers the extractor)
+    KIND_BY_FACET,
+    STRUCTURE_FACETS,
+)
+
+STRUCTURE_EXTRACTOR_REF = "activity.structure@0.2.0"
+
+
+@behavior(
+    name="select_shared_extraction",
+    on=["object.created"],
+    where={"object.type": "extraction_profile"},
+    view={"include_types": ["extraction_profile"]},
+    creates=["extraction_profile"],
+)
+def select_shared_extraction(event, graph, ctx, *, settings: ActivityNormalizerSettings):
+    """Route the activity.* structure facets onto the shared layer the
+    moment its default profile appears (ADR 0026: curated selection of
+    the shared path — no long legacy window, D041).
+
+    Reacts only to the seeded v1 profile; later versions are owner
+    policy. Idempotent across boots: replayed stores already carry v2,
+    and pack.loaded re-seeding never re-creates v1.
+    """
+    if not (settings.enabled and settings.select_shared_extraction):
+        return
+    if settings.legacy_extraction_enabled:
+        return
+    wrapper = event.payload.get("object", {})
+    data = wrapper.get("data", {})
+    if data.get("version") != 1 or data.get("status") != "active":
+        return
+    routed = data.get("extractor_by_facet") or {}
+    if any(facet in routed for facet in STRUCTURE_FACETS):
+        return
+    if any(
+        obj.data.get("version", 0) > 1
+        for obj in ctx.view.objects(type="extraction_profile")
+    ):
+        return
+    extractor_by_facet = dict(routed)
+    extractor_by_facet.update(
+        {facet: STRUCTURE_EXTRACTOR_REF for facet in STRUCTURE_FACETS}
+    )
+    graph.add_object(
+        "extraction_profile",
+        {
+            "profile_identity": _stable_id("extraction_profile", 2),
+            "version": 2,
+            "status": "active",
+            "default_facets": sorted(
+                {*(data.get("default_facets") or []), *STRUCTURE_FACETS}
+            ),
+            "facets_by_source_category": dict(
+                data.get("facets_by_source_category") or {}
+            ),
+            "extractor_by_facet": extractor_by_facet,
+            "created_by": "activity_normalizer.select_shared_extraction",
+            "rationale": (
+                "ADR 0026 steps 2-3: activity structure extraction moves "
+                "onto the shared annotation layer; the direct "
+                "evidence→candidate write path is disabled"
+            ),
+            "supersedes_profile_id": wrapper.get("id"),
+        },
+    )
+    _patch(
+        graph,
+        wrapper.get("id"),
+        {"status": "superseded"},
+        rationale="superseded by extraction_profile v2 (shared-path selection)",
+    )
+
+
+_COMPAT_VIEW = {
+    "include_types": [
+        "memory_candidate",
+        "preference_candidate",
+        "task_candidate",
+        "profile_candidate",
+        "skill_candidate",
+        "eval_candidate",
+    ]
+}
+
+
+@behavior(
+    name="project_structure_candidates",
+    on=["object.created"],
+    where={"object.type": "semantic_annotation"},
+    view=_COMPAT_VIEW,
+    creates=[
+        "memory_candidate",
+        "preference_candidate",
+        "task_candidate",
+        "profile_candidate",
+        "skill_candidate",
+        "eval_candidate",
+    ],
+)
+def project_structure_candidates(
+    event, graph, ctx, *, settings: ActivityNormalizerSettings
+):
+    """Compatibility candidate projectors (ADR 0026 step 2).
+
+    One activity.* annotation → the same candidate object the legacy
+    direct write path produced, deduped by the LEGACY candidate identity
+    (revision, activity.structure@0.1.0, config, kind, text, ordinal) so
+    re-running extraction over evidence a pre-migration graph already
+    extracted creates nothing new.
+    """
+    if not (settings.enabled and settings.compat_candidate_projectors):
+        return
+    wrapper = event.payload.get("object", {})
+    data = wrapper.get("data", {})
+    facet = data.get("facet", "")
+    kind = KIND_BY_FACET.get(facet)
+    if kind is None or data.get("status") != "active":
+        return
+    body = data.get("body") or {}
+    text = body.get("text", "")
+    if not text:
+        return
+    annotation_id = wrapper.get("id")
+    evidence_id = data.get("evidence_id")
+    metadata = data.get("metadata") or {}
+    ordinal = metadata.get("ordinal", 0)
+
+    if kind == "memory":
+        # Legacy memory candidates carry no identity field; dedup by
+        # (text, evidence source) exactly as a re-run would collide.
+        for existing in ctx.view.objects(type="memory_candidate"):
+            existing_data = existing.data
+            if existing_data.get("text") == text and evidence_id in (
+                existing_data.get("source_ids") or []
+            ):
+                return
+        candidate = graph.add_object(
+            "memory_candidate",
+            {
+                "text": text,
+                "confidence": data.get("confidence", 0.7),
+                "source_ids": [evidence_id],
+                "observation_ids": [annotation_id],
+                "category": body.get("category", "context"),
+                "subject_ref": None,
+                "accepted": False,
+                "evaluation_id": None,
+                "frame_id": None,
+            },
+        )
+        graph.add_relation(candidate.id, annotation_id, "projected_from_annotation")
+        graph.add_relation(candidate.id, evidence_id, "extracted_from")
+        return
+
+    candidate_type = {
+        "preference": "preference_candidate",
+        "task": "task_candidate",
+        "profile": "profile_candidate",
+        "skill": "skill_candidate",
+        "eval": "eval_candidate",
+    }[kind]
+    legacy_identity = _stable_id(
+        "candidate",
+        data.get("revision_id"),
+        settings.default_extractor_id,
+        settings.default_extractor_version,
+        settings.default_extraction_config_id,
+        kind,
+        text,
+        ordinal,
+    )
+    for existing in ctx.view.objects(type=candidate_type):
+        if existing.data.get("candidate_identity") == legacy_identity:
+            return
+
+    fields = {
+        key: value
+        for key, value in body.items()
+        if key not in ("text", "kind")
+    }
+    candidate = graph.add_object(
+        candidate_type,
+        {
+            "candidate_identity": legacy_identity,
+            "text": text,
+            "confidence": data.get("confidence", 0.7),
+            "evidence_id": evidence_id,
+            "evidence_identity": data.get("evidence_identity"),
+            "revision_id": data.get("revision_id"),
+            "extraction_record_id": data.get("run_id"),
+            "extractor_id": data.get("extractor_id"),
+            "extractor_version": data.get("extractor_version"),
+            "extraction_config_id": data.get("config_hash"),
+            "status": "candidate",
+            "invalidation_reason": None,
+            "metadata": {
+                "projector": "activity_normalizer.compat",
+                "annotation_id": annotation_id,
+                "annotation_identity": data.get("annotation_identity"),
+            },
+            **fields,
+        },
+    )
+    graph.add_relation(candidate.id, annotation_id, "projected_from_annotation")
+    graph.add_relation(candidate.id, evidence_id, "extracted_from")
+
+
+BEHAVIORS = [
+    normalize_acquired_item,
+    publish_cursor_created,
+    publish_cursor_patch,
+    select_shared_extraction,
+    project_structure_candidates,
+]
 
 
 __all__ = [

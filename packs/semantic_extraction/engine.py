@@ -36,17 +36,36 @@ def patch(graph, target: str, updates: dict[str, Any], *, rationale: str) -> Non
         graph.patch_object(target, updates)
 
 
-def resolve_extractor(settings: SemanticExtractionSettings) -> AnnotationExtractor:
-    """Build the configured extractor.
+def parse_extractor_ref(ref: str) -> tuple[str, str]:
+    """Split an ``extractor_id@version`` reference; fail loud on junk."""
+    extractor_id, sep, version = ref.partition("@")
+    if not sep or not extractor_id or not version:
+        raise ValueError(
+            f"extractor reference {ref!r} must be '<extractor_id>@<version>'"
+        )
+    return extractor_id, version
+
+
+def resolve_extractor(
+    settings: SemanticExtractionSettings, ref: Optional[str] = None
+) -> AnnotationExtractor:
+    """Build one extractor: the settings default, or an explicit ref.
 
     The deterministic default is constructed from settings so its config
-    hash reflects the live bounds; any other id/version comes from the
-    registry (the LLM-upgrade seam — same contract, different id).
+    hash reflects the live bounds; ``semantic.llm`` is constructed from
+    settings plus the configured provider (and registered at the seam);
+    any other id/version comes from the registry.
     """
+    if ref is None:
+        extractor_id = settings.extractor_id
+        extractor_version = settings.extractor_version
+    else:
+        extractor_id, extractor_version = parse_extractor_ref(ref)
+
     default = DeterministicExtractorV1()
     if (
-        settings.extractor_id == default.extractor_id
-        and settings.extractor_version == default.extractor_version
+        extractor_id == default.extractor_id
+        and extractor_version == default.extractor_version
     ):
         return DeterministicExtractorV1(
             max_content_chars=settings.max_content_chars,
@@ -54,7 +73,26 @@ def resolve_extractor(settings: SemanticExtractionSettings) -> AnnotationExtract
             min_assertion_chars=settings.min_assertion_chars,
             topic_tag_count=settings.topic_tag_count,
         )
-    return get_annotation_extractor(settings.extractor_id, settings.extractor_version)
+    if extractor_id == "semantic.llm" and extractor_version == "0.1.0":
+        from .extractor import register_annotation_extractor
+        from .llm_extractor import build_llm_extractor
+
+        extractor = build_llm_extractor(settings)
+        register_annotation_extractor(extractor, replace=True)
+        return extractor
+    return get_annotation_extractor(extractor_id, extractor_version)
+
+
+def _active_profile(reader):
+    profiles = [
+        obj
+        for obj in reader.objects(type="extraction_profile")
+        if obj.data.get("status") == "active"
+    ]
+    if not profiles:
+        return None
+    profiles.sort(key=lambda obj: obj.data.get("version", 0))
+    return profiles[-1]
 
 
 def active_profile_facets(
@@ -65,18 +103,26 @@ def active_profile_facets(
     The latest ``active`` extraction_profile decides; the settings floor
     is only the fallback for graphs where no profile exists yet.
     """
-    profiles = [
-        obj
-        for obj in reader.objects(type="extraction_profile")
-        if obj.data.get("status") == "active"
-    ]
-    if not profiles:
+    profile = _active_profile(reader)
+    if profile is None:
         return tuple(sorted(fallback))
-    profiles.sort(key=lambda obj: obj.data.get("version", 0))
-    data = profiles[-1].data
+    data = profile.data
     per_category = data.get("facets_by_source_category") or {}
     facets = per_category.get(source_category) or data.get("default_facets") or []
     return tuple(sorted(facets)) if facets else tuple(sorted(fallback))
+
+
+def active_profile_extractor_map(reader) -> dict[str, str]:
+    """facet → ``extractor_id@version`` from the active profile.
+
+    Facets absent from the map run on the settings default extractor.
+    An empty map (or no profile) is exactly today's single-extractor
+    behavior — byte-identical.
+    """
+    profile = _active_profile(reader)
+    if profile is None:
+        return {}
+    return dict(profile.data.get("extractor_by_facet") or {})
 
 
 def extractor_disabled(reader, extractor_id: str, extractor_version: str) -> bool:
@@ -150,6 +196,7 @@ def run_annotation_extraction(
     settings: SemanticExtractionSettings,
     requested_facets: Optional[tuple[str, ...]] = None,
     reader=None,
+    extractor_ref: Optional[str] = None,
 ) -> dict[str, Any]:
     """Execute (or cache-hit) one extraction over one evidence revision.
 
@@ -161,7 +208,7 @@ def run_annotation_extraction(
     """
     reader = reader or graph
     evidence = evidence_obj.data
-    extractor = resolve_extractor(settings)
+    extractor = resolve_extractor(settings, extractor_ref)
     config_hash = config_hash_for(extractor.config())
 
     if requested_facets is None:
@@ -330,11 +377,69 @@ def run_annotation_extraction(
     }
 
 
+def run_profile_extraction(
+    graph,
+    evidence_obj,
+    *,
+    settings: SemanticExtractionSettings,
+    requested_facets: Optional[tuple[str, ...]] = None,
+    reader=None,
+) -> list[dict[str, Any]]:
+    """Extract per the active profile's facet AND extractor policy.
+
+    The profile's ``extractor_by_facet`` map partitions the requested
+    facets into extractor groups; each group is one cache-identified
+    ``run_annotation_extraction`` pass. With an empty map (no provider
+    configured / today's seeded profile) this is exactly one pass on the
+    settings default extractor — byte-identical to the previous
+    single-extractor path.
+    """
+    reader = reader or graph
+    evidence = evidence_obj.data
+    if requested_facets is None:
+        requested_facets = active_profile_facets(
+            reader,
+            evidence.get("source_category", ""),
+            settings.default_profile_facets,
+        )
+    requested = tuple(sorted(dict.fromkeys(requested_facets)))
+    extractor_map = active_profile_extractor_map(reader)
+
+    groups: dict[Optional[str], list[str]] = {}
+    for facet in requested:
+        groups.setdefault(extractor_map.get(facet), []).append(facet)
+
+    results = []
+    # The default group first, then explicit refs in sorted order —
+    # deterministic run ordering regardless of dict insertion history.
+    ordered_refs = sorted(
+        (ref for ref in groups if ref is not None)
+    )
+    for ref in [None, *ordered_refs]:
+        facets = groups.get(ref)
+        if not facets:
+            continue
+        results.append(
+            run_annotation_extraction(
+                graph,
+                evidence_obj,
+                settings=settings,
+                requested_facets=tuple(facets),
+                reader=reader,
+                extractor_ref=ref,
+            )
+        )
+    return results
+
+
 __all__ = [
+    "active_profile_extractor_map",
     "active_profile_facets",
     "annotation_identity_for",
     "extractor_disabled",
+    "parse_extractor_ref",
     "resolve_extractor",
     "run_annotation_extraction",
+    "run_profile_extraction",
     "stable_id",
 ]

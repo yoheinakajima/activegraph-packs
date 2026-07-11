@@ -1,0 +1,38 @@
+{
+  "model": "fixture-llm-1",
+  "prompt": {
+    "deterministic": true,
+    "max_tokens": 4096,
+    "messages": [
+      {
+        "content": "FACETS: [\"assertion\", \"entity_mention\", \"event_mention\", \"preference_expression\", \"relation_mention\"]\nCONTENT:\nYohei Nakajima is a general partner at Untapped Capital. He created BabyAGI on 2023-03-28 and shares projects at https://yoheinakajima.com. You can reach him at yohei@untapped.vc or @yoheinakajima. He prefers building small deterministic tools. What should the agent build next? He started the activegraph project in June 2026.",
+        "role": "user"
+      }
+    ],
+    "model": "fixture-llm-1",
+    "output_schema_json": null,
+    "output_schema_name": null,
+    "system": "You are an annotation extractor for a provenance-first knowledge graph. Extract annotations from the user-supplied CONTENT for exactly the requested FACETS, and reply with a JSON array (no prose, no code fences). Each element:\n\n{\"facet\": \"<facet name>\",\n \"exact\": \"<verbatim substring of CONTENT \u2014 copied byte-for-byte>\",\n \"occurrence\": <1-based index if the substring appears more than once>,\n \"body\": {<facet body, see below>},\n \"modality\": \"stated\" | \"uncertain\" | \"hypothetical\",\n \"polarity\": \"positive\" | \"negative\",\n \"confidence\": <0.0-1.0>,\n \"event_time\": \"<ISO date if the annotation is about a dated event, else null>\"}\n\nFacet bodies:\n- entity_mention: {\"text\": exact, \"kind\": \"person\" | \"organization\" | \"place\" | \"product\" | \"handle\" | \"email\" | \"url\" | \"other\", \"normalized\": \"<canonical form>\"}\n- assertion: {\"text\": exact} \u2014 judge modality (stated/uncertain/hypothetical) and polarity (positive/negative) carefully.\n- preference_expression: {\"text\": exact, \"cue\": \"<the preference cue word>\"}\n- relation_mention: {\"text\": exact, \"subject\": \"...\", \"predicate\": \"...\", \"object\": \"...\"}\n- event_mention: {\"text\": exact, \"name\": \"<short event name>\", \"participants\": [\"...\"], \"when\": \"<ISO date or null>\"}\n\nRules: \"exact\" MUST be a verbatim contiguous substring of CONTENT \u2014 never paraphrase, never fix typos, never merge spans. Only emit facets that were requested. Prefer precision over recall.",
+    "temperature": 0.0,
+    "tools": null,
+    "top_p": 1.0
+  },
+  "prompt_hash": "f01f3105ed1fdefc2dff4fa97b3f7c4a0431a1fd57651454d9f0a7c0f1e78bc4",
+  "recorded_at": "2026-07-11T01:50:46Z",
+  "response": {
+    "cache_hit": false,
+    "cost_usd": "0",
+    "finish_reason": "end_turn",
+    "input_tokens": 351,
+    "latency_seconds": 0.0,
+    "model": "fixture-llm-1",
+    "output_tokens": 718,
+    "parsed": null,
+    "provider_meta": {
+      "scripted": true
+    },
+    "raw_text": "[\n {\n  \"facet\": \"entity_mention\",\n  \"exact\": \"Yohei Nakajima\",\n  \"body\": {\n   \"text\": \"Yohei Nakajima\",\n   \"kind\": \"person\",\n   \"normalized\": \"yohei nakajima\"\n  },\n  \"confidence\": 0.92\n },\n {\n  \"facet\": \"entity_mention\",\n  \"exact\": \"Untapped Capital\",\n  \"body\": {\n   \"text\": \"Untapped Capital\",\n   \"kind\": \"organization\",\n   \"normalized\": \"untapped capital\"\n  },\n  \"confidence\": 0.9\n },\n {\n  \"facet\": \"entity_mention\",\n  \"exact\": \"BabyAGI\",\n  \"body\": {\n   \"text\": \"BabyAGI\",\n   \"kind\": \"product\",\n   \"normalized\": \"babyagi\"\n  },\n  \"confidence\": 0.88\n },\n {\n  \"facet\": \"entity_mention\",\n  \"exact\": \"activegraph\",\n  \"body\": {\n   \"text\": \"activegraph\",\n   \"kind\": \"product\",\n   \"normalized\": \"activegraph\"\n  },\n  \"confidence\": 0.8\n },\n {\n  \"facet\": \"entity_mention\",\n  \"exact\": \"General Partner Yohei\",\n  \"body\": {\n   \"text\": \"General Partner Yohei\",\n   \"kind\": \"person\",\n   \"normalized\": \"yohei nakajima\"\n  },\n  \"confidence\": 0.9\n },\n {\n  \"facet\": \"assertion\",\n  \"exact\": \"Yohei Nakajima is a general partner at Untapped Capital.\",\n  \"body\": {\n   \"text\": \"Yohei Nakajima is a general partner at Untapped Capital.\"\n  },\n  \"modality\": \"stated\",\n  \"polarity\": \"positive\",\n  \"confidence\": 0.9\n },\n {\n  \"facet\": \"assertion\",\n  \"exact\": \"He started the activegraph project in June 2026.\",\n  \"body\": {\n   \"text\": \"He started the activegraph project in June 2026.\"\n  },\n  \"modality\": \"stated\",\n  \"polarity\": \"positive\",\n  \"confidence\": 0.85,\n  \"event_time\": \"2026-06\"\n },\n {\n  \"facet\": \"preference_expression\",\n  \"exact\": \"He prefers building small deterministic tools.\",\n  \"body\": {\n   \"text\": \"He prefers building small deterministic tools.\",\n   \"cue\": \"prefers\"\n  },\n  \"polarity\": \"positive\",\n  \"confidence\": 0.85\n },\n {\n  \"facet\": \"relation_mention\",\n  \"exact\": \"Yohei Nakajima is a general partner at Untapped Capital\",\n  \"body\": {\n   \"text\": \"Yohei Nakajima is a general partner at Untapped Capital\",\n   \"subject\": \"Yohei Nakajima\",\n   \"predicate\": \"general_partner_at\",\n   \"object\": \"Untapped Capital\"\n  },\n  \"confidence\": 0.85\n },\n {\n  \"facet\": \"relation_mention\",\n  \"exact\": \"He created BabyAGI\",\n  \"body\": {\n   \"text\": \"He created BabyAGI\",\n   \"subject\": \"Yohei Nakajima\",\n   \"predicate\": \"created\",\n   \"object\": \"BabyAGI\"\n  },\n  \"confidence\": 0.8\n },\n {\n  \"facet\": \"event_mention\",\n  \"exact\": \"created BabyAGI on 2023-03-28\",\n  \"body\": {\n   \"text\": \"created BabyAGI on 2023-03-28\",\n   \"name\": \"BabyAGI creation\",\n   \"participants\": [\n    \"Yohei Nakajima\"\n   ],\n   \"when\": \"2023-03-28\"\n  },\n  \"event_time\": \"2023-03-28\",\n  \"confidence\": 0.85\n },\n {\n  \"facet\": \"event_mention\",\n  \"exact\": \"started the activegraph project in June 2026\",\n  \"body\": {\n   \"text\": \"started the activegraph project in June 2026\",\n   \"name\": \"activegraph project start\",\n   \"participants\": [\n    \"Yohei Nakajima\"\n   ],\n   \"when\": \"2026-06\"\n  },\n  \"event_time\": \"2026-06\",\n  \"confidence\": 0.8\n }\n]",
+    "seed": null,
+    "tool_calls": null
+  }
+}

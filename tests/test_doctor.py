@@ -309,6 +309,7 @@ def test_cli_json_is_parseable_and_reports_ok(capsys, tmp_path) -> None:
         "store-path",
         "entry-points",
         "manifest-hash",
+        "llm-provider",
     ]
     assert all(c["status"] in {"pass", "skip"} for c in report["checks"])
 
