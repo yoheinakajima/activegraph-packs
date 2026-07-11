@@ -15,8 +15,11 @@ from __future__ import annotations
 
 from activegraph.packs import behavior
 
-from .engine import run_annotation_extraction, stable_id
+from .engine import run_profile_extraction, stable_id
+from .facets import LLM_UPGRADE_FACETS
 from .settings import SemanticExtractionSettings
+
+LLM_EXTRACTOR_REF = "semantic.llm@0.1.0"
 
 
 _VIEW = {
@@ -31,12 +34,24 @@ _VIEW = {
 }
 
 
+def _llm_upgrade_active(settings: SemanticExtractionSettings) -> bool:
+    """Whether the default profile should route the LLM-only facets to
+    semantic.llm: an LLM provider is configured AND the upgrade isn't
+    switched off. No provider → False → the seeded profile (and every
+    downstream byte) is identical to the zero-key mode."""
+    if not settings.llm_upgrade_enabled:
+        return False
+    from packs.llm_provider import configured_llm_provider
+
+    return configured_llm_provider().configured
+
+
 @behavior(
     name="seed_extraction_profile",
     on=["pack.loaded"],
     where={"name": "semantic_extraction"},
-    view={"include_types": ["extraction_profile"]},
-    creates=["extraction_profile"],
+    view={"include_types": ["extraction_profile", "annotation_extractor_state"]},
+    creates=["extraction_profile", "annotation_extractor_state"],
 )
 def seed_extraction_profile(event, graph, ctx, *, settings: SemanticExtractionSettings):
     """Write extraction_profile v1 from the settings floor if none exists.
@@ -44,25 +59,72 @@ def seed_extraction_profile(event, graph, ctx, *, settings: SemanticExtractionSe
     Idempotent across boots: replayed stores already contain the profile
     object, so the fresh pack.loaded event each boot appends creates
     nothing new (byte-equivalent projections at a fixed horizon).
+
+    With an LLM provider configured (D025 stage two), the seeded default
+    additionally requests the two facets the deterministic floor cannot
+    produce and routes them to ``semantic.llm`` — the cheap eager floor
+    itself stands unchanged (D041). The LLM extractor version is also
+    recorded as a *candidate* configuration (ADR 0014): serving floor
+    facets requires trial evidence plus an explicit promotion.
     """
     if not settings.seed_default_profile:
         return
     if any(True for _ in ctx.view.objects(type="extraction_profile")):
         return
+    upgraded = _llm_upgrade_active(settings)
+    default_facets = sorted(settings.default_profile_facets)
+    extractor_by_facet: dict[str, str] = {}
+    rationale = (
+        "default eager floor (D041): entities, assertions, "
+        "preferences, questions, explicit dates"
+    )
+    if upgraded:
+        default_facets = sorted({*default_facets, *LLM_UPGRADE_FACETS})
+        extractor_by_facet = {
+            facet: LLM_EXTRACTOR_REF for facet in LLM_UPGRADE_FACETS
+        }
+        rationale += (
+            "; relation_mention/event_mention upgraded to semantic.llm "
+            "(provider configured, D025 stage two)"
+        )
     graph.add_object(
         "extraction_profile",
         {
             "profile_identity": stable_id("extraction_profile", 1),
             "version": 1,
             "status": "active",
-            "default_facets": sorted(settings.default_profile_facets),
+            "default_facets": default_facets,
             "facets_by_source_category": {},
+            "extractor_by_facet": extractor_by_facet,
             "created_by": "semantic_extraction.seed",
-            "rationale": "default eager floor (D041): entities, assertions, "
-            "preferences, questions, explicit dates",
+            "rationale": rationale,
             "supersedes_profile_id": None,
         },
     )
+    if upgraded and not any(
+        obj.data.get("extractor_id") == "semantic.llm"
+        for obj in ctx.view.objects(type="annotation_extractor_state")
+    ):
+        graph.add_object(
+            "annotation_extractor_state",
+            {
+                "state_identity": stable_id(
+                    "annotation_extractor_state",
+                    "semantic.llm",
+                    "0.1.0",
+                    "candidate",
+                ),
+                "extractor_id": "semantic.llm",
+                "extractor_version": "0.1.0",
+                "status": "candidate",
+                "reason": (
+                    "fork-trial-promote (ADR 0014): candidate for floor "
+                    "facets pending recorded trial evidence and explicit "
+                    "promotion; serves the LLM-only facets meanwhile"
+                ),
+                "metadata": {},
+            },
+        )
 
 
 @behavior(
@@ -77,7 +139,8 @@ def seed_extraction_profile(event, graph, ctx, *, settings: SemanticExtractionSe
     ],
 )
 def annotate_evidence(event, graph, ctx, *, settings: SemanticExtractionSettings):
-    """Run the configured extractor eagerly over each new evidence revision."""
+    """Run the profile's extractor policy eagerly over each new evidence
+    revision — one cache-identified pass per extractor group."""
     if not settings.enabled:
         return
     wrapper = event.payload.get("object", {})
@@ -85,7 +148,7 @@ def annotate_evidence(event, graph, ctx, *, settings: SemanticExtractionSettings
     evidence_obj = graph.get_object(evidence_id) if evidence_id else None
     if evidence_obj is None or evidence_obj.data.get("status") != "current":
         return
-    run_annotation_extraction(
+    run_profile_extraction(
         graph,
         evidence_obj,
         settings=settings,

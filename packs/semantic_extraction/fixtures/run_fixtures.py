@@ -19,11 +19,21 @@ from activegraph import Graph, Runtime
 
 from packs.activity_normalizer import pack as normalizer_pack
 from packs.core import pack as core_pack
-from packs.semantic_extraction import pack as semantic_pack
+from packs.llm_provider import (
+    ResolvedLLMProvider,
+    clear_llm_provider,
+    set_llm_provider,
+)
+from packs.semantic_extraction import (
+    SemanticExtractionSettings,
+    pack as semantic_pack,
+)
 from packs.semantic_extraction.tools import (
     annotation_coverage_fn,
     extract_annotations_fn,
     invalidate_annotation_extractor_fn,
+    promote_llm_extractor_fn,
+    run_extractor_trial_fn,
 )
 
 SUMMARY = (
@@ -227,6 +237,123 @@ def run_invalidation_fixture() -> dict:
     return dict(result)
 
 
+class _PoisonProvider:
+    """A 'live' provider that must never be reached: the fixture replays
+    entirely from the committed records (zero keys, zero network)."""
+
+    default_model = "fixture-llm-1"
+
+    def complete(self, **kwargs):
+        raise AssertionError(
+            "fixture made a live provider call — records must cover "
+            "every prompt"
+        )
+
+
+def run_llm_upgrade_trial_fixture() -> dict:
+    """D025 stage two on records: provider-configured seed routes the two
+    LLM-only facets to semantic.llm; extraction replays from the record;
+    the deterministic-vs-LLM trial lands as promotion evidence; explicit
+    promotion re-routes the trialed facets."""
+    clear_llm_provider()
+    set_llm_provider(
+        _PoisonProvider(),
+        ResolvedLLMProvider(
+            provider="anthropic",
+            source="setting",
+            api_key_env="ANTHROPIC_API_KEY",
+            model="fixture-llm-1",
+        ),
+    )
+    settings = SemanticExtractionSettings(
+        llm_model="fixture-llm-1",
+        llm_record_dir=str(_HERE / "llm_records"),
+    )
+    try:
+        graph = Graph()
+        runtime = Runtime(graph)
+        runtime.load_pack(core_pack)
+        runtime.load_pack(normalizer_pack)
+        runtime.load_pack(semantic_pack, settings=settings)
+        runtime.run_until_idle()
+
+        (profile,) = graph.objects(type="extraction_profile")
+        assert profile.data["extractor_by_facet"] == {
+            "event_mention": "semantic.llm@0.1.0",
+            "relation_mention": "semantic.llm@0.1.0",
+        }, profile.data
+        states = graph.objects(type="annotation_extractor_state")
+        assert any(
+            state.data["extractor_id"] == "semantic.llm"
+            and state.data["status"] == "candidate"
+            for state in states
+        ), "semantic.llm must land as a candidate configuration (ADR 0014)"
+
+        _acquire(graph)
+        runtime.run_until_idle()
+
+        annotations = graph.objects(type="semantic_annotation")
+        by_extractor: dict[str, set] = {}
+        for annotation in annotations:
+            by_extractor.setdefault(
+                annotation.data["extractor_id"], set()
+            ).add(annotation.data["facet"])
+        assert by_extractor["semantic.deterministic"] >= {
+            "assertion", "entity_mention", "preference_expression",
+            "question", "temporal_expression",
+        }, by_extractor
+        assert by_extractor["semantic.llm"] == {
+            "event_mention", "relation_mention",
+        }, by_extractor
+        evidence = graph.objects(type="activity_evidence")[0]
+        content = evidence.data["normalized_content"]
+        for annotation in annotations:
+            selector = annotation.data["selector"]
+            assert (
+                content[selector["start"]:selector["end"]] == selector["exact"]
+            ), annotation.data
+
+        trial = run_extractor_trial_fn(
+            graph, [evidence.id], settings=settings, created_by="fixture"
+        )
+        assert trial["verdict"] == "candidate_richer", trial
+        comparison = trial["comparison"]
+        assert comparison["relation_mention"]["baseline"] == 0
+        assert comparison["relation_mention"]["candidate"] > 0
+        assert comparison["event_mention"]["baseline"] == 0
+        assert comparison["event_mention"]["candidate"] > 0
+
+        promoted = promote_llm_extractor_fn(
+            graph, trial["evidence_id"], approver="fixture-owner"
+        )
+        assert promoted["ok"], promoted
+        active = [
+            profile
+            for profile in graph.objects(type="extraction_profile")
+            if profile.data["status"] == "active"
+        ]
+        assert len(active) == 1
+        routed = active[0].data["extractor_by_facet"]
+        assert routed["assertion"] == "semantic.llm@0.1.0", routed
+
+        before = len(graph.objects(type="semantic_annotation"))
+        result = extract_annotations_fn(graph, evidence.id, settings=settings)
+        runtime.run_until_idle()
+        after = len(graph.objects(type="semantic_annotation"))
+        assert result["created"] is True
+        assert after > before, "promoted routing must add LLM floor annotations"
+        return {
+            "llm_annotations": len(
+                [a for a in graph.objects(type="semantic_annotation")
+                 if a.data["extractor_id"] == "semantic.llm"]
+            ),
+            "verdict": trial["verdict"],
+            "post_promotion_added": after - before,
+        }
+    finally:
+        clear_llm_provider()
+
+
 def run_all() -> bool:
     print("Semantic Extraction Fixtures")
     print("=" * 60)
@@ -234,11 +361,20 @@ def run_all() -> bool:
     print(f"  [2] idempotent re-run     PASS: {run_idempotent_reextraction_fixture()}")
     print(f"  [3] facet-incremental     PASS: {run_facet_incremental_fixture()}")
     print(f"  [4] version invalidation  PASS: {run_invalidation_fixture()}")
+    print(f"  [5] llm upgrade + trial   PASS: {run_llm_upgrade_trial_fixture()}")
     print("ALL PASS")
     return True
 
 
 if __name__ == "__main__":
+    # Fixtures are keyless by doctrine: an API key in the invoking shell
+    # must not change what they exercise (fixture [5] installs its own
+    # recorded provider explicitly).
+    import os
+
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+    os.environ.pop("OPENAI_API_KEY", None)
+    clear_llm_provider()
     try:
         ok = run_all()
     except AssertionError as exc:

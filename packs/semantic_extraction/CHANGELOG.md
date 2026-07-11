@@ -1,5 +1,36 @@
 # Changelog — semantic_extraction
 
+## Unreleased — D025 stage two: the LLM-backed extractor
+
+- `semantic.llm@0.1.0` registered beside `semantic.deterministic@0.1.0`:
+  same annotation contract, same cache identity scheme, different
+  extractor id. Implements `entity_mention`, `assertion` (with
+  modality/polarity judgment), `preference_expression`, and the two
+  facets the floor does not: `relation_mention`, `event_mention`.
+- Recorded provider seam: with `llm_record_dir` set, provider calls
+  replay from the prompt-hash-keyed record first (the runtime's own
+  fixture format); re-extraction never re-contacts, and a rebuild
+  reproduces byte-equal annotations keylessly.
+- Selector verification: LLM-proposed spans are checked byte-for-byte
+  against the content; non-matching spans are dropped.
+- `extraction_profile.extractor_by_facet`: the profile now decides which
+  extractor serves which facet. Provider configured → the seeded default
+  routes `relation_mention`/`event_mention` to `semantic.llm` (floor
+  stands, D041); no provider → profile unchanged, byte-identical
+  behavior.
+- Fork-trial-promote (ADR 0014): `semantic.llm` lands as a `candidate`
+  extractor state; `run_extractor_trial` records the per-facet
+  deterministic-vs-LLM comparison as `extractor_promotion_evidence`;
+  `promote_llm_extractor` re-routes facets only with evidence + a named
+  approver.
+- Typed bodies for `relation_mention` and `event_mention`;
+  `entity_mention.kind` widened with semantic kinds (person,
+  organization, place, product, other).
+- Committed LLM records under `fixtures/llm_records/` (seeded via
+  `fixtures/seed_llm_records.py`; re-record live with
+  `ACTIVEGRAPH_SEED_LIVE=1`); fixture [5] exercises the upgrade, trial,
+  and promotion keylessly.
+
 ## 0.1.0 — 2026-07-10
 
 First implementation of the shared annotation layer (ADR 0026, slice 5a).

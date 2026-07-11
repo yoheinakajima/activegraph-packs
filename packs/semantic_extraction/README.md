@@ -42,13 +42,42 @@ source-anchored annotations; let every consumer project from them.
   annotations dedupe within one evidence revision; each domain still
   dedupes its own records.
 
-## The upgrade seam
+## The upgrade seam — `semantic.llm@0.1.0` (D025 stage two)
 
 LLM-backed extraction registers through
 `register_annotation_extractor(...)` with its own `extractor_id` — same
 contract, same envelope, same cache identity and coverage semantics.
-Selecting it is `SemanticExtractionSettings.extractor_id` /
-`extractor_version` (config, not code).
+
+`semantic.llm@0.1.0` is registered beside the deterministic floor. It
+implements `entity_mention` (people/orgs beyond regex reach),
+`assertion` (with modality/polarity judgment), `preference_expression`,
+and the two facets the floor does not: `relation_mention` and
+`event_mention`.
+
+- **Recorded provider seam.** With `llm_record_dir` set, every provider
+  call replays from the prompt-hash-keyed record first; only unseen
+  prompts reach the live provider (and are recorded before use).
+  Re-extraction replays from cache and never re-contacts — a graph
+  rebuild reproduces byte-equal annotations with no key present.
+- **The LLM proposes, the extractor verifies.** Proposed spans are
+  checked byte-for-byte against the content; non-matching spans are
+  dropped. An LLM may not mint an annotation whose anchor doesn't exist.
+- **Selection policy.** The `extraction_profile`'s `extractor_by_facet`
+  map decides which extractor serves which facet per source category.
+  With a provider configured (see `packs.llm_provider`), the seeded
+  default routes `relation_mention`/`event_mention` to `semantic.llm`
+  and keeps the deterministic floor for everything else (D041). With no
+  provider the profile is unchanged and behavior is byte-identical to
+  the zero-key mode.
+- **Fork-trial-promote (ADR 0014).** The LLM extractor version lands as
+  a *candidate* configuration for floor facets. `run_extractor_trial`
+  compares deterministic-only vs LLM-upgraded drafts on recorded
+  content and records the per-facet comparison as
+  `extractor_promotion_evidence`; `promote_llm_extractor` re-routes
+  facets only with that evidence plus a named approver.
+- **No extra trust for fluency.** LLM annotations carry the extractor's
+  (clamped) confidence and face exactly the same candidate/promotion
+  gates and invalidation semantics.
 
 ## Invalidation
 

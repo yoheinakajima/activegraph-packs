@@ -54,6 +54,22 @@ V1_IMPLEMENTED_FACETS: tuple[str, ...] = (
     "topic_tag",
 )
 
+# Facets the LLM-backed extractor (semantic.llm) produces: richer results
+# where the deterministic floor is weak, plus the two facets the floor
+# does not implement at all (relation_mention, event_mention).
+LLM_IMPLEMENTED_FACETS: tuple[str, ...] = (
+    "assertion",
+    "entity_mention",
+    "event_mention",
+    "preference_expression",
+    "relation_mention",
+)
+
+# The facets the default profile routes to the LLM extractor when a
+# provider is configured (D041: the cheap eager floor stands; the LLM
+# serves only what the floor cannot).
+LLM_UPGRADE_FACETS: tuple[str, ...] = ("event_mention", "relation_mention")
+
 
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -61,7 +77,14 @@ class _StrictModel(BaseModel):
 
 class EntityMentionBody(_StrictModel):
     text: str = Field(min_length=1)
-    kind: Literal["handle", "email", "url", "proper_noun"]
+    # The first four kinds are the deterministic floor's; the rest are
+    # semantic kinds only an upgraded extractor can judge (people/orgs
+    # beyond regex reach). Widening the enum is backward compatible —
+    # every existing annotation body still validates.
+    kind: Literal[
+        "handle", "email", "url", "proper_noun",
+        "person", "organization", "place", "product", "other",
+    ]
     normalized: str = Field(min_length=1)
 
 
@@ -89,6 +112,20 @@ class TopicTagBody(_StrictModel):
     occurrences: int = Field(ge=1)
 
 
+class RelationMentionBody(_StrictModel):
+    text: str = Field(min_length=1)
+    subject: str = Field(min_length=1)
+    predicate: str = Field(min_length=1)
+    object: str = Field(min_length=1)
+
+
+class EventMentionBody(_StrictModel):
+    text: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    participants: list[str] = Field(default_factory=list)
+    when: Optional[str] = None
+
+
 BODY_SCHEMAS: dict[str, type[BaseModel]] = {
     "entity_mention": EntityMentionBody,
     "assertion": AssertionBody,
@@ -96,6 +133,8 @@ BODY_SCHEMAS: dict[str, type[BaseModel]] = {
     "preference_expression": PreferenceExpressionBody,
     "temporal_expression": TemporalExpressionBody,
     "topic_tag": TopicTagBody,
+    "relation_mention": RelationMentionBody,
+    "event_mention": EventMentionBody,
 }
 
 
@@ -116,6 +155,8 @@ __all__ = [
     "STANDARD_FACETS",
     "DEFAULT_EAGER_FLOOR",
     "V1_IMPLEMENTED_FACETS",
+    "LLM_IMPLEMENTED_FACETS",
+    "LLM_UPGRADE_FACETS",
     "BODY_SCHEMAS",
     "validate_body",
 ]

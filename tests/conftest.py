@@ -11,7 +11,23 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_llm_keys(monkeypatch):
+    """Keep the suite hermetic: an API key in the developer's shell must
+    not change test behavior (or worse, make live provider calls).
+    Tests that exercise key handling set their own fake keys."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    from packs.llm_provider import clear_llm_provider
+
+    clear_llm_provider()
+    yield
+    clear_llm_provider()
 
 
 def run_fixture_script(script_path: str) -> subprocess.CompletedProcess:
