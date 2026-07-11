@@ -169,6 +169,7 @@ Full explanation, dependency graph, and the invariants that hold it together:
 | `core` | Universal primitive layer: source, observation, task, action, artifact, memory_candidate, evaluation |
 | `activity_normalizer` | Provider-neutral evidence identity, replay modes, revisions, and deterministic candidate extraction from strict importer handoffs |
 | `semantic_extraction` | The shared annotation layer (ADR 0026): typed source-anchored annotations under one provenance envelope, cache-identified deterministic extraction, first-class coverage, `extraction_profile` config artifact, and per-domain candidate projectors |
+| `attention` | Semantic engagement observations and bounded session batches for the future learned importance/trust vectors. No raw clickstream and no model or weights yet |
 | `tool_gateway` | Capability execution gateway — normalizes, policy-checks, and records all external tool/API/MCP calls |
 | `secrets` | Credential reference management — actual secrets never enter the model context or graph |
 | `memory_gateway` | Full memory lifecycle: evaluates candidates, stores accepted items (SQLite), retrieval with keyword ranking |

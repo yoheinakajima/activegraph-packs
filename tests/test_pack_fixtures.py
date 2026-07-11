@@ -23,6 +23,7 @@ PACKS = [
     ("skills", "skills"),
     ("eval_outcome", "eval_outcome"),
     ("agent_profile", "agent_profile"),
+    ("attention", "attention"),
     ("bridges", "bridges"),
     ("chat", "chat"),
     ("codebase", "codebase"),
