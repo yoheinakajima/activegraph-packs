@@ -181,6 +181,7 @@ PACK_PATHS = {
     "importer_assistant_local_sessions": "importers/assistant_local_sessions",
     "importer_public_presence": "importers/public_presence",
     "semantic_extraction": "semantic_extraction",
+    "attention": "attention",
     "tool_gateway": "tool_gateway",
     "secrets": "secrets",
     "memory_gateway": "memory_gateway",
