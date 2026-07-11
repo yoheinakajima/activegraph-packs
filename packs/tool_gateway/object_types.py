@@ -15,9 +15,113 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from activegraph.packs import ObjectType, RelationType
+
+
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class IntegrationRoute(_StrictModel):
+    """One transport route serving a canonical service/account profile."""
+
+    path: Literal["export", "mcp", "composio", "native", "local", "pack", "manual"]
+    route_ref: str = Field(min_length=1)
+    status: Literal["active", "pending", "stale", "revoked", "failed"] = "active"
+    connected_account_id: Optional[str] = None
+    schema_version: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IntegrationCapability(_StrictModel):
+    """Conservatively classified canonical (service, operation) capability."""
+
+    operation: str = Field(min_length=1)
+    action_class: Literal["R0", "R1", "R2", "R3", "R4"]
+    classification_source: Literal["default", "operator", "evidence"] = "default"
+    route: str = Field(min_length=1)
+    provider_operation: Optional[str] = None
+    input_schema_fingerprint: Optional[str] = None
+    idempotency: Literal["none", "client_guard", "provider", "natural"] = "none"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IntegrationSignal(_StrictModel):
+    """A profile surface's predicted downstream yield, never a truth claim."""
+
+    surface: str = Field(min_length=1)
+    candidate_types: list[str] = Field(default_factory=list)
+    estimated_richness: Literal["unknown", "low", "medium", "high"] = "unknown"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    provenance: list[str] = Field(default_factory=list)
+
+
+class IntegrationClaim(_StrictModel):
+    """One inspectable profile claim with epistemic state of its own."""
+
+    claim_key: str = Field(min_length=1)
+    value: Any
+    confidence: float = Field(ge=0.0, le=1.0)
+    freshness: Literal["current", "stale", "unknown"] = "unknown"
+    provenance: list[str] = Field(default_factory=list)
+    classification_source: Literal["default", "operator", "evidence"] = "evidence"
+    asserted_by: str = Field(min_length=1)
+    observed_at_event_id: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AggregatorProfile(_StrictModel):
+    """Thin profile for a route provider; it never inventories the catalog."""
+
+    profile_identity: str = Field(min_length=1)
+    aggregator: str = Field(min_length=1)
+    user_ref: str = Field(min_length=1)
+    auth_state: Literal["unconfigured", "configured", "pending", "active", "failed"]
+    available_services: list[str] = Field(default_factory=list)
+    enabled_services: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IntegrationProfile(_StrictModel):
+    """Versioned understanding of one canonical (service, account)."""
+
+    profile_identity: str = Field(min_length=1)
+    profile_version: int = Field(default=1, ge=1)
+    service: str = Field(min_length=1)
+    account_ref: str = Field(min_length=1)
+    account_display: Optional[str] = None
+    status: Literal["active", "superseded", "stale", "revoked", "failed"] = "active"
+    routes: list[IntegrationRoute] = Field(default_factory=list)
+    scopes_granted: list[str] = Field(default_factory=list)
+    scopes_available: list[str] = Field(default_factory=list)
+    facets: list[Literal["record_store", "effector", "social_graph", "utility"]] = Field(default_factory=list)
+    capability_inventory: list[IntegrationCapability] = Field(default_factory=list)
+    data_topology: dict[str, Any] = Field(default_factory=dict)
+    signal_map: list[IntegrationSignal] = Field(default_factory=list)
+    claims: list[IntegrationClaim] = Field(default_factory=list)
+    health: dict[str, Any] = Field(default_factory=dict)
+    exploration_receipts: list[str] = Field(default_factory=list)
+    supersedes_id: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IntegrationExploration(_StrictModel):
+    """Budgeted R0 probe receipt used to build or refresh a profile."""
+
+    receipt_identity: str = Field(min_length=1)
+    service: str = Field(min_length=1)
+    account_ref: str = Field(min_length=1)
+    route: str = Field(min_length=1)
+    profile_id: Optional[str] = None
+    probe_call_ids: list[str] = Field(default_factory=list)
+    budget: int = Field(ge=1)
+    structural_only: bool = True
+    shape_fingerprint: Optional[str] = None
+    status: Literal["proposed", "completed", "partial", "failed"] = "proposed"
+    injection_flags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ================================================================ Schemas
@@ -351,6 +455,25 @@ class ToolPolicy(BaseModel):
 
 OBJECT_TYPES = [
     ObjectType(
+        name="aggregator_profile",
+        schema=AggregatorProfile,
+        description=(
+            "A thin route-provider profile: auth state and available/enabled services only."
+        ),
+    ),
+    ObjectType(
+        name="integration_profile",
+        schema=IntegrationProfile,
+        description=(
+            "Versioned, evidence-backed understanding of one canonical service/account."
+        ),
+    ),
+    ObjectType(
+        name="integration_exploration",
+        schema=IntegrationExploration,
+        description="A budgeted R0 exploration receipt with a shape fingerprint.",
+    ),
+    ObjectType(
         name="tool_policy",
         schema=ToolPolicy,
         description=(
@@ -414,6 +537,18 @@ OBJECT_TYPES = [
 # ================================================================ RelationType list
 
 RELATION_TYPES = [
+    RelationType(
+        name="integration_supersedes",
+        source_types=("integration_profile",),
+        target_types=("integration_profile",),
+        description="A refreshed integration profile supersedes its prior version.",
+    ),
+    RelationType(
+        name="profile_explored_by",
+        source_types=("integration_profile",),
+        target_types=("integration_exploration",),
+        description="An integration profile was supported by a recorded exploration receipt.",
+    ),
     RelationType(
         name="calls",
         source_types=("capability_call",),

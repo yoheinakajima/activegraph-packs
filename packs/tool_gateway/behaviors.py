@@ -62,6 +62,7 @@ def evaluate_call_policy(
     graph=None,
     caused_by=None,
     actor: str = "policy_enforcer",
+    requires_explicit_approval: bool = False,
 ) -> dict:
     """Both policy dimensions for one call, runtime-audited when possible.
 
@@ -109,6 +110,8 @@ def evaluate_call_policy(
     audit_ceiling = capability_ceiling
     if action_class == "R2" and standing_scope is None:
         audit_ceiling = _stricter_ceiling(capability_ceiling, "R1")
+    if requires_explicit_approval:
+        audit_ceiling = _stricter_ceiling(audit_ceiling, "none")
 
     detail = decide_policy_detail(
         risk_class,
@@ -132,6 +135,19 @@ def evaluate_call_policy(
             caused_by=caused_by,
         )
         detail["action_authority"]["audit_event_id"] = audited.event_id
+    if requires_explicit_approval:
+        detail["decision"] = "hold"
+        detail["granted_by"] = ""
+        detail["action_authority"].update(
+            {
+                "decision": "require_approval",
+                "matched_policy": "call_requires_explicit_approval",
+                "reason": (
+                    "this call carries a stricter per-call approval requirement; "
+                    "neither legacy risk configuration nor a standing scope may bypass it"
+                ),
+            }
+        )
     return detail
 
 
@@ -223,6 +239,9 @@ def policy_enforcer(event, graph, ctx, *, settings: ToolGatewaySettings):
         # the tool_policy objects the standing-scope lookup reads.
         graph=ctx.view,
         caused_by=getattr(event, "id", None),
+        requires_explicit_approval=bool(
+            (call_data.get("metadata") or {}).get("requires_explicit_approval", False)
+        ),
     )
 
     if policy["decision"] == "auto_approve":

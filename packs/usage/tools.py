@@ -110,10 +110,11 @@ def _surface_logical_id(data: dict[str, Any]) -> Optional[str]:
     return str(value) if value else None
 
 
-def _find_surface(graph, surface_id: str):
+def _find_surface(graph, surface_id: str, *, reader=None):
+    reader = reader or graph
     matches = [
         obj
-        for obj in graph.objects(type="connection_surface")
+        for obj in reader.objects(type="connection_surface")
         if _surface_logical_id(obj.data or {}) == surface_id
     ]
     if len(matches) > 1:
@@ -121,10 +122,11 @@ def _find_surface(graph, surface_id: str):
     return matches[0] if matches else None
 
 
-def _find_gate(graph, gate_id: str, gate_version: int):
+def _find_gate(graph, gate_id: str, gate_version: int, *, reader=None):
+    reader = reader or graph
     matches = [
         obj
-        for obj in graph.objects(type="settling_gate")
+        for obj in reader.objects(type="settling_gate")
         if obj.data.get("gate_id") == gate_id
         and obj.data.get("gate_version") == gate_version
     ]
@@ -137,6 +139,7 @@ def ensure_default_gate_fn(
     graph,
     *,
     settings: Optional[UsageSettings] = None,
+    reader=None,
 ):
     """Create the immutable default gate once and reject semantic mutation."""
     configured = settings or UsageSettings()
@@ -169,6 +172,7 @@ def ensure_default_gate_fn(
         graph,
         definition["gate_id"],
         definition["gate_version"],
+        reader=reader,
     )
     if existing is not None:
         actual = {key: existing.data.get(key) for key in definition}
@@ -186,6 +190,7 @@ def _cursor_default() -> dict[str, Any]:
     return {
         "oldest_ingested_ref": None,
         "newest_ingested_ref": None,
+        "watermark_ref": None,
         "cursor_version": 1,
     }
 
@@ -204,6 +209,7 @@ def connect_surface_fn(
     is_fixture: bool = False,
     metadata: Optional[dict[str, Any]] = None,
     settings: Optional[UsageSettings] = None,
+    reader=None,
 ) -> dict[str, Any]:
     """Create or reconnect exactly one logical source surface.
 
@@ -219,7 +225,7 @@ def connect_surface_fn(
         raise ValueError(f"unknown privacy scope {privacy_scope!r}")
     if acquisition_mode not in {"snapshot", "backfill", "live"}:
         raise ValueError(f"unknown acquisition mode {acquisition_mode!r}")
-    gate = ensure_default_gate_fn(graph, settings=settings)
+    gate = ensure_default_gate_fn(graph, settings=settings, reader=reader)
 
     requested = {
         "surface_id": surface_id,
@@ -242,7 +248,7 @@ def connect_surface_fn(
         "settled_event_id": None,
         "metadata": dict(metadata or {}),
     }
-    existing = _find_surface(graph, surface_id)
+    existing = _find_surface(graph, surface_id, reader=reader)
     if existing is None:
         surface = graph.add_object("connection_surface", requested)
         created = True

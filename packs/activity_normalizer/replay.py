@@ -15,6 +15,10 @@ _ARTIFACT_REF_RE = re.compile(
     r"^artifact://sha256/(?P<prefix>[0-9a-f]{2})/(?P<digest>[0-9a-f]{64})$"
 )
 _LEGACY_REF_RE = re.compile(r"^sha256:(?P<digest>[0-9a-f]{64})$")
+_PORTABLE_LOCATOR_RE = re.compile(
+    r"^artifact-key://sha256/(?P<prefix>[0-9a-f]{2})/"
+    r"(?P<digest>[0-9a-f]{8}(?:\.[0-9a-f]{8}){7})$"
+)
 
 
 class ReplayError(RuntimeError):
@@ -38,6 +42,33 @@ def artifact_ref_for_hash(digest: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("digest must be lowercase SHA-256 hex")
     return f"artifact://sha256/{digest[:2]}/{digest}"
+
+
+def portable_artifact_locator(digest: str) -> str:
+    """Encode an artifact identity for passage through secret sanitizers.
+
+    Content hashes are not credentials, but a gateway must conservatively
+    redact long hexadecimal values. Connector receipts therefore carry the
+    digest in bounded chunks and reconstruct the canonical reference only at
+    the trusted ingestion boundary.
+    """
+
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("digest must be lowercase SHA-256 hex")
+    chunks = ".".join(digest[index:index + 8] for index in range(0, 64, 8))
+    return f"artifact-key://sha256/{digest[:2]}/{chunks}"
+
+
+def artifact_identity_from_locator(locator: str) -> tuple[str, str]:
+    """Return the canonical artifact reference and digest for a locator."""
+
+    match = _PORTABLE_LOCATOR_RE.fullmatch(locator)
+    if not match:
+        raise ReplayIntegrityError("invalid portable artifact locator")
+    digest = match.group("digest").replace(".", "")
+    if match.group("prefix") != digest[:2]:
+        raise ReplayIntegrityError("artifact locator prefix does not match digest")
+    return artifact_ref_for_hash(digest), digest
 
 
 def _digest_from_ref(ref: str) -> str:
@@ -131,6 +162,8 @@ __all__ = [
     "ReplayIntegrityError",
     "sha256_hex",
     "artifact_ref_for_hash",
+    "portable_artifact_locator",
+    "artifact_identity_from_locator",
     "artifact_path",
     "store_replay_artifact",
     "read_artifact",

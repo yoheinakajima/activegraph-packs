@@ -41,6 +41,8 @@ PACKS = [
     ("importer_local_files", "importers/local_files"),
     ("semantic_extraction", "semantic_extraction"),
     ("mcp", "mcp"),
+    ("composio", "composio"),
+    ("gmail", "gmail"),
     ("meeting", "meeting"),
     ("memory_gateway", "memory_gateway"),
     ("research", "research"),

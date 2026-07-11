@@ -23,11 +23,16 @@ def _no_ambient_llm_keys(monkeypatch):
     Tests that exercise key handling set their own fake keys."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("COMPOSIO_API_KEY", raising=False)
     from packs.llm_provider import clear_llm_provider
 
     clear_llm_provider()
+    from packs.composio.client import configure_composio_transport
+
+    configure_composio_transport(None)
     yield
     clear_llm_provider()
+    configure_composio_transport(None)
 
 
 def run_fixture_script(script_path: str) -> subprocess.CompletedProcess:

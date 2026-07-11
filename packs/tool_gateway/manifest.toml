@@ -3,8 +3,8 @@
 
 [pack]
 name = "tool_gateway"
-version = "0.8.0"
-description = "Capability execution gateway. All external calls (APIs, MCP, local tools) flow through here for policy checks, credential injection by reference, recording, output sanitization, injection scanning, and result mapping to Core source objects. Tool output reaches models fenced as untrusted external content."
+version = "0.9.0"
+description = "Capability execution gateway. All external calls (APIs, MCP, local tools) flow through here for policy checks, credential injection by reference, recording, output sanitization, injection scanning, and result mapping to Core source objects. Tool output reaches models fenced as untrusted external content. It also owns provider-neutral integration profiles and budgeted exploration receipts keyed to canonical service/account identity."
 license = "Apache-2.0"
 
 [pack.provenance]
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:117e1035c2db9e60999c491ea09d5de506370add61669c03b97cfdec0a2a8d0c"
+content_hash = "sha256:3d334f08f5e05dbd280fb8637350c41263308666fc1c784f1a4e959052e5da02"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -30,8 +30,8 @@ secrets = ">=0.1"
 identity_auth = ">=0.1"
 
 [surface]
-object_types = ["tool_policy", "capability_provider", "capability_call", "capability_approval", "capability_denial", "capability_result", "injection_flag"]
-relation_types = ["calls", "approved_by", "denied_by", "produces_result", "sourced_as", "flags"]
+object_types = ["aggregator_profile", "integration_profile", "integration_exploration", "tool_policy", "capability_provider", "capability_call", "capability_approval", "capability_denial", "capability_result", "injection_flag"]
+relation_types = ["integration_supersedes", "profile_explored_by", "calls", "approved_by", "denied_by", "produces_result", "sourced_as", "flags"]
 behaviors = ["call_recorder", "policy_enforcer", "call_executor", "result_sourcer", "tool_policy_reliability_guard"]
 tools = ["execute_capability", "pending_approvals", "approve_capability", "deny_capability"]
 settings_schema = "ToolGatewaySettings"

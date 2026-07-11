@@ -15,7 +15,7 @@ from .tools import TOOLS
 
 pack = Pack(
     name="usage",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Deterministic connection, settlement, coverage, interaction, and outcome observations."
     ),

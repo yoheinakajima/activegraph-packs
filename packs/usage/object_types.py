@@ -38,6 +38,7 @@ class _StrictModel(BaseModel):
 class CursorState(_StrictModel):
     oldest_ingested_ref: Optional[str] = None
     newest_ingested_ref: Optional[str] = None
+    watermark_ref: Optional[str] = None
     cursor_version: int = Field(default=1, ge=1)
 
 
@@ -62,6 +63,23 @@ class ConnectionSurface(_StrictModel):
     gate_version: int = Field(default=1, ge=1)
     settled_by: list[Literal["volume", "coverage"]] = Field(default_factory=list)
     settled_event_id: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceConnectionRequest(_StrictModel):
+    """Connector-authored request; Usage alone mints the canonical surface."""
+
+    request_identity: str = Field(min_length=1)
+    surface_id: str = Field(min_length=1)
+    category: SourceCategory
+    provider: dict[str, Any] = Field(default_factory=dict)
+    path: ConnectionPath
+    privacy_scope: Literal["source", "account", "folder", "label", "workspace"] = "account"
+    adapter: Optional[str] = None
+    acquisition_mode: Literal["snapshot", "backfill", "live"] = "backfill"
+    status: Literal["proposed", "fulfilled", "failed"] = "proposed"
+    surface_object_id: Optional[str] = None
+    error: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -144,6 +162,7 @@ class UsageProjectionFailure(_StrictModel):
 
 
 OBJECT_TYPES = [
+    ObjectType("source_connection_request", SourceConnectionRequest, "A connector request for Usage to mint one canonical surface."),
     ObjectType("connection_surface", ConnectionSurface, "A provider-neutral connected source surface."),
     ObjectType("settling_gate", SettlingGate, "An immutable named and versioned settlement definition."),
     ObjectType("usage_evidence", UsageEvidence, "A projection keyed by normalizer-owned evidence identity."),
@@ -182,6 +201,7 @@ __all__ = [
     "SurfaceStatus",
     "CursorState",
     "ConnectionSurface",
+    "SourceConnectionRequest",
     "SettlingGate",
     "UsageEvidence",
     "SettlementRecord",

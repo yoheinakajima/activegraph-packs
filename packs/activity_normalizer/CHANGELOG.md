@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.0 — 2026-07-10
+
+- Added provider-stable cursor watermarks for polling connectors.
+- Added `evidence_invalidation_request`, the generic provider/owner tombstone
+  handoff. The normalizer alone resolves identity, revokes current evidence,
+  and emits `source.evidence_invalidated`; a tombstone outside the retained
+  window is an explicit successful no-op.
+- Added gateway-safe portable artifact locators: content hashes cross strict
+  secret sanitizers in bounded chunks and are reconstructed only at the
+  trusted replay boundary.
+- Includes the shared-extraction routing work described below.
+
 ## Unreleased — ADR 0026 steps 2-3: onto the shared extraction layer
 
 - `activity.structure@0.2.0`: the legacy structure heuristics re-homed as

@@ -15,7 +15,7 @@ from .tools import TOOLS
 
 pack = Pack(
     name="activity_normalizer",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Provider-neutral activity evidence identity, replay, revision, and "
         "deterministic candidate extraction."

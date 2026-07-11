@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+composio = [
+    "composio>=0.17,<0.18",
+]
 dev = [
     "activegraph[llm]>=1.9,<2.0",
     "pydantic>=2.0",
@@ -55,6 +58,8 @@ schedule = "packs.schedule:pack"
 telegram = "packs.telegram:pack"
 whatsapp = "packs.whatsapp:pack"
 mcp = "packs.mcp:pack"
+composio = "packs.composio:pack"
+gmail = "packs.gmail:pack"
 evolution = "packs.evolution:pack"
 
 research = "packs.research:pack"
