@@ -3,7 +3,7 @@
 
 [pack]
 name = "memory_gateway"
-version = "0.7.0"
+version = "0.8.0"
 description = "Memory lifecycle manager. Evaluates memory_candidates from Core Pack, accepts high-confidence items into durable MemoryItems, and provides hybrid, outcome-aware retrieval with reversible reliability de-ranking. Default backend: SQLite; external stores (mem0, …) plug in via register_backend()."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:dda891abba4a6669faa91e6e4bbaf7753d998de987ce9a72b2e14e25c0d8b98e"
+content_hash = "sha256:7876ef2a33bd7e934eae912254671c692f3c0da259734e24a38239338542d7a2"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -30,10 +30,10 @@ tool_gateway = ">=0.1"
 eval_outcome = ">=0.1"
 
 [surface]
-object_types = ["memory_item", "memory_promotion_proposal", "memory_retrieval_request", "memory_retrieval", "memory_ranking"]
+object_types = ["memory_item", "memory_promotion_proposal", "memory_retrieval_request", "memory_retrieval", "memory_query_resolution", "memory_ranking"]
 relation_types = ["promotion_proposal_for", "accepted_as", "fulfilled_by", "ranked_in", "scored_by"]
 behaviors = ["candidate_evaluator", "memory_writer", "memory_retriever", "memory_ranker", "memory_reliability_applier", "memory_promotion_proposer"]
-tools = ["retrieve_memories"]
+tools = ["retrieve_memories", "resolve_memory_query"]
 settings_schema = "MemoryGatewaySettings"
 
 [fixtures]

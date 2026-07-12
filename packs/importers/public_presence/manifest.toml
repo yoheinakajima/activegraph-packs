@@ -3,7 +3,7 @@
 
 [pack]
 name = "public_presence"
-version = "0.1.0"
+version = "0.2.0"
 description = "Budgeted, gateway-routed R0 fetching of the owner's public handles; results land as injection-scanned, replay-retained evidence on the public_presence surface."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:a9eb7a0a7605af4133f8bcb21660e96602758abe0477e5ddf63f5c1e41036654"
+content_hash = "sha256:463216eab3975b1ddd6c91ecb2170cf056f52f8dbb29e4aa04dc9256afdc59cd"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

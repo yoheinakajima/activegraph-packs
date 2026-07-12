@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Optional
 
 from activegraph.packs import behavior
@@ -490,6 +491,85 @@ def settle_conversation_interpretation(
 
 
 BEHAVIORS = [settle_conversation_interpretation]
+
+
+_FOLLOWUP_CUE_RE = re.compile(
+    r"\b(please|can you|could you|would you|will you|need you to|"
+    r"action item|to[- ]?do|follow up|send me|let me know)\b",
+    re.IGNORECASE,
+)
+
+
+@behavior(
+    name="project_conversation_followup_candidate",
+    on=["object.created"],
+    where={"object.type": "semantic_annotation", "object.data.facet": "relation_mention", "object.data.status": "active"},
+    view={"include_types": ["semantic_annotation", "activity_evidence", "conversation_message", "task_candidate"]},
+    creates=["task_candidate"],
+)
+def project_conversation_followup_candidate(event, graph, ctx, *, settings: CommunicationSettings):
+    """Project one reviewable task only from an explicit exact-span request.
+
+    Relation extraction alone is not actionability. The original evidence span
+    must contain a direct request cue, belong to a clean inbound conversation
+    message, and retain the extractor identity. The result stays a candidate;
+    no email body can activate work by itself.
+    """
+    wrapper = event.payload.get("object") or {}
+    data = wrapper.get("data") or {}
+    body = data.get("body") or {}
+    exact = str((data.get("selector") or {}).get("exact") or body.get("text") or "").strip()
+    if not exact or not _FOLLOWUP_CUE_RE.search(exact):
+        return
+    evidence_id = str(data.get("evidence_id") or "")
+    messages = [
+        obj for obj in ctx.view.objects(type="conversation_message")
+        if obj.data.get("evidence_id") == evidence_id
+    ]
+    if not messages:
+        return
+    message = messages[-1]
+    if (
+        message.data.get("direction") != "inbound"
+        or message.data.get("interpretation_state") != "ready"
+        or message.data.get("injection_flags")
+    ):
+        return
+    annotation_id = str(wrapper.get("id") or "")
+    if any(
+        (obj.data.get("metadata") or {}).get("annotation_id") == annotation_id
+        for obj in ctx.view.objects(type="task_candidate")
+    ):
+        return
+    evidence = graph.get_object(evidence_id)
+    if evidence is None:
+        return
+    title = exact[:120].rstrip()
+    candidate = graph.add_object("task_candidate", {
+        "candidate_identity": stable_id("task_candidate", annotation_id),
+        "text": exact, "confidence": float(data.get("confidence") or 0.5),
+        "evidence_id": evidence_id,
+        "evidence_identity": data.get("evidence_identity"),
+        "revision_id": data.get("revision_id"),
+        "extraction_record_id": data.get("run_id"),
+        "extractor_id": data.get("extractor_id"),
+        "extractor_version": data.get("extractor_version"),
+        "extraction_config_id": data.get("config_hash"),
+        "status": "candidate", "invalidation_reason": None,
+        "metadata": {
+            "projector": "communication.followup",
+            "annotation_id": annotation_id,
+            "conversation_message_id": message.id,
+            "owner_ref": "owner",
+            "requires_review": True,
+        },
+        "title": title, "description": exact,
+    })
+    graph.add_relation(candidate.id, evidence_id, "extracted_from")
+    graph.add_relation(candidate.id, annotation_id, "projected_from_annotation")
+
+
+BEHAVIORS = [settle_conversation_interpretation, project_conversation_followup_candidate]
 
 
 __all__ = [

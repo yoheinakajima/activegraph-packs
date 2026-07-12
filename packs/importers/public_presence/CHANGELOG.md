@@ -1,5 +1,10 @@
 # Changelog — public_presence
 
+## 0.2.0 — 2026-07-12
+
+- Mark public evidence `unverified_public` and `review_required`; fetched page
+  text may propose findings but can no longer auto-admit memory.
+
 ## 0.1.0 — 2026-07-10
 
 - `public_presence.fetch_page`: zero-key R0 gateway capability (stdlib

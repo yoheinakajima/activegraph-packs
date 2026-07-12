@@ -158,6 +158,11 @@ def acquire_presence_result(event, graph, ctx, *, settings: PublicPresenceSettin
             "normalized_content": text,
             "normalized_metadata": {
                 "subject_scope": "owner_profile",
+                # Public self-description is useful evidence, never authority.
+                # Extraction may propose findings, but memory/profile admission
+                # requires corroboration or an explicit owner decision.
+                "source_trust": "unverified_public",
+                "memory_admission": "review_required",
                 "url": url,
                 "final_url": output.get("final_url"),
                 "status": output.get("status"),

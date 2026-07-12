@@ -84,6 +84,126 @@ def retrieve_memories_fn(
     return results
 
 
+def _subject_allows_evidence(data: dict[str, Any], subject_ref: Optional[str]) -> bool:
+    if subject_ref is None:
+        return True
+    metadata = data.get("normalized_metadata") or {}
+    explicit = metadata.get("subject_ref")
+    if explicit is not None:
+        return str(explicit) == subject_ref
+    return subject_ref == "owner" and metadata.get("subject_scope") == "owner_profile"
+
+
+def resolve_memory_query_fn(
+    graph,
+    query: str,
+    *,
+    subject_ref: Optional[str] = None,
+    top_k: int = 8,
+    min_score: float = 0.2,
+    backend_url: str = ":memory:",
+) -> dict[str, Any]:
+    """Resolve over registered procedures with raw evidence as the floor.
+
+    Tier 0 and Tier 1 are available whenever their object types are loaded.
+    Tier 2 is the admitted-memory backend compatibility procedure. Tier 3 is
+    deliberately registered as unavailable until a governed retrieval skill
+    is supplied. Higher tiers may augment, but never replace, matching source
+    evidence in the returned context.
+    """
+    from .backend import lexical_score
+
+    evidence_rows = []
+    try:
+        evidence_objects = graph.objects(type="activity_evidence")
+    except Exception:
+        evidence_objects = []
+    for obj in evidence_objects:
+        data = obj.data or {}
+        if data.get("status") != "current" or not _subject_allows_evidence(data, subject_ref):
+            continue
+        score = lexical_score(query, str(data.get("normalized_content") or ""))
+        if score >= min_score:
+            evidence_rows.append((score, obj))
+    evidence_rows.sort(key=lambda row: (-row[0], row[1].id))
+    evidence_rows = evidence_rows[:top_k]
+    evidence_ids = [obj.id for _score, obj in evidence_rows]
+
+    annotation_rows = []
+    if evidence_ids:
+        try:
+            annotations = graph.objects(type="semantic_annotation")
+        except Exception:
+            annotations = []
+        for obj in annotations:
+            data = obj.data or {}
+            if data.get("status") != "active" or data.get("evidence_id") not in evidence_ids:
+                continue
+            body = data.get("body") or {}
+            text = str(body.get("text") or body.get("tag") or "")
+            score = lexical_score(query, text)
+            if text and score >= min_score:
+                annotation_rows.append((score, obj, text))
+        annotation_rows.sort(key=lambda row: (-row[0], row[1].id))
+        annotation_rows = annotation_rows[:top_k]
+
+    memory_rows = retrieve_memories_fn(
+        query, top_k=top_k, min_score=min_score, backend_url=backend_url,
+        subject_ref=subject_ref, subject_scoped=subject_ref is not None,
+        include_global=subject_ref is None,
+    )
+
+    blocks = []
+    if evidence_rows:
+        blocks.append("[authoritative-evidence]")
+        blocks.extend(
+            f"- evidence_id={obj.id} | source={obj.data.get('source_ref')} | {str(obj.data.get('normalized_content') or '')}"
+            for _score, obj in evidence_rows
+        )
+    if annotation_rows:
+        blocks.append("[evidence-annotations]")
+        blocks.extend(
+            f"- annotation_id={obj.id} | evidence_id={obj.data.get('evidence_id')} | {text}"
+            for _score, obj, text in annotation_rows
+        )
+    if memory_rows:
+        blocks.append("[admitted-memory-augmentation]")
+        blocks.extend(
+            f"- memory_item_id={row['item_id']} | {row.get('text', '')}"
+            for row in memory_rows
+        )
+
+    if annotation_rows:
+        selected_tier = "annotated_evidence"
+        procedure_id = "memory.annotated_evidence@0.1.0"
+    elif evidence_rows:
+        selected_tier = "evidence"
+        procedure_id = "memory.raw_evidence@0.1.0"
+    elif memory_rows:
+        selected_tier = "compiled_belief"
+        procedure_id = "memory.admitted_items@0.1.0"
+    else:
+        selected_tier = "none"
+        procedure_id = "memory.no_match@0.1.0"
+    confidence = max(
+        [score for score, _obj in evidence_rows]
+        + [score for score, _obj, _text in annotation_rows]
+        + [float(row.get("score") or 0.0) for row in memory_rows]
+        + [0.0]
+    )
+    resolution = graph.add_object("memory_query_resolution", {
+        "query": query, "subject_ref": subject_ref, "selected_tier": selected_tier,
+        "procedure_id": procedure_id, "evidence_ids": evidence_ids,
+        "annotation_ids": [obj.id for _score, obj, _text in annotation_rows],
+        "memory_item_ids": [row["item_id"] for row in memory_rows],
+        "context_text": "\n".join(blocks), "confidence": min(confidence, 1.0),
+        "authoritative_evidence": True,
+        "coverage": {"procedures_checked": ["raw_evidence", "annotated_evidence", "admitted_items", "live_lookup"], "live_lookup_available": False},
+        "metadata": {"rule": "evidence_precedes_derived_artifacts"},
+    })
+    return {"resolution_id": resolution.id, **resolution.data}
+
+
 # ------------------------------------------------------------------ tool wrapper (for pack registration)
 
 
@@ -122,4 +242,25 @@ def retrieve_memories(
     )
 
 
-TOOLS = [retrieve_memories]
+@tool(
+    name="resolve_memory_query",
+    description=(
+        "Resolve a memory query through raw evidence, annotations, admitted "
+        "items, and the reserved live-lookup slot; evidence is authoritative."
+    ),
+)
+def resolve_memory_query(
+    graph,
+    query: str,
+    subject_ref: Optional[str] = None,
+    top_k: int = 8,
+    min_score: float = 0.2,
+    backend_url: str = ":memory:",
+) -> dict[str, Any]:
+    return resolve_memory_query_fn(
+        graph, query, subject_ref=subject_ref, top_k=top_k,
+        min_score=min_score, backend_url=backend_url,
+    )
+
+
+TOOLS = [retrieve_memories, resolve_memory_query]

@@ -1,5 +1,12 @@
 # Communication Pack Changelog
 
+## v0.4.0 — bounded useful follow-up candidates (2026-07-12)
+
+- Project at most one reviewable task from an exact-span relation annotation
+  only when a clean inbound message contains an explicit request cue. Ordinary
+  relations, outbound mail, held content, and injection-shaped content cannot
+  activate work.
+
 ## v0.3.0 — durable conversation family (2026-07-12)
 
 - Added strict graph-state thread, message, participant, and interpretation-run
