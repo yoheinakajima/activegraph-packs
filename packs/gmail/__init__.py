@@ -8,7 +8,7 @@ from .object_types import OBJECT_TYPES, RELATION_TYPES
 from .settings import GmailSettings
 from .tools import TOOLS
 
-# requires=["activity_normalizer", "semantic_extraction", "usage", "tool_gateway"]
+# requires=["activity_normalizer", "semantic_extraction", "usage", "tool_gateway", "connector_control"]
 pack = Pack(
     name="gmail",
     version="0.1.0",

@@ -6,6 +6,13 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **Connector control plane (ADRs 0033–0034).** Added the Tier A
+  `connector_control` pack: service/account/surface bindings, explicit
+  authoritative-run adapters, safe status/bounds/cursor summaries, run-scoped
+  learning deltas, and five validated family-native shapes. Gmail is the first
+  service adapter; a synthetic schedule fixture proves the contract is not
+  Gmail-shaped.
+
 - **ADR 0031 live-connector hardening.** Usage custom events now emit on
   both full Graph and constrained BehaviorGraph surfaces, closing the missing
   `source.connected` receipt found by the first Gmail run. Composio resolves

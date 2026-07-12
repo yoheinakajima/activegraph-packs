@@ -45,6 +45,7 @@ importer_assistant_local_sessions = "packs.importers.assistant_local_sessions:pa
 importer_public_presence = "packs.importers.public_presence:pack"
 semantic_extraction = "packs.semantic_extraction:pack"
 attention = "packs.attention:pack"
+connector_control = "packs.connector_control:pack"
 tool_gateway = "packs.tool_gateway:pack"
 secrets = "packs.secrets:pack"
 memory_gateway = "packs.memory_gateway:pack"
