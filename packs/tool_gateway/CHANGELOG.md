@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added (v0.9.0 connector chassis)
+
+- Provider-neutral `aggregator_profile`, versioned `integration_profile`, and
+  budgeted `integration_exploration` receipts keyed to canonical
+  `(service, account)` identity. Routes such as Composio remain replaceable
+  metadata rather than capability namespaces.
+- Shared helpers for stable connector identity, structural fingerprints,
+  thin aggregator state, semantic profile versioning, and exploration
+  receipts.
+- Claim-level confidence, freshness, provenance, and recorded owner
+  corrections on integration profiles; profile drift/revocation is a
+  superseding version, not an overwrite.
+- A stricter opt-in per-call approval requirement that defeats both legacy
+  risk automation and standing scopes for effects whose account/scope posture
+  is not yet proven.
+
 ### Fixed
 - `register_web_fetch_capability` now passes an explicit live ToolContext
   (`external_io_mode="live_unrecorded"`) to the runtime's reference

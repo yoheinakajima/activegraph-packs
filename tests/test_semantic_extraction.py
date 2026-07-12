@@ -81,7 +81,10 @@ def _acquire(graph, *, text: str = SUMMARY, dedup_key: str = "summary-1",
         {
             "acquired_item_id": item.id,
             "normalized_content": text,
-            "normalized_metadata": {"role": role},
+            "normalized_metadata": {
+                "role": role,
+                "subject_scope": "owner_profile",
+            },
             "source_category": "ai_activity",
             "connection_path": "pack",
             "is_fixture": True,
@@ -109,6 +112,44 @@ def _annotation_fingerprint(graph) -> str:
         )
     entries.sort(key=lambda entry: entry["identity"])
     return json.dumps(entries, sort_keys=True)
+
+
+def test_default_profile_bounds_multi_subject_communication():
+    graph, runtime = _build()
+    runtime.run_until_idle()
+    [active] = [
+        obj for obj in graph.objects(type="extraction_profile")
+        if obj.data.get("status") == "active"
+    ]
+    assert active.data["facets_by_source_category"]["communication"] == [
+        "entity_mention", "question", "temporal_expression"
+    ]
+
+
+def test_replayed_stack_owned_profile_migrates_communication_floor():
+    graph = Graph()
+    runtime = Runtime(graph)
+    runtime.load_pack(core_pack)
+    runtime.load_pack(semantic_pack)
+    runtime.run_until_idle()
+    [legacy] = list(graph.objects(type="extraction_profile"))
+    graph.patch_object(
+        legacy.id,
+        {"facets_by_source_category": {}},
+        rationale="simulate pre-ADR-0031 persisted profile",
+    )
+    assert not legacy.data.get("facets_by_source_category")
+
+    runtime.load_pack(normalizer_pack)
+    runtime.run_until_idle()
+    active = [
+        obj for obj in graph.objects(type="extraction_profile")
+        if obj.data.get("status") == "active"
+    ][-1]
+    assert active.data["facets_by_source_category"]["communication"] == [
+        "entity_mention", "question", "temporal_expression"
+    ]
+    assert legacy.data["status"] == "superseded"
 
 
 # ------------------------------------------------------------ determinism

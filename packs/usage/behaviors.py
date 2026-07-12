@@ -7,7 +7,12 @@ from typing import Any
 from activegraph.packs import behavior
 
 from .settings import UsageSettings
-from .tools import _coverage_from_times, _stable_id, validate_source_category
+from .tools import (
+    _coverage_from_times,
+    _stable_id,
+    connect_surface_fn,
+    validate_source_category,
+)
 
 
 _VIEW = {
@@ -16,9 +21,50 @@ _VIEW = {
         "settling_gate",
         "usage_evidence",
         "settlement_record",
+        "source_connection_request",
     ],
     "recent_events": 10_000,
 }
+
+
+@behavior(
+    name="fulfill_source_connection_request",
+    on=["object.created"],
+    where={"object.type": "source_connection_request"},
+    view=_VIEW,
+    creates=["connection_surface", "settling_gate"],
+)
+def fulfill_source_connection_request(event, graph, ctx, *, settings: UsageSettings):
+    """Connector packs request; Usage alone owns surface identity and events."""
+
+    wrapper = (event.payload or {}).get("object") or {}
+    request_id = wrapper.get("id")
+    data = wrapper.get("data") or {}
+    if not request_id or data.get("status") != "proposed":
+        return
+    try:
+        result = connect_surface_fn(
+            graph,
+            str(data["surface_id"]),
+            str(data["category"]),
+            provider=dict(data.get("provider") or {}),
+            path=str(data["path"]),
+            privacy_scope=str(data.get("privacy_scope") or "account"),
+            adapter=data.get("adapter"),
+            acquisition_mode=str(data.get("acquisition_mode") or "backfill"),
+            metadata=dict(data.get("metadata") or {}),
+            settings=settings,
+            reader=ctx.view,
+        )
+        graph.patch_object(
+            request_id,
+            {"status": "fulfilled", "surface_object_id": result["surface_object_id"]},
+        )
+    except Exception as exc:
+        graph.patch_object(
+            request_id,
+            {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:500]},
+        )
 
 
 def _surface(view, surface_id: str):
@@ -395,6 +441,7 @@ def observe_cursor_progress(event, graph, ctx, *, settings: UsageSettings):
             "cursor_state": {
                 "oldest_ingested_ref": payload.get("oldest_ingested_ref"),
                 "newest_ingested_ref": payload.get("newest_ingested_ref"),
+                "watermark_ref": payload.get("watermark_ref"),
                 "cursor_version": int(payload.get("cursor_version", 1)),
             }
         },
@@ -457,6 +504,7 @@ def observe_evidence_invalidation(event, graph, ctx, *, settings: UsageSettings)
 
 
 BEHAVIORS = [
+    fulfill_source_connection_request,
     observe_normalized_evidence,
     observe_surface_connection,
     observe_cursor_progress,

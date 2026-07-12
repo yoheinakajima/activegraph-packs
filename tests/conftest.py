@@ -7,6 +7,7 @@ the activegraph runtime and the test collection phase.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,11 +24,16 @@ def _no_ambient_llm_keys(monkeypatch):
     Tests that exercise key handling set their own fake keys."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("COMPOSIO_API_KEY", raising=False)
     from packs.llm_provider import clear_llm_provider
 
     clear_llm_provider()
+    from packs.composio.client import configure_composio_transport
+
+    configure_composio_transport(None)
     yield
     clear_llm_provider()
+    configure_composio_transport(None)
 
 
 def run_fixture_script(script_path: str) -> subprocess.CompletedProcess:
@@ -36,11 +42,16 @@ def run_fixture_script(script_path: str) -> subprocess.CompletedProcess:
     Returns the CompletedProcess so the caller can inspect returncode,
     stdout, and stderr.
     """
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    pythonpath = str(REPO_ROOT)
+    if existing_pythonpath:
+        pythonpath = os.pathsep.join((pythonpath, existing_pythonpath))
     return subprocess.run(
         [sys.executable, script_path],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        env={**os.environ, "PYTHONPATH": pythonpath},
     )
 
 

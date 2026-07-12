@@ -94,7 +94,11 @@ def seed_extraction_profile(event, graph, ctx, *, settings: SemanticExtractionSe
             "version": 1,
             "status": "active",
             "default_facets": default_facets,
-            "facets_by_source_category": {},
+            "facets_by_source_category": {
+                category: sorted(facets)
+                for category, facets in
+                settings.default_facets_by_source_category.items()
+            },
             "extractor_by_facet": extractor_by_facet,
             "created_by": "semantic_extraction.seed",
             "rationale": rationale,
@@ -167,7 +171,11 @@ def _existing_candidate_identities(view, candidate_type: str) -> set[str]:
     name="project_profile_candidates",
     on=["object.created"],
     where={"object.type": "semantic_annotation"},
-    view={"include_types": ["semantic_annotation", "profile_candidate"]},
+    view={
+        "include_types": [
+            "semantic_annotation", "activity_evidence", "profile_candidate"
+        ]
+    },
     creates=["profile_candidate"],
 )
 def project_profile_candidates(event, graph, ctx, *, settings: SemanticExtractionSettings):
@@ -183,6 +191,22 @@ def project_profile_candidates(event, graph, ctx, *, settings: SemanticExtractio
     wrapper = event.payload.get("object", {})
     data = wrapper.get("data", {})
     if data.get("status") != "active":
+        return
+    evidence = next(
+        (
+            obj for obj in ctx.view.objects(type="activity_evidence")
+            if obj.id == data.get("evidence_id")
+        ),
+        None,
+    )
+    # Profile facts require explicit owner-subject evidence. Text from a
+    # multi-party source is not identity merely because it contains an
+    # address, URL, preference cue, or assertion.
+    if (
+        evidence is None
+        or (evidence.data.get("normalized_metadata") or {}).get("subject_scope")
+        != "owner_profile"
+    ):
         return
     facet = data.get("facet")
     body = data.get("body") or {}

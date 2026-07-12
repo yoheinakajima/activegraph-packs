@@ -152,6 +152,7 @@ def import_assistant_self_summary_fn(
             "acquired_item_id": acquired.id,
             "normalized_content": canonical[:max_normalized_chars],
             "normalized_metadata": {
+                "subject_scope": "owner_profile",
                 "seed_kind": "self_summary",
                 "transport": transport,
                 "assistant_name": assistant_name,

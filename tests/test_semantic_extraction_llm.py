@@ -43,6 +43,7 @@ from packs.semantic_extraction.llm_extractor import (
     ReplayFirstProvider,
 )
 from packs.semantic_extraction.tools import (
+    ensure_llm_extraction_profile_fn,
     extract_annotations_fn,
     invalidate_annotation_extractor_fn,
     promote_llm_extractor_fn,
@@ -273,6 +274,30 @@ def test_no_provider_means_byte_identical_behavior_to_today(tmp_path):
     _acquire(graph_2)
     runtime_2.run_until_idle()
     assert _annotation_projection(graph) == _annotation_projection(graph_2)
+
+
+def test_provider_added_after_boot_versions_the_profile_without_replacing_floor():
+    graph, runtime = _build()
+    runtime.run_until_idle()
+    before = next(
+        profile for profile in graph.objects(type="extraction_profile")
+        if profile.data["status"] == "active"
+    )
+
+    result = ensure_llm_extraction_profile_fn(graph, actor="owner:settings")
+
+    assert result["profile_updated"] is True
+    after = next(
+        profile for profile in graph.objects(type="extraction_profile")
+        if profile.data["status"] == "active"
+    )
+    assert before.data["status"] == "superseded"
+    assert after.data["version"] == before.data["version"] + 1
+    assert set(before.data["default_facets"]).issubset(after.data["default_facets"])
+    assert after.data["extractor_by_facet"]["event_mention"] == "semantic.llm@0.1.0"
+    assert after.data["extractor_by_facet"]["relation_mention"] == "semantic.llm@0.1.0"
+    again = ensure_llm_extraction_profile_fn(graph, actor="owner:settings")
+    assert again["profile_updated"] is False
 
 
 def test_provider_upgrades_default_profile_for_the_two_missing_facets(tmp_path):

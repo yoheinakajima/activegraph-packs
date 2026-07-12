@@ -527,6 +527,7 @@ def _emit_cursor_event(graph, cursor, caused_by: str) -> None:
             "source_surface_id": cursor.data["source_surface_id"],
             "oldest_ingested_ref": cursor.data.get("oldest_ingested_ref"),
             "newest_ingested_ref": cursor.data.get("newest_ingested_ref"),
+            "watermark_ref": cursor.data.get("watermark_ref"),
             "cursor_version": cursor.data["cursor_version"],
         },
         caused_by=caused_by,
@@ -560,6 +561,64 @@ def publish_cursor_patch(event, graph, ctx, *, settings: ActivityNormalizerSetti
         _emit_cursor_event(graph, cursor, event.id)
 
 
+@behavior(
+    name="fulfill_evidence_invalidation_request",
+    on=["object.created"],
+    where={"object.type": "evidence_invalidation_request"},
+    view={"include_types": ["activity_evidence", "evidence_invalidation_request"]},
+    creates=[],
+)
+def fulfill_evidence_invalidation_request(
+    event, graph, ctx, *, settings: ActivityNormalizerSettings
+):
+    """Turn one provider tombstone into explicit, reversible invalidation."""
+
+    wrapper = event.payload.get("object") or {}
+    request_id = wrapper.get("id")
+    data = wrapper.get("data") or {}
+    if not request_id or data.get("status") != "proposed":
+        return
+    matches = [
+        obj
+        for obj in ctx.view.objects(type="activity_evidence")
+        if obj.data.get("source_surface_id") == data.get("source_surface_id")
+        and obj.data.get("status") == "current"
+        and (
+            (
+                data.get("evidence_identity")
+                and obj.data.get("evidence_identity") == data.get("evidence_identity")
+            )
+            or (
+                data.get("provider_item_id")
+                and obj.data.get("provider_item_id") == data.get("provider_item_id")
+            )
+        )
+    ]
+    invalidated = []
+    for evidence in matches:
+        graph.patch_object(evidence.id, {"status": "revoked"})
+        emit_domain_event(
+            graph,
+            "source.evidence_invalidated",
+            {
+                "request_id": request_id,
+                "evidence_id": evidence.id,
+                "evidence_identity": evidence.data["evidence_identity"],
+                "source_surface_id": evidence.data["source_surface_id"],
+                "provider_item_id": evidence.data.get("provider_item_id"),
+                "reason": data.get("reason"),
+            },
+            caused_by=event.id,
+        )
+        invalidated.append(evidence.id)
+    # A tombstone for an item outside the retained window is an inspectable
+    # successful no-op, not an error and not a fabricated evidence object.
+    graph.patch_object(
+        request_id,
+        {"status": "fulfilled", "invalidated_evidence_ids": invalidated},
+    )
+
+
 # ------------------------------------------------- ADR 0026 steps 2-3:
 # the shared-extraction selection + the compatibility candidate projectors.
 
@@ -569,6 +628,78 @@ from .annotation_extractor import (  # noqa: E402  (registers the extractor)
 )
 
 STRUCTURE_EXTRACTOR_REF = "activity.structure@0.2.0"
+COMMUNICATION_FACET_FLOOR = (
+    "entity_mention",
+    "question",
+    "temporal_expression",
+)
+
+
+@behavior(
+    name="migrate_communication_extraction_floor",
+    on=["pack.loaded"],
+    where={"name": "activity_normalizer"},
+    view={"include_types": ["extraction_profile"]},
+    creates=["extraction_profile"],
+)
+def migrate_communication_extraction_floor(
+    event, graph, ctx, *, settings: ActivityNormalizerSettings
+):
+    """Upgrade only stack-owned legacy profiles on replayed stores.
+
+    Fresh bundles load activity_normalizer before semantic_extraction and
+    therefore have no profile at this event. Existing v1/v2 defaults do;
+    migrate those without overriding an owner-authored later policy.
+    """
+    profiles = sorted(
+        ctx.view.objects(type="extraction_profile"),
+        key=lambda obj: int(obj.data.get("version") or 0),
+    )
+    active = next(
+        (obj for obj in reversed(profiles) if obj.data.get("status") == "active"),
+        None,
+    )
+    if active is None:
+        return
+    data = active.data or {}
+    if data.get("created_by") not in {
+        "semantic_extraction.seed",
+        "activity_normalizer.select_shared_extraction",
+    }:
+        return
+    by_category = dict(data.get("facets_by_source_category") or {})
+    if by_category.get("communication"):
+        return
+    version = max(int(obj.data.get("version") or 0) for obj in profiles) + 1
+    by_category["communication"] = list(COMMUNICATION_FACET_FLOOR)
+    graph.add_object(
+        "extraction_profile",
+        {
+            **{
+                key: value for key, value in data.items()
+                if key not in {
+                    "profile_identity", "version", "status", "created_by",
+                    "rationale", "supersedes_profile_id",
+                }
+            },
+            "profile_identity": _stable_id("extraction_profile", version),
+            "version": version,
+            "status": "active",
+            "facets_by_source_category": by_category,
+            "created_by": "activity_normalizer.communication_floor_migration",
+            "rationale": (
+                "ADR 0031: bound eager extraction for high-volume, "
+                "multi-subject communication"
+            ),
+            "supersedes_profile_id": active.id,
+        },
+    )
+    _patch(
+        graph,
+        active.id,
+        {"status": "superseded"},
+        rationale="superseded by ADR 0031 communication-floor migration",
+    )
 
 
 @behavior(
@@ -773,8 +904,10 @@ def project_structure_candidates(
 
 BEHAVIORS = [
     normalize_acquired_item,
+    fulfill_evidence_invalidation_request,
     publish_cursor_created,
     publish_cursor_patch,
+    migrate_communication_extraction_floor,
     select_shared_extraction,
     project_structure_candidates,
 ]

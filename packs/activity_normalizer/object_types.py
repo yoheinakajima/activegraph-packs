@@ -83,7 +83,31 @@ class BackfillCursor(_StrictModel):
     source_surface_id: str = Field(min_length=1)
     oldest_ingested_ref: Optional[str] = None
     newest_ingested_ref: Optional[str] = None
+    watermark_ref: Optional[str] = Field(
+        default=None,
+        description="Provider-stable live checkpoint such as a Gmail history id.",
+    )
     cursor_version: int = Field(default=1, ge=1)
+
+
+class EvidenceInvalidationRequest(_StrictModel):
+    """Provider tombstone handoff; the normalizer owns evidence invalidation."""
+
+    request_identity: str = Field(min_length=1)
+    source_surface_id: str = Field(min_length=1)
+    provider_item_id: Optional[str] = None
+    evidence_identity: Optional[str] = None
+    reason: Literal["provider_deleted", "source_revoked", "owner_delete_by_source"]
+    status: Literal["proposed", "fulfilled", "failed"] = "proposed"
+    invalidated_evidence_ids: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _has_identity(self) -> "EvidenceInvalidationRequest":
+        if not self.provider_item_id and not self.evidence_identity:
+            raise ValueError("provider_item_id or evidence_identity is required")
+        return self
 
 
 class ActivityEvidence(_StrictModel):
@@ -228,6 +252,11 @@ OBJECT_TYPES = [
     ObjectType("acquired_item", AcquiredItem, "A strict importer-emitted acquisition unit."),
     ObjectType("acquired_content", AcquiredContent, "Normalized content paired with an acquired item."),
     ObjectType("backfill_cursor", BackfillCursor, "Stable source backfill progress without offsets."),
+    ObjectType(
+        "evidence_invalidation_request",
+        EvidenceInvalidationRequest,
+        "A provider/owner tombstone fulfilled by the identity-owning normalizer.",
+    ),
     ObjectType("activity_evidence", ActivityEvidence, "A provider-neutral evidence revision."),
     ObjectType("ingestion_failure", IngestionFailure, "A recorded ingestion pipeline failure."),
     ObjectType("extraction_record", ExtractionRecord, "A versioned deterministic extraction run."),
@@ -305,6 +334,7 @@ __all__ = [
     "AcquiredItem",
     "AcquiredContent",
     "BackfillCursor",
+    "EvidenceInvalidationRequest",
     "ActivityEvidence",
     "IngestionFailure",
     "ExtractionRecord",

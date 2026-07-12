@@ -3,7 +3,7 @@
 
 [pack]
 name = "usage"
-version = "0.2.0"
+version = "0.3.0"
 description = "Deterministic connection, settlement, coverage, interaction, and outcome observations."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:4de500d7fdbfd96f5e2fb7f574f15cfdafdd657f00f2b95cf6a6df75719013fa"
+content_hash = "sha256:30a5f0144fdbbcf78394a1d4646c54fd0b1da3f19af283131b9ae3d289978c6a"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -26,9 +26,9 @@ python-deps = []
 activity_normalizer = ">=0.1"
 
 [surface]
-object_types = ["connection_surface", "settling_gate", "usage_evidence", "settlement_record", "usage_record", "usage_projection_failure"]
+object_types = ["source_connection_request", "connection_surface", "settling_gate", "usage_evidence", "settlement_record", "usage_record", "usage_projection_failure"]
 relation_types = ["evidence_on_surface", "settlement_for", "usage_on_surface"]
-behaviors = ["observe_normalized_evidence", "observe_surface_connection", "observe_cursor_progress", "observe_source_clock", "observe_evidence_invalidation"]
+behaviors = ["fulfill_source_connection_request", "observe_normalized_evidence", "observe_surface_connection", "observe_cursor_progress", "observe_source_clock", "observe_evidence_invalidation"]
 tools = ["connect_source_surface", "set_source_surface_status", "record_source_clock", "record_usage", "query_usage", "list_source_surfaces", "get_settlement_state", "get_coverage_statistics", "get_usage_statistics", "get_outcome_statistics"]
 settings_schema = "UsageSettings"
 

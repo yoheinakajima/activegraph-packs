@@ -195,6 +195,8 @@ PACK_PATHS = {
     "telegram": "telegram",
     "whatsapp": "whatsapp",
     "mcp": "mcp",
+    "composio": "composio",
+    "gmail": "gmail",
     "research": "research",
     "codebase": "codebase",
     "team_ops": "team_ops",

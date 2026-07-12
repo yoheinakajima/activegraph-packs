@@ -447,3 +447,20 @@ def test_evaluate_call_policy_reads_runtime_ceiling() -> None:
     # The audited runtime event carries the same decision.
     [audit] = [e for e in rt.graph.events if e.type == "authority.decision"]
     assert audit.id == policy["action_authority"]["audit_event_id"]
+
+
+def test_stricter_per_call_manual_requirement_beats_both_grant_dimensions() -> None:
+    settings = ToolGatewaySettings(auto_approve_risk_classes=["medium"])
+    rt = _gateway_rt(settings)
+    rt.set_authority_ceiling("R2", actor="owner", reason="test")
+    policy = evaluate_call_policy(
+        capability_key="gmail.drafts.create",
+        risk_class="medium",
+        action_class="R2",
+        settings=settings,
+        runtime=rt,
+        requires_explicit_approval=True,
+    )
+    assert policy["decision"] == "hold"
+    assert policy["granted_by"] == ""
+    assert policy["action_authority"]["matched_policy"] == "call_requires_explicit_approval"

@@ -12,7 +12,7 @@ from .engine import (
     run_profile_extraction,
     stable_id,
 )
-from .facets import STANDARD_FACETS
+from .facets import LLM_UPGRADE_FACETS, STANDARD_FACETS
 from .settings import SemanticExtractionSettings
 
 
@@ -143,6 +143,77 @@ def update_extraction_profile_fn(
             rationale=f"superseded by extraction_profile v{version}",
         )
     return {"ok": True, "profile_id": new_profile.id, "version": version}
+
+
+def ensure_llm_extraction_profile_fn(graph, *, actor: str) -> dict[str, Any]:
+    """Add the model-only facets to the active extraction policy.
+
+    Provider configuration and graph policy are deliberately separate. A
+    key may arrive after the semantic pack seeded its deterministic profile
+    (for example through a local Secrets UI), so enabling a provider must
+    mint a new policy version rather than silently leaving the key unused.
+    Existing facet choices are preserved; only the two facets unavailable
+    from the deterministic floor are added and routed to semantic.llm.
+    """
+    if not actor:
+        raise ValueError("LLM profile activation requires a named actor")
+    profiles = sorted(
+        graph.objects(type="extraction_profile"),
+        key=lambda obj: obj.data.get("version", 0),
+    )
+    current = next(
+        (obj for obj in reversed(profiles) if obj.data.get("status") == "active"),
+        None,
+    )
+    if current is None:
+        return {"ok": False, "profile_updated": False, "reason": "profile_missing"}
+
+    extractor_by_facet = dict(current.data.get("extractor_by_facet") or {})
+    ref = "semantic.llm@0.1.0"
+    already_active = all(
+        extractor_by_facet.get(facet) == ref for facet in LLM_UPGRADE_FACETS
+    )
+    if already_active:
+        return {
+            "ok": True,
+            "profile_updated": False,
+            "profile_id": current.id,
+            "version": current.data.get("version"),
+        }
+
+    extractor_by_facet.update({facet: ref for facet in LLM_UPGRADE_FACETS})
+    default_facets = sorted(
+        {*list(current.data.get("default_facets") or []), *LLM_UPGRADE_FACETS}
+    )
+    if not any(
+        obj.data.get("extractor_id") == "semantic.llm"
+        and obj.data.get("extractor_version") == "0.1.0"
+        and obj.data.get("status") in {"candidate", "promoted"}
+        for obj in graph.objects(type="annotation_extractor_state")
+    ):
+        graph.add_object(
+            "annotation_extractor_state",
+            {
+                "state_identity": stable_id(
+                    "annotation_extractor_state", "semantic.llm", "0.1.0", "candidate"
+                ),
+                "extractor_id": "semantic.llm",
+                "extractor_version": "0.1.0",
+                "status": "candidate",
+                "reason": "provider configured; model-only facets enabled",
+            },
+        )
+    result = update_extraction_profile_fn(
+        graph,
+        default_facets=default_facets,
+        extractor_by_facet=extractor_by_facet,
+        rationale=(
+            "enable relation_mention/event_mention through semantic.llm after "
+            "an explicit provider configuration (D025 stage two)"
+        ),
+        created_by=actor,
+    )
+    return {**result, "profile_updated": True}
 
 
 def invalidate_annotation_extractor_fn(
@@ -580,6 +651,7 @@ __all__ = [
     "TOOLS",
     "annotation_coverage_fn",
     "extract_annotations_fn",
+    "ensure_llm_extraction_profile_fn",
     "invalidate_annotation_extractor_fn",
     "promote_llm_extractor_fn",
     "run_extractor_trial_fn",
