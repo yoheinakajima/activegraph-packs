@@ -9,6 +9,10 @@ their authoritative provider-specific runs and explicitly adapt them into:
 - one validated native read shape: conversation, agenda, records, library, or
   telemetry.
 
+Conversation summaries include bounded latest-message preview/sender data,
+interpretation state, and stable thread/message drill-down references. These
+are family fields; provider-only fields remain in service extensions.
+
 This pack owns no OAuth, provider operation, payload parser, product copy,
 ranking, or universal provider ontology. Route changes update a binding while
 preserving service/account/surface identity.

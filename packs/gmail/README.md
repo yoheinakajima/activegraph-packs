@@ -9,7 +9,8 @@ Composio Connect Link (route)
   → Usage-owned communication surface
   → bounded message pages / Gmail history watermark
   → acquired item + replay artifact
-  → provider-neutral evidence + shared annotations
+  → provider-neutral evidence
+  → Gmail mapper → conversation family + exact-span optional interpretation
 ```
 
 The connector records canonical capabilities as `gmail.*`; `composio` is
@@ -45,13 +46,22 @@ Default backfill is `newer_than:30d`, 25 items/page, at most 250 messages and
 connector contract. Reaching the cap is a successful bounded sample expressed
 as `partial`, not a failed import.
 
-Communication is multi-subject and high-volume. The shared extraction profile
-therefore gives it a bounded structural facet floor; it does not eagerly run
-the generic activity candidate fan-out. In particular, email addresses, URLs,
-preferences, and assertions in mail cannot become owner profile candidates.
+Communication is multi-subject and high-volume. Gmail therefore maps headers,
+threads, labels, and current body text into the neutral conversation family
+before any optional model interpretation. Quoted history, signatures,
+boilerplate, tracking, notifications, and injection-shaped content are removed
+from model eligibility deterministically; selected spans remain exact evidence
+selectors. In particular, email addresses, URLs, preferences, and assertions in
+mail cannot become owner profile candidates.
 Profile projection requires evidence metadata explicitly scoped as
 `subject_scope=owner_profile`. Dedicated Gmail/entity/task projectors may add
 richer semantics later without weakening this subject boundary.
+
+`reprocess_gmail_evidence` applies the current mapper/filter/profile to retained
+evidence with an explicit predecessor link and no provider call. A terminal
+batch is materialized once; optional model upgrades are capped by the active
+connector operational policy (10 provider calls in v1), with the remainder
+recorded as deterministic/deferred rather than silently skipped.
 
 The deterministic conformance suite covers pagination overlap, duplicate
 delivery, interruption, partial bounds, rate limiting, invalid cursors,

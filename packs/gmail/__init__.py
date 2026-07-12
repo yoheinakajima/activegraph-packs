@@ -8,15 +8,15 @@ from .object_types import OBJECT_TYPES, RELATION_TYPES
 from .settings import GmailSettings
 from .tools import TOOLS
 
-# requires=["activity_normalizer", "semantic_extraction", "usage", "tool_gateway", "connector_control"]
+# requires=["activity_normalizer", "semantic_extraction", "communication", "usage", "tool_gateway", "connector_control"]
 pack = Pack(
     name="gmail",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Canonical Gmail service connector: budgeted exploration into a service/account profile, "
         "bounded replayable backfill, history-watermark polling, provider-neutral evidence, local "
-        "draft candidates, reversible draft writes, and R3-forever sends through an injected route "
-        "adapter (Composio first)."
+        "conversation-family mapping with deterministic hygiene, local draft candidates, reversible "
+        "draft writes, and R3-forever sends through an injected route adapter (Composio first)."
     ),
     object_types=tuple(OBJECT_TYPES), relation_types=tuple(RELATION_TYPES),
     behaviors=tuple(BEHAVIORS), tools=tuple(TOOLS), policies=(), prompts=(),

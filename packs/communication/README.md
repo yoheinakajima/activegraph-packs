@@ -1,6 +1,13 @@
-# Communication Pack v0.2
+# Communication Pack v0.3
 
 Channel-neutral communication semantic layer for all ActiveGraph packs.
+
+The durable `conversation_*` family is the connector-facing contract. A
+service pack maps provider records into threads/messages/participants; this
+pack removes quoted history, signatures, boilerplate, tracking, notifications,
+and injection-shaped content before optional interpretation. Selections are
+exact spans into authoritative evidence. `comm_*` remains the compatible
+interactive action/reply layer and is not durable connector state.
 
 ## Purpose
 
@@ -17,6 +24,10 @@ primitives that all channel adapters (Chat, Email, SMS, Voice) translate into. D
 | `comm_intent` | Classified intent of a message (query/request/reply/notification/review/approval_request/unknown) |
 | `comm_response_candidate` | Proposed response pending approval + dispatch. Lifecycle: draft → proposed → approved → sent/rejected |
 | `comm_participant` | A participant in a thread with a role (sender/recipient/cc/observer) |
+| `conversation_thread` | Durable service-neutral connector-family thread |
+| `conversation_message` | Evidence-grounded message with separate display and interpretation content |
+| `conversation_participant` | Normalized participant linked through an entity mention |
+| `conversation_interpretation_run` | Pinned filter/profile/extractor/selection outcome |
 
 ## Relation Types
 

@@ -152,12 +152,82 @@ def annotate_evidence(event, graph, ctx, *, settings: SemanticExtractionSettings
     evidence_obj = graph.get_object(evidence_id) if evidence_id else None
     if evidence_obj is None or evidence_obj.data.get("status") != "current":
         return
+    if (evidence_obj.data.get("normalized_metadata") or {}).get("interpretation_family"):
+        # Family projectors own deterministic hygiene and exact-span selection;
+        # whole-document eager extraction would bypass that safety boundary.
+        return
     run_profile_extraction(
         graph,
         evidence_obj,
         settings=settings,
         reader=ctx.view,
     )
+
+
+@behavior(
+    name="extract_selected_evidence",
+    on=["object.created"],
+    where={"object.type": "selection_extraction_request", "object.data.status": "proposed"},
+    view=_VIEW,
+    creates=["extraction_run", "extraction_coverage", "semantic_annotation"],
+)
+def extract_selected_evidence(event, graph, ctx, *, settings: SemanticExtractionSettings):
+    """Settle an exact-span request without giving the caller provider access."""
+    wrapper = event.payload.get("object", {})
+    request_id = str(wrapper.get("id") or "")
+    data = dict(wrapper.get("data") or {})
+    evidence = graph.get_object(str(data.get("evidence_id") or ""))
+    if evidence is None or evidence.type != "activity_evidence":
+        graph.patch_object(request_id, {"status": "failed", "error": "evidence_not_found"})
+        graph.emit("semantic.selection_extraction_settled", {
+            "request_id": request_id, "status": "failed", "run_ids": [],
+            "annotation_ids": [], "error": "evidence_not_found",
+        })
+        return
+    if evidence.data.get("revision_id") != data.get("revision_id"):
+        graph.patch_object(request_id, {"status": "failed", "error": "revision_mismatch"})
+        graph.emit("semantic.selection_extraction_settled", {
+            "request_id": request_id, "status": "failed", "run_ids": [],
+            "annotation_ids": [], "error": "revision_mismatch",
+        })
+        return
+    try:
+        results = run_profile_extraction(
+            graph,
+            evidence,
+            settings=settings,
+            requested_facets=tuple(data.get("requested_facets") or []),
+            reader=ctx.view,
+            selection_id=str(data.get("selection_id") or ""),
+            content_segments=list(data.get("selections") or []),
+        )
+    except Exception as exc:
+        graph.patch_object(
+            request_id,
+            {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:500]},
+        )
+        graph.emit("semantic.selection_extraction_settled", {
+            "request_id": request_id, "status": "failed", "run_ids": [],
+            "annotation_ids": [], "error": f"{type(exc).__name__}: {exc}"[:500],
+        })
+        return
+    run_ids = [result["run"].id for result in results]
+    annotation_ids = [
+        annotation.id for result in results for annotation in result.get("annotations", [])
+    ]
+    graph.patch_object(
+        request_id,
+        {
+            "status": "completed",
+            "run_ids": run_ids,
+            "annotation_ids": annotation_ids,
+            "error": None,
+        },
+    )
+    graph.emit("semantic.selection_extraction_settled", {
+        "request_id": request_id, "status": "completed",
+        "run_ids": run_ids, "annotation_ids": annotation_ids, "error": None,
+    })
 
 
 def _existing_candidate_identities(view, candidate_type: str) -> set[str]:
@@ -323,6 +393,7 @@ def project_memory_candidates(event, graph, ctx, *, settings: SemanticExtraction
 BEHAVIORS = [
     seed_extraction_profile,
     annotate_evidence,
+    extract_selected_evidence,
     project_profile_candidates,
     project_memory_candidates,
 ]

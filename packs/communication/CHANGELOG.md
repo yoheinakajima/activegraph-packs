@@ -1,5 +1,17 @@
 # Communication Pack Changelog
 
+## v0.3.0 — durable conversation family (2026-07-12)
+
+- Added strict graph-state thread, message, participant, and interpretation-run
+  objects beside the legacy `comm_*` action layer.
+- Added deterministic quoted-history, signature, boilerplate, tracking,
+  notification, and prompt-injection hygiene. Model-eligible content is always
+  represented by exact selectors into authoritative evidence.
+- Added generic selection-request settlement, graph-policy provider-call caps,
+  explicit deterministic/deferred coverage, and bounded native thread summaries.
+- Participant headers become shared entity mentions; service adapters remain
+  responsible for provider-specific parsing.
+
 ## v0.2.1 — activegraph 1.3 compatibility (2026-07-08)
 
 ### Fixed

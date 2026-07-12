@@ -3,7 +3,7 @@
 
 [pack]
 name = "connector_control"
-version = "0.1.0"
+version = "0.2.0"
 description = "Neutral connector surface bindings, authoritative-run adapters, learning deltas, and validated family-native read shapes."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:732db47966c7ccc05751c3b65469d862143abe39fecfc67b9954cd981462867b"
+content_hash = "sha256:e2a2fd7e811da5e1f0f6fb2069d3b5a246e7f2743e5585b2bf62797f243245fa"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

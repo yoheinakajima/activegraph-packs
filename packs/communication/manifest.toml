@@ -3,8 +3,8 @@
 
 [pack]
 name = "communication"
-version = "0.2.1"
-description = "Channel-neutral communication semantic layer. Provides CommThread, CommMessage, CommIntent, CommResponseCandidate, CommParticipant. intent_detector classifies message intent. thread_tracker maintains thread state. response_dispatcher routes approved responses to channel adapters."
+version = "0.3.0"
+description = "Channel-neutral communication semantic layer. Provides the durable conversation-family contract with exact-span staged interpretation, plus the legacy CommThread/CommMessage action layer. Channel adapters own service mapping; semantic extraction owns bounded model execution."
 license = "Apache-2.0"
 
 [pack.provenance]
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:8e22128c0086216df4ace75a44a53da83fee4761028fb66332b803e750bd6bd9"
+content_hash = "sha256:e7c62a9b47559cac335a966dcb22c470764a5f4675c4ba3bf982482cce0bda5c"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -24,11 +24,13 @@ python-deps = []
 
 [dependencies.packs]
 core = ">=0.1"
+semantic_extraction = ">=0.1"
+entity = ">=0.1"
 
 [surface]
-object_types = ["comm_thread", "comm_message", "comm_intent", "comm_response_candidate", "comm_participant"]
-relation_types = ["thread_contains", "intent_of", "response_to", "participates_in", "derived_from_source_comm", "dispatched_to", "delivers", "fulfills_intent"]
-behaviors = ["intent_detector", "intent_router", "thread_tracker", "response_dispatcher"]
+object_types = ["comm_thread", "comm_message", "comm_intent", "comm_response_candidate", "comm_participant", "conversation_thread", "conversation_message", "conversation_participant", "conversation_interpretation_run"]
+relation_types = ["thread_contains", "intent_of", "response_to", "participates_in", "derived_from_source_comm", "dispatched_to", "delivers", "fulfills_intent", "conversation_contains", "conversation_has_participant", "conversation_message_from_evidence", "conversation_participant_mention"]
+behaviors = ["intent_detector", "intent_router", "thread_tracker", "response_dispatcher", "settle_conversation_interpretation"]
 tools = ["create_comm_message", "create_response_candidate", "approve_response"]
 settings_schema = "CommunicationSettings"
 

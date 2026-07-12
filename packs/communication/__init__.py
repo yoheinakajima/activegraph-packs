@@ -56,26 +56,27 @@ from pathlib import Path
 
 from activegraph.packs import Pack, load_prompts_from_dir
 
-from .behaviors import BEHAVIORS
+from .behaviors import BEHAVIORS as LEGACY_BEHAVIORS
+from .conversation import BEHAVIORS as CONVERSATION_BEHAVIORS
 from .object_types import OBJECT_TYPES, RELATION_TYPES
 from .settings import CommunicationSettings
 from .tools import TOOLS
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# requires=["core"], composes_with=["identity_auth", "agent_profile", "memory_gateway"]
+# requires=["core", "semantic_extraction", "entity"], composes_with=["identity_auth", "agent_profile", "memory_gateway"]
 pack = Pack(
     name="communication",
-    version="0.2.1",
+    version="0.3.0",
     description=(
         "Channel-neutral communication semantic layer. "
-        "Provides CommThread, CommMessage, CommIntent, CommResponseCandidate, CommParticipant. "
-        "intent_detector classifies message intent. thread_tracker maintains thread state. "
-        "response_dispatcher routes approved responses to channel adapters."
+        "Provides the durable conversation-family contract with exact-span staged interpretation, "
+        "plus the legacy CommThread/CommMessage action layer. Channel adapters own service mapping; "
+        "semantic extraction owns bounded model execution."
     ),
     object_types=OBJECT_TYPES,
     relation_types=RELATION_TYPES,
-    behaviors=BEHAVIORS,
+    behaviors=tuple([*LEGACY_BEHAVIORS, *CONVERSATION_BEHAVIORS]),
     tools=TOOLS,
     policies=(),
     prompts=load_prompts_from_dir(_PROMPTS_DIR) if _PROMPTS_DIR.exists() else (),
