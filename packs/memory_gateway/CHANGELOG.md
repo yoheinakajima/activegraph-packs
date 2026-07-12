@@ -1,5 +1,10 @@
 # Memory Gateway Pack Changelog
 
+## Unreleased
+
+- Treat SQLite `file:` backend URLs as URIs so shared in-memory test stores do
+  not leak literal `file:mem_*?mode=memory&cache=shared` files into worktrees.
+
 ## v0.7.0 — Versioned promotion beyond admission (P6) (2026-07-10)
 
 ### Added

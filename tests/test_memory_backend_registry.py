@@ -15,6 +15,8 @@ Proves the integration boundary for external memory services (mem0, Zep, …):
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from packs.memory_gateway.adapters import Mem0Backend, register_mem0_backend
@@ -79,6 +81,20 @@ def test_scheme_dispatch_and_sqlite_default():
     get_backend("plain-file.db").close()
     import os
     os.remove("plain-file.db")
+
+
+def test_sqlite_file_uri_honors_shared_memory_mode(tmp_path, monkeypatch):
+    """A SQLite shared-memory URI must never become a worktree file."""
+    monkeypatch.chdir(tmp_path)
+    db_url = f"file:mem_{uuid.uuid4().hex}?mode=memory&cache=shared"
+
+    backend = SqliteMemoryBackend(db_url)
+    try:
+        database_path = backend._conn.execute("PRAGMA database_list").fetchone()[2]
+        assert database_path == ""
+        assert not (tmp_path / db_url).exists()
+    finally:
+        backend.close()
 
 
 def test_backend_instances_are_singletons_per_url():

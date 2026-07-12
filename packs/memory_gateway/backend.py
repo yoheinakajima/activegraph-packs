@@ -434,7 +434,15 @@ class SqliteMemoryBackend:
 
     def __init__(self, db_url: str = ":memory:"):
         self.db_url = db_url
-        self._conn = sqlite3.connect(db_url, check_same_thread=False)
+        # SQLite only interprets query parameters such as
+        # ``mode=memory&cache=shared`` when URI handling is enabled. Without
+        # this flag a URL like ``file:mem_x?mode=memory&cache=shared`` creates
+        # a literal file with that name in the worktree.
+        self._conn = sqlite3.connect(
+            db_url,
+            check_same_thread=False,
+            uri=db_url.startswith("file:"),
+        )
         self._setup()
 
     def _setup(self):
