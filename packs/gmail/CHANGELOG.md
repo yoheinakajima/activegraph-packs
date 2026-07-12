@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 — conversation-family mapping (2026-07-12)
+
+- Map recorded Gmail evidence into strict service-neutral conversation threads,
+  messages, participants, entity mentions, and staged interpretation runs.
+- Preserve Gmail headers needed for service semantics while keeping provider
+  payload parsing inside this pack. Notifications and injection-shaped content
+  remain displayable but are never model eligible.
+- Materialize once at a terminal batch boundary, publish a ready native view,
+  and cap optional model upgrades through the graph operational policy.
+- Add bounded local reprocessing over replay evidence with explicit lineage and
+  a hard guarantee that Gmail is not contacted.
+
 ## 0.1.0 — 2026-07-10
 
 - Add budgeted exploration, canonical service/account profiles, bounded Gmail

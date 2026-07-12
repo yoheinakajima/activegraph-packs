@@ -30,6 +30,8 @@ from .control_plane import (
 )
 
 from .settings import GmailSettings
+from .family import materialize_gmail_run_fn
+from packs.communication.conversation import project_conversation_native_fn
 from .tools import _capability_call, propose_gmail_page_fn
 
 
@@ -48,10 +50,14 @@ _CONTROL_VIEW = {
         "gmail_sync_run", "backfill_cursor",
         "connector_surface_binding", "connector_run_observation",
         "connector_learning_delta", "connector_native_view",
+        "connector_operational_policy",
         "activity_evidence", "semantic_annotation", "extraction_coverage",
         "ingestion_failure",
         "preference_candidate", "task_candidate", "profile_candidate",
         "skill_candidate", "eval_candidate",
+        "conversation_thread", "conversation_message", "conversation_participant",
+        "conversation_interpretation_run", "selection_extraction_request",
+        "entity_mention", "entity", "extraction_profile",
     ],
     "recent_events": 20_000,
 }
@@ -398,7 +404,11 @@ def _header_map(message: dict[str, Any]) -> dict[str, str]:
         for row in rows:
             if isinstance(row, dict) and row.get("name"):
                 headers[str(row["name"]).lower()] = str(row.get("value") or "")
-    for key in ("from", "to", "cc", "bcc", "subject", "date", "message-id"):
+    for key in (
+        "from", "to", "cc", "bcc", "reply-to", "subject", "date", "message-id",
+        "in-reply-to", "references", "list-id", "list-unsubscribe",
+        "auto-submitted", "precedence",
+    ):
         direct = message.get(key) or message.get(key.replace("-", "_"))
         if direct and key not in headers:
             headers[key] = str(direct)
@@ -461,12 +471,12 @@ def _normalized_message(message: dict[str, Any], max_chars: int) -> tuple[str, d
         f"From: {headers.get('from', '')}",
         f"To: {headers.get('to', '')}",
         f"Date: {headers.get('date', '')}",
-        "",
-        body,
     ]
-    content = "\n".join(lines)[:max_chars]
+    prefix = "\n".join(lines) + "\n\n"
+    content = (prefix + body)[:max_chars]
     return content, {
         "service": "gmail",
+        "interpretation_family": "conversation",
         "message_id": _message_id(message),
         "thread_id": str(message.get("threadId") or message.get("thread_id") or ""),
         "history_id": str(message.get("historyId") or message.get("history_id") or ""),
@@ -476,10 +486,20 @@ def _normalized_message(message: dict[str, Any], max_chars: int) -> tuple[str, d
         "cc": headers.get("cc"),
         "subject": headers.get("subject"),
         "date": headers.get("date") or None,
+        "bcc": headers.get("bcc"),
+        "reply_to": headers.get("reply-to"),
+        "in_reply_to": headers.get("in-reply-to"),
+        "references": headers.get("references"),
+        "list_id": headers.get("list-id"),
+        "list_unsubscribe": headers.get("list-unsubscribe"),
+        "auto_submitted": headers.get("auto-submitted"),
+        "precedence": headers.get("precedence"),
+        "body_offset": len(prefix),
+        "body_chars": max(0, min(len(body), max_chars - len(prefix))),
         "labels": message.get("labelIds") or message.get("label_ids") or [],
         "injection_flags": scan_for_injection(content),
         "shape_fingerprint": shape_fingerprint(message),
-        "truncated": len("\n".join(lines)) > max_chars,
+        "truncated": len(prefix) + len(body) > max_chars,
     }
 
 
@@ -940,6 +960,8 @@ def gmail_control_plane_adapter(event, graph, ctx, *, settings: GmailSettings):
 _CONTROL_CREATES = [
     "connector_surface_binding", "connector_run_observation",
     "connector_learning_delta", "connector_native_view",
+    "conversation_thread", "conversation_message", "conversation_participant",
+    "conversation_interpretation_run", "selection_extraction_request", "entity_mention",
 ]
 
 
@@ -961,6 +983,97 @@ def gmail_control_plane_run_created(event, graph, ctx, *, settings: GmailSetting
 
 
 @behavior(
+    name="gmail_conversation_family_ready",
+    on=["object.created"],
+    where={
+        "object.type": "activity_evidence",
+        "object.data.normalized_metadata.service": "gmail",
+    },
+    view=_CONTROL_VIEW,
+    creates=_CONTROL_CREATES,
+)
+def gmail_conversation_family_ready(event, graph, ctx, *, settings: GmailSettings):
+    """Materialize once the run's evidence batch exists, before extraction."""
+    wrapper = (event.payload or {}).get("object") or {}
+    data = dict(wrapper.get("data") or {})
+    run_id = gmail_run_id_for_object(ctx.view, "activity_evidence", data)
+    run = next(
+        (obj for obj in ctx.view.objects(type="gmail_sync_run") if obj.id == run_id),
+        None,
+    )
+    if run is None:
+        return
+    if run.data.get("status") not in {"completed", "partial"}:
+        return
+    expected = int(run.data.get("messages_imported") or 0)
+    present = [
+        obj for obj in ctx.view.objects(type="activity_evidence")
+        if (obj.data.get("normalized_metadata") or {}).get("connector_run_id") == run.id
+    ]
+    if expected <= 0 or len(present) < expected:
+        return
+    graph.emit(
+        "gmail.conversation_batch_requested",
+        {"run_id": run.id, "offset": 0, "expected": expected, "batch_size": 25},
+    )
+
+
+@behavior(
+    name="gmail_conversation_batch_projector",
+    on=["gmail.conversation_batch_requested"],
+    view=_CONTROL_VIEW,
+    creates=_CONTROL_CREATES,
+)
+def gmail_conversation_batch_projector(event, graph, ctx, *, settings: GmailSettings):
+    """Project one bounded family batch, then schedule the continuation."""
+    payload = dict(event.payload or {})
+    run_id = str(payload.get("run_id") or "")
+    run = next(
+        (obj for obj in ctx.view.objects(type="gmail_sync_run") if obj.id == run_id),
+        None,
+    )
+    if run is None:
+        return
+    offset = max(0, int(payload.get("offset") or 0))
+    expected = max(0, int(payload.get("expected") or 0))
+    batch_size = max(1, min(int(payload.get("batch_size") or 25), 25))
+    native_data, summary = materialize_gmail_run_fn(
+        graph, run, reader=ctx.view, offset=offset, max_items=batch_size
+    )
+    processed = int(summary.get("messages") or 0)
+    next_offset = offset + processed
+    if processed and next_offset < expected:
+        graph.emit(
+            "gmail.conversation_batch_requested",
+            {
+                "run_id": run.id,
+                "offset": next_offset,
+                "expected": expected,
+                "batch_size": batch_size,
+            },
+        )
+        return
+    if next_offset >= expected:
+        existing_model_runs = [
+            obj for obj in ctx.view.objects(type="conversation_interpretation_run")
+            if run.id in (obj.data.get("refs") or [])
+            and obj.data.get("semantic_request_id")
+        ]
+        adapt_gmail_run_fn(
+            graph,
+            run,
+            source_event_id=None,
+            attempt=False,
+            reader=ctx.view,
+            native_data=native_data,
+            learning_settled_override=(
+                int(summary.get("semantic_requests_created") or 0) == 0
+                and all(obj.data.get("status") == "completed" for obj in existing_model_runs)
+            ),
+        )
+
+
+@behavior(
     name="gmail_control_plane_learning_settled",
     on=["object.created"],
     where={"object.type": "extraction_coverage"},
@@ -976,8 +1089,16 @@ def gmail_control_plane_learning_settled(
     run = graph.get_object(run_id) if run_id else None
     if run is None or not gmail_learning_settled(ctx.view, run):
         return
+    native_data = project_conversation_native_fn(
+        ctx.view, str(run.data.get("source_surface_id") or "")
+    )
     adapt_gmail_run_fn(
-        graph, run, source_event_id=None, attempt=False, reader=ctx.view
+        graph,
+        run,
+        source_event_id=None,
+        attempt=False,
+        reader=ctx.view,
+        native_data=native_data,
     )
 
 
@@ -1006,6 +1127,8 @@ BEHAVIORS = [
     gmail_draft_result_projector,
     gmail_control_plane_adapter,
     gmail_control_plane_run_created,
+    gmail_conversation_family_ready,
+    gmail_conversation_batch_projector,
     gmail_control_plane_learning_settled,
     gmail_control_plane_failure,
 ]

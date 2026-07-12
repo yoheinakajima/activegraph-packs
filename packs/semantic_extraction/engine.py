@@ -10,6 +10,7 @@ the eager path and explicit re-extraction.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from typing import Any, Optional
 
 from .extractor import (
@@ -150,6 +151,7 @@ def _facets_covered(
     extractor_id: str,
     extractor_version: str,
     config_hash: str,
+    selection_id: Optional[str],
 ) -> set[str]:
     """Facets any prior completed run of this extractor identity executed."""
     covered: set[str] = set()
@@ -160,6 +162,7 @@ def _facets_covered(
             and data.get("extractor_id") == extractor_id
             and data.get("extractor_version") == extractor_version
             and data.get("config_hash") == config_hash
+            and data.get("selection_id") == selection_id
             and data.get("status") == "completed"
         ):
             covered.update(data.get("executed_facets") or [])
@@ -197,6 +200,8 @@ def run_annotation_extraction(
     requested_facets: Optional[tuple[str, ...]] = None,
     reader=None,
     extractor_ref: Optional[str] = None,
+    selection_id: Optional[str] = None,
+    content_segments: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Execute (or cache-hit) one extraction over one evidence revision.
 
@@ -227,6 +232,7 @@ def run_annotation_extraction(
         extractor.extractor_version,
         config_hash,
         ",".join(requested),
+        selection_id or "full_evidence",
     )
     existing = next(
         (
@@ -247,7 +253,7 @@ def run_annotation_extraction(
 
     covered = _facets_covered(
         reader, revision_id, extractor.extractor_id,
-        extractor.extractor_version, config_hash,
+        extractor.extractor_version, config_hash, selection_id,
     )
     implemented = set(extractor.implemented_facets())
     cached = tuple(facet for facet in requested if facet in covered)
@@ -263,7 +269,39 @@ def run_annotation_extraction(
     attribution, author_role = _attribution(normalized_metadata)
     observation_time = evidence.get("provider_time")
 
-    drafts = extractor.extract(content, normalized_metadata, missing) if missing else []
+    selected_chars = len(content)
+    if content_segments is not None:
+        verified_segments: list[tuple[int, str]] = []
+        selected_chars = 0
+        for segment in content_segments:
+            start = int(segment.get("start", -1))
+            end = int(segment.get("end", -1))
+            if start < 0 or end < start or end > len(content):
+                raise ValueError("selection span is outside authoritative evidence")
+            exact = content[start:end]
+            if hashlib.sha256(exact.encode("utf-8")).hexdigest() != segment.get("exact_hash"):
+                raise ValueError("selection hash does not match authoritative evidence")
+            verified_segments.append((start, exact))
+            selected_chars += len(exact)
+        drafts = []
+        per_facet: dict[str, int] = {}
+        if missing:
+            for offset, exact in verified_segments:
+                for draft in extractor.extract(exact, normalized_metadata, missing):
+                    count = per_facet.get(draft.facet, 0)
+                    if count >= settings.max_annotations_per_facet:
+                        continue
+                    per_facet[draft.facet] = count + 1
+                    drafts.append(
+                        replace(
+                            draft,
+                            start=draft.start + offset,
+                            end=draft.end + offset,
+                            metadata={**dict(draft.metadata), "selection_id": selection_id},
+                        )
+                    )
+    else:
+        drafts = extractor.extract(content, normalized_metadata, missing) if missing else []
 
     run = graph.add_object(
         "extraction_run",
@@ -272,6 +310,7 @@ def run_annotation_extraction(
             "evidence_id": evidence_obj.id,
             "evidence_identity": evidence["evidence_identity"],
             "revision_id": revision_id,
+            "selection_id": selection_id,
             "extractor_id": extractor.extractor_id,
             "extractor_version": extractor.extractor_version,
             "config_hash": config_hash,
@@ -281,7 +320,10 @@ def run_annotation_extraction(
             "annotation_ids": [],
             "status": "completed",
             "error": None,
-            "metadata": {"acquired_at_event_id": evidence.get("acquired_at_event_id")},
+            "metadata": {
+                "acquired_at_event_id": evidence.get("acquired_at_event_id"),
+                "selection_count": len(content_segments or []),
+            },
         },
     )
     graph.add_relation(run.id, evidence_obj.id, "run_for")
@@ -372,9 +414,9 @@ def run_annotation_extraction(
             "processed_facets": list(missing),
             "skipped_facets": skipped,
             "content_chars_total": len(content),
-            "content_chars_processed": min(len(content), settings.max_content_chars),
-            "truncated": len(content) > settings.max_content_chars,
-            "metadata": {},
+            "content_chars_processed": min(selected_chars, settings.max_content_chars),
+            "truncated": selected_chars > settings.max_content_chars,
+            "metadata": {"selection_id": selection_id},
         },
     )
     graph.add_relation(coverage.id, run.id, "coverage_for")
@@ -395,6 +437,8 @@ def run_profile_extraction(
     settings: SemanticExtractionSettings,
     requested_facets: Optional[tuple[str, ...]] = None,
     reader=None,
+    selection_id: Optional[str] = None,
+    content_segments: Optional[list[dict[str, Any]]] = None,
 ) -> list[dict[str, Any]]:
     """Extract per the active profile's facet AND extractor policy.
 
@@ -438,6 +482,8 @@ def run_profile_extraction(
                 requested_facets=tuple(facets),
                 reader=reader,
                 extractor_ref=ref,
+                selection_id=selection_id,
+                content_segments=content_segments,
             )
         )
     return results

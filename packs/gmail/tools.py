@@ -9,6 +9,7 @@ from activegraph.packs import tool
 
 from packs.tool_gateway.integrations import record_exploration_fn, stable_integration_id
 from packs.usage.tools import CONNECTION_PATHS
+from .family import materialize_gmail_run_fn
 
 
 def _stable(prefix: str, *parts: Any) -> str:
@@ -393,6 +394,41 @@ def create_gmail_draft_candidate_fn(
     ), True
 
 
+def reprocess_gmail_evidence_fn(
+    graph, *, source_surface_id: str, max_items: int = 250
+) -> dict[str, Any]:
+    """Re-run local family projection over recorded evidence; never contact Gmail."""
+    if max_items < 1 or max_items > 1_000:
+        raise ValueError("max_items must be between 1 and 1000")
+    run_ids = {
+        str((obj.data.get("normalized_metadata") or {}).get("connector_run_id") or "")
+        for obj in graph.objects(type="activity_evidence")
+        if obj.data.get("status") == "current"
+        and obj.data.get("source_surface_id") == source_surface_id
+    }
+    runs = [
+        obj for obj in graph.objects(type="gmail_sync_run")
+        if obj.id in run_ids
+    ]
+    remaining = max_items
+    summaries = []
+    for run in runs:
+        if remaining <= 0:
+            break
+        _native, summary = materialize_gmail_run_fn(
+            graph, run, reader=graph, reprocess=True, max_items=remaining
+        )
+        summaries.append({"run_id": run.id, **summary})
+        remaining -= int(summary.get("messages") or 0)
+    return {
+        "ok": True,
+        "source_surface_id": source_surface_id,
+        "messages_reprocessed": max_items - remaining,
+        "runs": summaries,
+        "provider_contacted": False,
+    }
+
+
 def _existing_draft_call(graph, draft_id: str, kind: str):
     return next(
         (
@@ -524,6 +560,13 @@ def request_gmail_draft_send(graph, draft_id: str = "", user_id: str = ""):
     return request_gmail_draft_send_fn(graph, draft_id=draft_id, user_id=user_id)
 
 
+@tool(name="reprocess_gmail_evidence", description="Re-run local Gmail family projection over recorded evidence without provider contact.")
+def reprocess_gmail_evidence(graph, source_surface_id: str = "", max_items: int = 250):
+    return reprocess_gmail_evidence_fn(
+        graph, source_surface_id=source_surface_id, max_items=max_items
+    )
+
+
 TOOLS = [
     request_gmail_exploration,
     request_gmail_backfill,
@@ -531,10 +574,12 @@ TOOLS = [
     create_gmail_draft_candidate,
     request_gmail_draft_sync,
     request_gmail_draft_send,
+    reprocess_gmail_evidence,
 ]
 
 __all__ = [
     "request_gmail_exploration_fn", "request_gmail_backfill_fn", "request_gmail_poll_fn",
     "propose_gmail_page_fn", "create_gmail_draft_candidate_fn",
-    "request_gmail_draft_sync_fn", "request_gmail_draft_send_fn", "TOOLS",
+    "request_gmail_draft_sync_fn", "request_gmail_draft_send_fn",
+    "reprocess_gmail_evidence_fn", "TOOLS",
 ]

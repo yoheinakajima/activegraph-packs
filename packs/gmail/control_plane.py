@@ -131,6 +131,14 @@ def gmail_learning_settled(reader, run) -> bool:
         for obj in _objects(reader, "extraction_coverage")
         if obj.data.get("evidence_id") in evidence_ids
     }
+    covered.update(
+        str(obj.data.get("evidence_id") or "")
+        for obj in _objects(reader, "conversation_interpretation_run")
+        if obj.data.get("evidence_id") in evidence_ids
+        and obj.data.get("status") in {
+            "deterministic_only", "completed", "held", "suppressed"
+        }
+    )
     return evidence_ids <= covered
 
 
@@ -141,6 +149,8 @@ def adapt_gmail_run_fn(
     source_event_id: Optional[str],
     attempt: bool,
     reader,
+    native_data: Optional[dict[str, Any]] = None,
+    learning_settled_override: Optional[bool] = None,
 ) -> None:
     data = run.data or {}
     source_surface_id = str(data.get("source_surface_id") or "")
@@ -229,7 +239,10 @@ def adapt_gmail_run_fn(
     )
 
     learning = _learning_counts(reader, run)
-    settled = gmail_learning_settled(reader, run)
+    settled = (
+        gmail_learning_settled(reader, run)
+        if learning_settled_override is None else learning_settled_override
+    )
     delta_status = {
         "queued": "collecting", "running": "collecting",
         "succeeded": "complete", "partial": "partial", "failed": "failed",
@@ -253,6 +266,7 @@ def adapt_gmail_run_fn(
     native_state = (
         "failed" if state == "failed" else
         "empty" if int(data.get("messages_imported") or 0) == 0 else
+        "ready" if native_data and native_data.get("total_count") else
         "partial"
     )
     record_connector_native_view_fn(
@@ -261,12 +275,12 @@ def adapt_gmail_run_fn(
         service="gmail",
         family="conversation",
         state=native_state,
-        data={"threads": [], "total_count": 0},
+        data=native_data or {"threads": [], "total_count": 0},
         refs=[run.id],
         service_extensions={
             "gmail": {
                 "messages_imported": int(data.get("messages_imported") or 0),
-                "thread_materialization": "pending",
+                "thread_materialization": "ready" if native_data is not None else "pending",
             }
         },
         error=data.get("error"),

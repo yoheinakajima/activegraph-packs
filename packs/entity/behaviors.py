@@ -362,7 +362,11 @@ _ENTITY_TYPE_BY_ANNOTATION_KIND: dict[str, str] = {
 @behavior(
     name="entity_mention_from_annotation",
     on=["object.created"],
-    where={"object.type": "semantic_annotation"},
+    where={
+        "object.type": "semantic_annotation",
+        "object.data.facet": "entity_mention",
+        "object.data.status": "active",
+    },
     view={"include_types": ["entity_mention"]},
     creates=["entity_mention"],
 )

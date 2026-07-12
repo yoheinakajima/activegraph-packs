@@ -1,5 +1,16 @@
 # Changelog — semantic_extraction
 
+## v0.2.0 — exact-span domain requests (2026-07-12)
+
+- Added `selection_extraction_request`, allowing domain/family projectors to
+  select exact authoritative evidence spans while this pack retains ownership
+  of extractor resolution, caching, provider calls, and settlement.
+- Added selection identity to extraction cache identity and coverage. Every
+  returned selector is offset back into the original evidence and hash-checked
+  before execution.
+- Evidence marked with an interpretation family bypasses whole-document eager
+  extraction so family hygiene cannot be accidentally circumvented.
+
 ## Unreleased — D025 stage two: the LLM-backed extractor
 
 - Candidate eligibility is copied from evidence into the annotation envelope

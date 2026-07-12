@@ -24,7 +24,8 @@ source-anchored annotations; let every consumer project from them.
   natural dates), questions, topic tags. Byte-deterministic; no
   wall-clock; no network.
 - **Cache identity** — `(evidence_revision, extractor_id,
-  extractor_version, config_hash, requested_facets)`. Same identity is a
+  extractor_version, config_hash, requested_facets, selection_id)`. Full-evidence
+  runs use a null selection id. Same identity is a
   no-op; a wider facet set executes only what no prior run of the same
   extractor identity produced.
 - **Coverage** — every run records what was and wasn't processed
@@ -41,6 +42,11 @@ source-anchored annotations; let every consumer project from them.
   separate, per-domain policy. Promotion gates downstream are unchanged;
   annotations dedupe within one evidence revision; each domain still
   dedupes its own records.
+- **Exact-span requests** — a domain/family projector may create a
+  `selection_extraction_request` containing hash-verified character spans into
+  one evidence revision. The caller owns selection policy; this pack still owns
+  extractor routing, provider access, cache identity, annotation offsets, and
+  settlement. Family-marked evidence never takes the eager whole-document path.
 
 ## The upgrade seam — `semantic.llm@0.1.0` (D025 stage two)
 

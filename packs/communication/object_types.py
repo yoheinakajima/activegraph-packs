@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from activegraph.packs import ObjectType, RelationType
 
@@ -239,6 +239,103 @@ class CommParticipant(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConversationThread(_StrictModel):
+    thread_identity: str = Field(min_length=1)
+    source_surface_id: str = Field(min_length=1)
+    service: str = Field(min_length=1)
+    account_ref: str = Field(min_length=1)
+    provider_thread_id: str = Field(min_length=1)
+    subject: str = ""
+    participant_ids: list[str] = Field(default_factory=list)
+    message_ids: list[str] = Field(default_factory=list)
+    status: Literal["open", "closed", "archived"] = "open"
+    last_message_at: Optional[str] = None
+    unread_count: int = Field(default=0, ge=0)
+    message_count: int = Field(default=0, ge=0)
+    labels: list[str] = Field(default_factory=list)
+    refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConversationMessage(_StrictModel):
+    message_identity: str = Field(min_length=1)
+    thread_id: str = Field(min_length=1)
+    source_surface_id: str = Field(min_length=1)
+    service: str = Field(min_length=1)
+    account_ref: str = Field(min_length=1)
+    provider_message_id: str = Field(min_length=1)
+    provider_revision_ref: str = Field(min_length=1)
+    internet_message_id: Optional[str] = None
+    sender: Optional[str] = None
+    recipients: list[str] = Field(default_factory=list)
+    cc: list[str] = Field(default_factory=list)
+    subject: str = ""
+    sent_at: Optional[str] = None
+    direction: Literal["inbound", "outbound", "unknown"] = "unknown"
+    message_kind: Literal["human", "notification", "automated", "unknown"] = "unknown"
+    labels: list[str] = Field(default_factory=list)
+    unread: bool = False
+    display_content: str = ""
+    interpretation_content: str = ""
+    interpretation_state: Literal["ready", "held", "suppressed", "empty"] = "empty"
+    suppression_counts: dict[str, int] = Field(default_factory=dict)
+    injection_flags: list[str] = Field(default_factory=list)
+    evidence_id: str = Field(min_length=1)
+    refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConversationParticipant(_StrictModel):
+    participant_identity: str = Field(min_length=1)
+    thread_id: str = Field(min_length=1)
+    address: str = Field(min_length=1)
+    display_name: str = ""
+    roles: list[Literal["sender", "recipient", "cc", "bcc", "observer"]] = Field(default_factory=list)
+    entity_mention_id: Optional[str] = None
+    entity_id: Optional[str] = None
+    refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConversationSelection(_StrictModel):
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    exact_hash: str = Field(min_length=64, max_length=64)
+
+
+class ConversationInterpretationRun(_StrictModel):
+    run_identity: str = Field(min_length=1)
+    message_id: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    evidence_revision_id: str = Field(min_length=1)
+    selection_id: str = Field(min_length=1)
+    deterministic_filter_version: str = Field(min_length=1)
+    family_projector_version: str = Field(min_length=1)
+    extraction_profile_id: Optional[str] = None
+    extractor_refs: list[str] = Field(default_factory=list)
+    requested_facets: list[str] = Field(default_factory=list)
+    semantic_request_id: Optional[str] = None
+    selections: list[ConversationSelection] = Field(default_factory=list)
+    selected_chars: int = Field(default=0, ge=0)
+    selected_content_hash: str = Field(min_length=64, max_length=64)
+    status: Literal[
+        "selected", "deterministic_only", "completed", "held", "suppressed",
+        "failed", "invalidated",
+    ] = "selected"
+    semantic_run_ids: list[str] = Field(default_factory=list)
+    annotation_ids: list[str] = Field(default_factory=list)
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    suppression_counts: dict[str, int] = Field(default_factory=dict)
+    reprocess_of: Optional[str] = None
+    error: Optional[str] = None
+    refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 # ================================================================ ObjectType list
 
 OBJECT_TYPES = [
@@ -282,6 +379,10 @@ OBJECT_TYPES = [
             "Links principal_ref to thread without embedding identity in CommThread."
         ),
     ),
+    ObjectType("conversation_thread", ConversationThread, "A durable connector-family conversation thread."),
+    ObjectType("conversation_message", ConversationMessage, "A service-neutral message with deterministic hygiene and evidence provenance."),
+    ObjectType("conversation_participant", ConversationParticipant, "A normalized participant in a conversation thread."),
+    ObjectType("conversation_interpretation_run", ConversationInterpretationRun, "One pinned staged interpretation over evidence-selected segments."),
 ]
 
 
@@ -350,4 +451,8 @@ RELATION_TYPES = [
             "intent_router) fulfills a detected CommIntent."
         ),
     ),
+    RelationType("conversation_contains", source_types=("conversation_thread",), target_types=("conversation_message",), description="A canonical conversation thread contains a message."),
+    RelationType("conversation_has_participant", source_types=("conversation_thread",), target_types=("conversation_participant",), description="A canonical thread has a normalized participant."),
+    RelationType("conversation_message_from_evidence", source_types=("conversation_message",), target_types=("activity_evidence",), description="A family message is grounded in one evidence revision."),
+    RelationType("conversation_participant_mention", source_types=("conversation_participant",), target_types=("entity_mention",), description="A participant address is resolved through the entity pack."),
 ]

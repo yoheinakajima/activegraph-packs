@@ -15,12 +15,14 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from decimal import Decimal
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import pytest
 
 from activegraph import Graph, Runtime
+from activegraph.llm import LLMResponse
 
 from packs.activity_normalizer import pack as normalizer_pack
 from packs.core import pack as core_pack
@@ -34,6 +36,7 @@ from packs.semantic_extraction import (
     pack as semantic_pack,
 )
 from packs.semantic_extraction.extractor import get_annotation_extractor
+from packs.semantic_extraction.engine import run_annotation_extraction
 from packs.semantic_extraction.fixtures.seed_llm_records import (
     SUMMARY,
     ScriptedProvider,
@@ -65,6 +68,36 @@ class PoisonProvider:
 
     def complete(self, **kwargs):
         raise AssertionError("live provider was contacted during replay")
+
+
+class SelectionProvider:
+    default_model = "fixture-llm-1"
+
+    def __init__(self):
+        self.calls = 0
+
+    def complete(self, **kwargs):
+        self.calls += 1
+        raw = json.dumps([
+            {
+                "facet": "relation_mention",
+                "exact": "Current launches Friday",
+                "body": {"text": "Current launches Friday", "subject": "Current", "predicate": "launches", "object": "Friday"},
+                "confidence": 0.9,
+            },
+            {
+                "facet": "relation_mention",
+                "exact": "Old launches Monday",
+                "body": {"text": "Old launches Monday", "subject": "Old", "predicate": "launches", "object": "Monday"},
+                "confidence": 0.9,
+            },
+        ])
+        return LLMResponse(
+            raw_text=raw, parsed=None, input_tokens=1, output_tokens=1,
+            cost_usd=Decimal("0"), latency_seconds=0.0,
+            model=kwargs["model"], finish_reason="stop", seed=None,
+            cache_hit=False, provider_meta={}, tool_calls=None,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -190,6 +223,35 @@ def test_llm_may_not_mint_an_annotation_whose_anchor_does_not_exist(tmp_path):
         assert SUMMARY[draft.start:draft.end] == draft.exact
     facet_set = {draft.facet for draft in drafts}
     assert {"relation_mention", "event_mention"} <= facet_set
+
+
+def test_selected_llm_extraction_cannot_anchor_into_excluded_quoted_history(tmp_path):
+    graph, runtime = _build()
+    text = "Current launches Friday\nOn Thu, Bob wrote:\n> Old launches Monday"
+    _acquire(graph, text=text, dedup_key="selection-1")
+    runtime.run_until_idle()
+    evidence = graph.objects(type="activity_evidence")[0]
+    selected = "Current launches Friday"
+    provider = SelectionProvider()
+    set_llm_provider(provider, FIXTURE_RESOLVED)
+    result = run_annotation_extraction(
+        graph,
+        evidence,
+        settings=_settings(tmp_path / "selection-records"),
+        requested_facets=("relation_mention",),
+        extractor_ref="semantic.llm@0.1.0",
+        selection_id="selection-current-only",
+        content_segments=[{
+            "start": 0,
+            "end": len(selected),
+            "exact_hash": hashlib.sha256(selected.encode()).hexdigest(),
+        }],
+    )
+    assert provider.calls == 1
+    assert [row.data["selector"]["exact"] for row in result["annotations"]] == [selected]
+    [annotation] = result["annotations"]
+    assert text[annotation.data["selector"]["start"]:annotation.data["selector"]["end"]] == selected
+    assert annotation.data["metadata"]["selection_id"] == "selection-current-only"
 
 
 # ------------------------------------------------- recorded provider seam

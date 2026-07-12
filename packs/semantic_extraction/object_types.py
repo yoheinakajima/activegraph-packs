@@ -118,6 +118,7 @@ class ExtractionRun(_StrictModel):
     evidence_id: str = Field(min_length=1)
     evidence_identity: str = Field(min_length=1)
     revision_id: str = Field(min_length=1)
+    selection_id: Optional[str] = None
     extractor_id: str = Field(min_length=1)
     extractor_version: str = Field(min_length=1)
     config_hash: str
@@ -153,6 +154,33 @@ class ExtractionCoverage(_StrictModel):
     content_chars_total: int = Field(ge=0)
     content_chars_processed: int = Field(ge=0)
     truncated: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SelectionExtraction(_StrictModel):
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    exact_hash: str = Field(min_length=64, max_length=64)
+
+
+class SelectionExtractionRequest(_StrictModel):
+    """A generic exact-span request from a domain projector.
+
+    The requesting pack selects authoritative evidence spans; this pack owns
+    extractor resolution, execution, caching, and settlement.
+    """
+
+    request_identity: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    revision_id: str = Field(min_length=1)
+    selection_id: str = Field(min_length=1)
+    selections: list[SelectionExtraction]
+    requested_facets: list[str]
+    status: Literal["proposed", "completed", "failed"] = "proposed"
+    run_ids: list[str] = Field(default_factory=list)
+    annotation_ids: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
+    refs: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -246,6 +274,11 @@ OBJECT_TYPES = [
         "What an extraction run did and did not process.",
     ),
     ObjectType(
+        "selection_extraction_request",
+        SelectionExtractionRequest,
+        "A generic exact-evidence-span extraction request from a domain projector.",
+    ),
+    ObjectType(
         "extraction_profile",
         ExtractionProfile,
         "Versioned owner-editable facet policy per source category.",
@@ -313,6 +346,7 @@ __all__ = [
     "SemanticAnnotation",
     "ExtractionRun",
     "ExtractionCoverage",
+    "SelectionExtractionRequest",
     "ExtractionProfile",
     "AnnotationExtractorState",
     "ExtractorPromotionEvidence",

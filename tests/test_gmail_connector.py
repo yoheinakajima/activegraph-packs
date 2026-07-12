@@ -16,12 +16,14 @@ from packs.composio.client import (
     take_redirect,
 )
 from packs.composio.tools import request_composio_link_fn
+from packs.communication import pack as communication_pack
 from packs.connector_control import pack as connector_control_pack
 from packs.connector_control.tools import (
     project_connector_control_plane_fn,
     project_connector_learning_deltas_fn,
 )
 from packs.core import pack as core_pack
+from packs.entity import pack as entity_pack
 from packs.gmail import GmailSettings, pack as gmail_pack
 from packs.gmail.capabilities import register_gmail_capabilities
 from packs.gmail.tools import (
@@ -31,6 +33,7 @@ from packs.gmail.tools import (
     request_gmail_draft_sync_fn,
     request_gmail_exploration_fn,
     request_gmail_poll_fn,
+    reprocess_gmail_evidence_fn,
 )
 from packs.semantic_extraction import pack as extraction_pack
 from packs.tool_gateway import pack as gateway_pack
@@ -145,6 +148,8 @@ def _runtime(tmp_path, fake: FakeComposio):
     rt.load_pack(core_pack)
     rt.load_pack(normalizer_pack, settings=ActivityNormalizerSettings(artifact_store_dir=str(tmp_path)))
     rt.load_pack(extraction_pack)
+    rt.load_pack(entity_pack)
+    rt.load_pack(communication_pack)
     rt.load_pack(usage_pack)
     rt.load_pack(connector_control_pack)
     rt.load_pack(gateway_pack)
@@ -315,6 +320,19 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     rt.run_until_idle()
     assert rt.graph.get_object(run["run_id"]).data["status"] == "completed"
     assert len(list(rt.graph.objects(type="activity_evidence"))) == 2
+
+    calls_before_reprocess = len(fake.calls)
+    interpretation_count = len(list(rt.graph.objects(type="conversation_interpretation_run")))
+    replayed = reprocess_gmail_evidence_fn(
+        rt.graph, source_surface_id=surface.data["surface_id"]
+    )
+    rt.run_until_idle()
+    assert replayed["provider_contacted"] is False
+    assert replayed["messages_reprocessed"] == 2
+    assert len(fake.calls) == calls_before_reprocess
+    runs_after = list(rt.graph.objects(type="conversation_interpretation_run"))
+    assert len(runs_after) == interpretation_count + 2
+    assert sum(bool(row.data.get("reprocess_of")) for row in runs_after) == 2
     control_failures = [
         event.payload for event in rt.graph.events
         if event.type == "behavior.failed"
@@ -332,7 +350,13 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     assert backfill_status["manual_refresh_available"] is True
     [native] = control["native_views"]
     assert native["family"] == "conversation"
-    assert native["state"] == "partial"
+    assert native["state"] == "ready"
+    assert native["data"]["total_count"] == 2
+    assert {row["title"] for row in native["data"]["threads"]} == {"First", "Second"}
+    assert len(list(rt.graph.objects(type="conversation_message"))) == 2
+    assert len(list(rt.graph.objects(type="conversation_thread"))) == 2
+    assert len(list(rt.graph.objects(type="entity_mention"))) == 2
+    assert len(list(rt.graph.objects(type="entity"))) == 2
     delta = next(
         row for row in project_connector_learning_deltas_fn(rt.graph)["deltas"]
         if row["domain_run_id"] == run["run_id"]

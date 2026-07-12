@@ -29,6 +29,13 @@ class ConversationThreadSummary(_StrictModel):
     last_message_at: Optional[str] = None
     unread_count: int = Field(default=0, ge=0)
     message_count: int = Field(default=0, ge=0)
+    latest_message_ref: Optional[str] = None
+    latest_sender: Optional[str] = None
+    preview: str = ""
+    interpretation_state: Literal[
+        "ready", "selected", "completed", "deterministic_only",
+        "held", "suppressed", "empty", "failed",
+    ] = "empty"
     status: Literal["open", "closed", "archived"] = "open"
     refs: list[str] = Field(default_factory=list)
 
