@@ -28,6 +28,7 @@ PACKS = [
     ("chat", "chat"),
     ("codebase", "codebase"),
     ("communication", "communication"),
+    ("connector_control", "connector_control"),
     ("core", "core"),
     ("email", "email"),
     ("entity", "entity"),

@@ -5,6 +5,7 @@ from activegraph import Graph, Runtime
 
 from packs.activity_normalizer import ActivityNormalizerSettings, pack as normalizer_pack
 from packs.composio import pack as composio_pack
+from packs.connector_control import pack as connector_control_pack
 from packs.composio.client import configure_composio_transport
 from packs.core import pack as core_pack
 from packs.gmail import GmailSettings, pack as gmail_pack
@@ -55,6 +56,7 @@ def main():
         runtime.load_pack(normalizer_pack, settings=ActivityNormalizerSettings(artifact_store_dir=artifacts))
         runtime.load_pack(extraction_pack)
         runtime.load_pack(usage_pack)
+        runtime.load_pack(connector_control_pack)
         runtime.load_pack(gateway_pack)
         runtime.load_pack(composio_pack)
         runtime.load_pack(gmail_pack, settings=GmailSettings(artifact_store_dir=artifacts))

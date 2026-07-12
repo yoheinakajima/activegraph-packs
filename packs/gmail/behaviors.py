@@ -23,6 +23,8 @@ from packs.tool_gateway.integrations import (
 )
 from packs.tool_gateway.untrusted import scan_for_injection
 
+from .control_plane import adapt_gmail_run_fn, gmail_run_id_for_object
+
 from .settings import GmailSettings
 from .tools import _capability_call, propose_gmail_page_fn
 
@@ -33,6 +35,18 @@ _VIEW = {
         "integration_profile", "aggregator_profile", "gmail_sync_run",
         "backfill_cursor", "source_connection_request", "gmail_draft_candidate",
         "evidence_invalidation_request", "ingestion_failure",
+    ],
+    "recent_events": 20_000,
+}
+
+_CONTROL_VIEW = {
+    "include_types": [
+        "gmail_sync_run", "backfill_cursor",
+        "connector_surface_binding", "connector_run_observation",
+        "connector_learning_delta", "connector_native_view",
+        "activity_evidence", "semantic_annotation", "ingestion_failure",
+        "preference_candidate", "task_candidate", "profile_candidate",
+        "skill_candidate", "eval_candidate",
     ],
     "recent_events": 20_000,
 }
@@ -500,6 +514,7 @@ def _import_messages(graph, messages: list[dict[str, Any]], run, settings: Gmail
                     "account_ref": run.data["account_ref"],
                     "route": str((run.data.get("metadata") or {}).get("route") or "composio"),
                     "connected_account_id": run.data["connected_account_id"],
+                    "connector_run_id": run.id,
                 },
                 "source_category": "communication",
                 "connection_path": str((run.data.get("metadata") or {}).get("route") or "composio"),
@@ -888,6 +903,67 @@ def gmail_draft_result_projector(event, graph, ctx, *, settings: GmailSettings):
     graph.patch_object(draft.id, {"status": "sent"})
 
 
-BEHAVIORS = [gmail_exploration_projector, gmail_sync_result_ingester, gmail_draft_result_projector]
+@behavior(
+    name="gmail_control_plane_adapter",
+    on=["object.created", "patch.applied"],
+    view=_CONTROL_VIEW,
+    creates=[
+        "connector_surface_binding", "connector_run_observation",
+        "connector_learning_delta", "connector_native_view",
+    ],
+)
+def gmail_control_plane_adapter(event, graph, ctx, *, settings: GmailSettings):
+    """Keep the neutral control plane aligned with authoritative Gmail runs."""
+
+    object_type = ""
+    object_id = ""
+    data: dict[str, Any] = {}
+    attempt = False
+    if event.type == "object.created":
+        payload_object = (event.payload or {}).get("object") or {}
+        object_type = str(payload_object.get("type") or "")
+        object_id = str(payload_object.get("id") or "")
+        data = dict(payload_object.get("data") or {})
+        data["_object_id"] = object_id
+        attempt = object_type == "gmail_sync_run"
+    else:
+        object_id = str((event.payload or {}).get("target") or "")
+        obj = graph.get_object(object_id) if object_id else None
+        if obj is None:
+            return
+        object_type = obj.type
+        data = dict(obj.data or {})
+        data["_object_id"] = obj.id
+        status_diff = ((event.payload or {}).get("diff") or {}).get("status") or {}
+        attempt = status_diff.get("new") == "running" and status_diff.get("old") == "failed"
+
+    relevant = {
+        "gmail_sync_run", "activity_evidence", "semantic_annotation",
+        "ingestion_failure", "preference_candidate", "task_candidate",
+        "profile_candidate", "skill_candidate", "eval_candidate",
+    }
+    if object_type not in relevant:
+        return
+    run_id = gmail_run_id_for_object(ctx.view, object_type, data)
+    if not run_id:
+        return
+    run = graph.get_object(run_id)
+    if run is None or run.type != "gmail_sync_run":
+        return
+    adapt_gmail_run_fn(
+        graph,
+        run,
+        source_event_id=event.id if object_type == "gmail_sync_run" else None,
+        attempt=attempt,
+        reader=ctx.view,
+    )
+
+
+BEHAVIORS = [
+    gmail_exploration_projector,
+    gmail_sync_result_ingester,
+    gmail_draft_result_projector,
+    gmail_control_plane_adapter,
+]
 
 __all__ = ["BEHAVIORS"]

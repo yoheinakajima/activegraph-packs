@@ -16,6 +16,11 @@ from packs.composio.client import (
     take_redirect,
 )
 from packs.composio.tools import request_composio_link_fn
+from packs.connector_control import pack as connector_control_pack
+from packs.connector_control.tools import (
+    project_connector_control_plane_fn,
+    project_connector_learning_deltas_fn,
+)
 from packs.core import pack as core_pack
 from packs.gmail import GmailSettings, pack as gmail_pack
 from packs.gmail.capabilities import register_gmail_capabilities
@@ -141,6 +146,7 @@ def _runtime(tmp_path, fake: FakeComposio):
     rt.load_pack(normalizer_pack, settings=ActivityNormalizerSettings(artifact_store_dir=str(tmp_path)))
     rt.load_pack(extraction_pack)
     rt.load_pack(usage_pack)
+    rt.load_pack(connector_control_pack)
     rt.load_pack(gateway_pack)
     rt.load_pack(composio_pack)
     rt.load_pack(gmail_pack, settings=GmailSettings(artifact_store_dir=str(tmp_path)))
@@ -213,6 +219,7 @@ def test_canonical_gmail_pack_accepts_a_non_composio_route_adapter(tmp_path):
     )
     rt.load_pack(extraction_pack)
     rt.load_pack(usage_pack)
+    rt.load_pack(connector_control_pack)
     rt.load_pack(gateway_pack)
     rt.load_pack(gmail_pack, settings=GmailSettings(artifact_store_dir=str(tmp_path)))
 
@@ -308,6 +315,30 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     rt.run_until_idle()
     assert rt.graph.get_object(run["run_id"]).data["status"] == "completed"
     assert len(list(rt.graph.objects(type="activity_evidence"))) == 2
+    control_failures = [
+        event.payload for event in rt.graph.events
+        if event.type == "behavior.failed"
+        and (event.payload or {}).get("behavior") == "gmail.gmail_control_plane_adapter"
+    ]
+    assert not control_failures, control_failures
+    control = project_connector_control_plane_fn(rt.graph)
+    [binding] = control["bindings"]
+    assert binding["family"] == "conversation"
+    assert binding["active_route"] == "composio"
+    backfill_status = next(row for row in control["runs"] if row["domain_run_id"] == run["run_id"])
+    assert backfill_status["state"] == "succeeded"
+    assert backfill_status["health"] == "current"
+    assert backfill_status["counts"]["imported"] == 2
+    assert backfill_status["manual_refresh_available"] is True
+    [native] = control["native_views"]
+    assert native["family"] == "conversation"
+    assert native["state"] == "partial"
+    delta = next(
+        row for row in project_connector_learning_deltas_fn(rt.graph)["deltas"]
+        if row["domain_run_id"] == run["run_id"]
+    )
+    assert delta["evidence"]["created"] == 2
+    assert delta["status"] == "complete"
     assert not list(rt.graph.objects(type="profile_candidate"))
     assert not [
         event for event in rt.graph.events

@@ -171,6 +171,7 @@ Full explanation, dependency graph, and the invariants that hold it together:
 | `semantic_extraction` | The shared annotation layer (ADR 0026): typed source-anchored annotations under one provenance envelope, cache-identified deterministic extraction, first-class coverage, `extraction_profile` config artifact, and per-domain candidate projectors |
 | `attention` | Semantic engagement observations and bounded session batches for the future learned importance/trust vectors. No raw clickstream and no model or weights yet |
 | `usage` | Provider-neutral source surfaces, connector handoffs, stable cursors, settlement, coverage, and interaction facts |
+| `connector_control` | Neutral service/account/surface status, authoritative-run adapters, learning deltas, and five validated family-native read shapes |
 | `tool_gateway` | Capability execution gateway plus canonical service/account profiles and budgeted integration exploration — normalizes, policy-checks, and records all external tool/API/MCP calls |
 | `composio` | Optional thin route pack for current hosted Connect Links and service-scoped connection status; never a canonical service namespace |
 | `gmail` | First connector-conformance case: canonical Gmail profile, bounded replayable backfill, history polling, local drafts, held provider drafts, and R3-forever sends |
