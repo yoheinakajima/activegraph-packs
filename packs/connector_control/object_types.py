@@ -100,11 +100,30 @@ class ConnectorNativeView(_StrictModel):
     error: Optional[str] = None
 
 
+class ConnectorOperationalPolicy(_StrictModel):
+    policy_identity: str = Field(min_length=1)
+    version: int = Field(default=1, ge=1)
+    status: Literal["active", "superseded"] = "active"
+    fixture_items: int = Field(default=250, ge=1)
+    ack_latency_ms: int = Field(default=1_000, ge=1)
+    first_progress_ms: int = Field(default=2_000, ge=1)
+    projection_read_p95_ms: int = Field(default=500, ge=1)
+    max_unyielded_ms: int = Field(default=500, ge=1)
+    max_events_per_evidence: int = Field(default=100, ge=1)
+    max_annotations_per_evidence: int = Field(default=20, ge=1)
+    max_behavior_firings_per_evidence: int = Field(default=25, ge=1)
+    max_provider_calls: int = Field(default=10, ge=0)
+    max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=0)
+    max_queue_depth: int = Field(default=5_000, ge=1)
+    rationale: str = Field(min_length=1)
+
+
 OBJECT_TYPES = [
     ObjectType("connector_surface_binding", ConnectorSurfaceBinding, "A service surface bound to one connector family."),
     ObjectType("connector_run_observation", ConnectorRunObservation, "A neutral adapter view of an authoritative domain run."),
     ObjectType("connector_learning_delta", ConnectorLearningDelta, "Run-scoped counts and references for derived learning."),
     ObjectType("connector_native_view", ConnectorNativeView, "A validated family-native read projection materialization."),
+    ObjectType("connector_operational_policy", ConnectorOperationalPolicy, "Versioned release budgets for connector work."),
 ]
 
 RELATION_TYPES = []
@@ -114,6 +133,7 @@ __all__ = [
     "ConnectorRunObservation",
     "ConnectorLearningDelta",
     "ConnectorNativeView",
+    "ConnectorOperationalPolicy",
     "OBJECT_TYPES",
     "RELATION_TYPES",
 ]

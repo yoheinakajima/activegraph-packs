@@ -23,7 +23,11 @@ from packs.tool_gateway.integrations import (
 )
 from packs.tool_gateway.untrusted import scan_for_injection
 
-from .control_plane import adapt_gmail_run_fn, gmail_run_id_for_object
+from .control_plane import (
+    adapt_gmail_run_fn,
+    gmail_learning_settled,
+    gmail_run_id_for_object,
+)
 
 from .settings import GmailSettings
 from .tools import _capability_call, propose_gmail_page_fn
@@ -44,7 +48,8 @@ _CONTROL_VIEW = {
         "gmail_sync_run", "backfill_cursor",
         "connector_surface_binding", "connector_run_observation",
         "connector_learning_delta", "connector_native_view",
-        "activity_evidence", "semantic_annotation", "ingestion_failure",
+        "activity_evidence", "semantic_annotation", "extraction_coverage",
+        "ingestion_failure",
         "preference_candidate", "task_candidate", "profile_candidate",
         "skill_candidate", "eval_candidate",
     ],
@@ -905,7 +910,7 @@ def gmail_draft_result_projector(event, graph, ctx, *, settings: GmailSettings):
 
 @behavior(
     name="gmail_control_plane_adapter",
-    on=["object.created", "patch.applied"],
+    on=["patch.applied"],
     view=_CONTROL_VIEW,
     creates=[
         "connector_surface_binding", "connector_run_observation",
@@ -915,47 +920,83 @@ def gmail_draft_result_projector(event, graph, ctx, *, settings: GmailSettings):
 def gmail_control_plane_adapter(event, graph, ctx, *, settings: GmailSettings):
     """Keep the neutral control plane aligned with authoritative Gmail runs."""
 
-    object_type = ""
-    object_id = ""
-    data: dict[str, Any] = {}
-    attempt = False
-    if event.type == "object.created":
-        payload_object = (event.payload or {}).get("object") or {}
-        object_type = str(payload_object.get("type") or "")
-        object_id = str(payload_object.get("id") or "")
-        data = dict(payload_object.get("data") or {})
-        data["_object_id"] = object_id
-        attempt = object_type == "gmail_sync_run"
-    else:
-        object_id = str((event.payload or {}).get("target") or "")
-        obj = graph.get_object(object_id) if object_id else None
-        if obj is None:
-            return
-        object_type = obj.type
-        data = dict(obj.data or {})
-        data["_object_id"] = obj.id
-        status_diff = ((event.payload or {}).get("diff") or {}).get("status") or {}
-        attempt = status_diff.get("new") == "running" and status_diff.get("old") == "failed"
-
-    relevant = {
-        "gmail_sync_run", "activity_evidence", "semantic_annotation",
-        "ingestion_failure", "preference_candidate", "task_candidate",
-        "profile_candidate", "skill_candidate", "eval_candidate",
-    }
-    if object_type not in relevant:
+    object_id = str((event.payload or {}).get("target") or "")
+    obj = graph.get_object(object_id) if object_id else None
+    if obj is None or obj.type != "gmail_sync_run":
         return
-    run_id = gmail_run_id_for_object(ctx.view, object_type, data)
-    if not run_id:
-        return
-    run = graph.get_object(run_id)
-    if run is None or run.type != "gmail_sync_run":
-        return
+    status_diff = ((event.payload or {}).get("diff") or {}).get("status") or {}
     adapt_gmail_run_fn(
         graph,
-        run,
-        source_event_id=event.id if object_type == "gmail_sync_run" else None,
-        attempt=attempt,
+        obj,
+        source_event_id=event.id,
+        attempt=(
+            status_diff.get("new") == "running"
+            and status_diff.get("old") == "failed"
+        ),
         reader=ctx.view,
+    )
+
+
+_CONTROL_CREATES = [
+    "connector_surface_binding", "connector_run_observation",
+    "connector_learning_delta", "connector_native_view",
+]
+
+
+@behavior(
+    name="gmail_control_plane_run_created",
+    on=["object.created"],
+    where={"object.type": "gmail_sync_run"},
+    view=_CONTROL_VIEW,
+    creates=_CONTROL_CREATES,
+)
+def gmail_control_plane_run_created(event, graph, ctx, *, settings: GmailSettings):
+    wrapper = (event.payload or {}).get("object") or {}
+    run = graph.get_object(str(wrapper.get("id") or ""))
+    if run is None:
+        return
+    adapt_gmail_run_fn(
+        graph, run, source_event_id=event.id, attempt=True, reader=ctx.view
+    )
+
+
+@behavior(
+    name="gmail_control_plane_learning_settled",
+    on=["object.created"],
+    where={"object.type": "extraction_coverage"},
+    view=_CONTROL_VIEW,
+    creates=_CONTROL_CREATES,
+)
+def gmail_control_plane_learning_settled(
+    event, graph, ctx, *, settings: GmailSettings
+):
+    wrapper = (event.payload or {}).get("object") or {}
+    data = dict(wrapper.get("data") or {})
+    run_id = gmail_run_id_for_object(ctx.view, "extraction_coverage", data)
+    run = graph.get_object(run_id) if run_id else None
+    if run is None or not gmail_learning_settled(ctx.view, run):
+        return
+    adapt_gmail_run_fn(
+        graph, run, source_event_id=None, attempt=False, reader=ctx.view
+    )
+
+
+@behavior(
+    name="gmail_control_plane_failure",
+    on=["object.created"],
+    where={"object.type": "ingestion_failure"},
+    view=_CONTROL_VIEW,
+    creates=_CONTROL_CREATES,
+)
+def gmail_control_plane_failure(event, graph, ctx, *, settings: GmailSettings):
+    wrapper = (event.payload or {}).get("object") or {}
+    data = dict(wrapper.get("data") or {})
+    run_id = gmail_run_id_for_object(ctx.view, "ingestion_failure", data)
+    run = graph.get_object(run_id) if run_id else None
+    if run is None:
+        return
+    adapt_gmail_run_fn(
+        graph, run, source_event_id=None, attempt=False, reader=ctx.view
     )
 
 
@@ -964,6 +1005,9 @@ BEHAVIORS = [
     gmail_sync_result_ingester,
     gmail_draft_result_projector,
     gmail_control_plane_adapter,
+    gmail_control_plane_run_created,
+    gmail_control_plane_learning_settled,
+    gmail_control_plane_failure,
 ]
 
 __all__ = ["BEHAVIORS"]

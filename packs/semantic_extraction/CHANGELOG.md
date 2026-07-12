@@ -2,6 +2,12 @@
 
 ## Unreleased — D025 stage two: the LLM-backed extractor
 
+- Candidate eligibility is copied from evidence into the annotation envelope
+  so registry filtering skips ineligible projectors before invocation.
+  Multi-subject communication cannot mint profile or memory candidates merely
+  because an email contains an assertion; family interpretation must first
+  resolve subject and meaning.
+
 - `semantic.llm@0.1.0` registered beside `semantic.deterministic@0.1.0`:
   same annotation contract, same cache identity scheme, different
   extractor id. Implements `entity_mention`, `assertion` (with
