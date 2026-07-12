@@ -332,7 +332,18 @@ def run_annotation_extraction(
                 "status": "active",
                 "invalidation_reason": None,
                 "run_id": run.id,
-                "metadata": dict(draft.metadata),
+                "metadata": {
+                    **dict(draft.metadata),
+                    "source_category": evidence.get("source_category", ""),
+                    "subject_scope": normalized_metadata.get("subject_scope"),
+                    "profile_candidate_eligible": (
+                        normalized_metadata.get("subject_scope") == "owner_profile"
+                    ),
+                    "memory_candidate_eligible": (
+                        evidence.get("source_category") != "communication"
+                        or normalized_metadata.get("subject_scope") == "owner_profile"
+                    ),
+                },
             },
         )
         graph.add_relation(annotation.id, evidence_obj.id, "annotation_for")

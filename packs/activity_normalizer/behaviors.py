@@ -783,7 +783,10 @@ _COMPAT_VIEW = {
 @behavior(
     name="project_structure_candidates",
     on=["object.created"],
-    where={"object.type": "semantic_annotation"},
+    where={
+        "object.type": "semantic_annotation",
+        "object.data.extractor_id": "activity.structure",
+    },
     view=_COMPAT_VIEW,
     creates=[
         "memory_candidate",

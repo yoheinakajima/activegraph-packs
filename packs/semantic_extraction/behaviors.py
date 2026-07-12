@@ -170,7 +170,10 @@ def _existing_candidate_identities(view, candidate_type: str) -> set[str]:
 @behavior(
     name="project_profile_candidates",
     on=["object.created"],
-    where={"object.type": "semantic_annotation"},
+    where={
+        "object.type": "semantic_annotation",
+        "object.data.metadata.profile_candidate_eligible": True,
+    },
     view={
         "include_types": [
             "semantic_annotation", "activity_evidence", "profile_candidate"
@@ -269,7 +272,11 @@ def project_profile_candidates(event, graph, ctx, *, settings: SemanticExtractio
 @behavior(
     name="project_memory_candidates",
     on=["object.created"],
-    where={"object.type": "semantic_annotation"},
+    where={
+        "object.type": "semantic_annotation",
+        "object.data.facet": "assertion",
+        "object.data.metadata.memory_candidate_eligible": True,
+    },
     view={"include_types": ["semantic_annotation", "memory_candidate"]},
     creates=["memory_candidate"],
 )

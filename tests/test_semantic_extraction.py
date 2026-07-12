@@ -57,7 +57,9 @@ def _build(settings: SemanticExtractionSettings | None = None):
 
 
 def _acquire(graph, *, text: str = SUMMARY, dedup_key: str = "summary-1",
-             role: str = "assistant", provider_time: str = "2026-07-10T00:00:00Z"):
+             role: str = "assistant", provider_time: str = "2026-07-10T00:00:00Z",
+             source_category: str = "ai_activity",
+             subject_scope: str | None = "owner_profile"):
     digest = hashlib.sha256(text.encode()).hexdigest()
     item = graph.add_object(
         "acquired_item",
@@ -83,9 +85,9 @@ def _acquire(graph, *, text: str = SUMMARY, dedup_key: str = "summary-1",
             "normalized_content": text,
             "normalized_metadata": {
                 "role": role,
-                "subject_scope": "owner_profile",
+                "subject_scope": subject_scope,
             },
-            "source_category": "ai_activity",
+            "source_category": source_category,
             "connection_path": "pack",
             "is_fixture": True,
         },
@@ -124,6 +126,29 @@ def test_default_profile_bounds_multi_subject_communication():
     assert active.data["facets_by_source_category"]["communication"] == [
         "entity_mention", "question", "temporal_expression"
     ]
+
+
+def test_multi_subject_communication_prefilters_ineligible_candidate_behaviors():
+    graph, runtime = _build()
+    _acquire(
+        graph,
+        text="From: person@example.com\nCan we meet on 2026-08-01?",
+        source_category="communication",
+        subject_scope=None,
+    )
+    runtime.run_until_idle()
+
+    assert graph.objects(type="semantic_annotation")
+    assert not graph.objects(type="memory_candidate")
+    assert not graph.objects(type="profile_candidate")
+    fired = {
+        str((event.payload or {}).get("behavior") or "")
+        for event in graph.events
+        if event.type == "behavior.started"
+    }
+    assert not any(name.endswith("project_profile_candidates") for name in fired)
+    assert not any(name.endswith("project_memory_candidates") for name in fired)
+    assert not any(name.endswith("project_structure_candidates") for name in fired)
 
 
 def test_replayed_stack_owned_profile_migrates_communication_floor():

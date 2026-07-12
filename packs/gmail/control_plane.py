@@ -111,6 +111,29 @@ def _learning_counts(reader, run) -> dict[str, Any]:
     }
 
 
+def gmail_learning_settled(reader, run) -> bool:
+    """Whether every imported evidence revision has extraction coverage.
+
+    The adapter uses this batch boundary instead of refreshing its aggregate
+    once per annotation. It is provider-neutral in shape but Gmail-owned in
+    run semantics: ``messages_imported`` is authoritative for this service.
+    """
+
+    expected = int((run.data or {}).get("messages_imported") or 0)
+    if expected == 0:
+        return True
+    evidence = _evidence_for_run(reader, run.id)
+    if len(evidence) < expected:
+        return False
+    evidence_ids = {obj.id for obj in evidence}
+    covered = {
+        str(obj.data.get("evidence_id") or "")
+        for obj in _objects(reader, "extraction_coverage")
+        if obj.data.get("evidence_id") in evidence_ids
+    }
+    return evidence_ids <= covered
+
+
 def adapt_gmail_run_fn(
     graph,
     run,
@@ -206,10 +229,13 @@ def adapt_gmail_run_fn(
     )
 
     learning = _learning_counts(reader, run)
+    settled = gmail_learning_settled(reader, run)
     delta_status = {
         "queued": "collecting", "running": "collecting",
         "succeeded": "complete", "partial": "partial", "failed": "failed",
     }[state]
+    if state in {"succeeded", "partial"} and not settled:
+        delta_status = "collecting"
     record_connector_learning_delta_fn(
         graph,
         domain_run_id=run.id,
@@ -301,6 +327,7 @@ def ensure_gmail_control_plane_fn(graph) -> int:
 
 __all__ = [
     "adapt_gmail_run_fn",
+    "gmail_learning_settled",
     "gmail_run_id_for_object",
     "ensure_gmail_control_plane_fn",
 ]

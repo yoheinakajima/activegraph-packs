@@ -7,6 +7,10 @@ import pytest
 from activegraph import Graph, Runtime
 
 from packs.connector_control import pack
+from packs.connector_control.operational import (
+    ConnectorOperationalMeasurement,
+    operational_budget_violations,
+)
 from packs.connector_control.tools import (
     project_connector_control_plane_fn,
     record_connector_binding_fn,
@@ -119,3 +123,36 @@ def test_learning_delta_is_counts_plus_bounded_refs(graph):
     )
     assert result["delta"].data["refs"] == ["evt_1", "evt_2"]
     assert result["delta"].data["candidates"]["task"]["proposed"] == 1
+
+
+def test_operational_policy_is_versioned_and_enforces_every_measurement():
+    runtime = Runtime(Graph())
+    runtime.load_pack(pack)
+    runtime.run_until_idle()
+    [policy] = list(runtime.graph.objects(type="connector_operational_policy"))
+    assert policy.data["policy_identity"] == "connector-operational@0.1.0"
+    assert policy.data["max_events_per_evidence"] == 100
+    assert policy.data["max_annotations_per_evidence"] == 20
+
+    measurement = ConnectorOperationalMeasurement(
+        domain_run_id="fixture-run",
+        evidence_items=250,
+        durable_events=25_000,
+        events_per_evidence=100,
+        annotations=5_000,
+        max_annotations_for_one_evidence=20,
+        behavior_firings=6_250,
+        behavior_firings_per_evidence=25,
+        provider_calls=10,
+        artifact_bytes=64 * 1024 * 1024,
+        max_queue_depth=5_000,
+        acknowledgement_ms=1_000,
+        first_progress_ms=2_000,
+        projection_read_p95_ms=500,
+        max_unyielded_ms=500,
+    )
+    assert operational_budget_violations(measurement) == []
+    over = measurement.model_copy(update={"events_per_evidence": 100.01})
+    assert operational_budget_violations(over) == [
+        "events_per_evidence: 100.01 > 100"
+    ]

@@ -10,3 +10,6 @@
 - Add multi-account product status, claim provenance/correction, bounded-partial
   semantics, rate-limit retry, invalid-cursor re-anchor, shape drift and forced
   re-exploration, provider tombstones, and OAuth revocation without erasure.
+- Adapt authoritative Gmail runs into the neutral connector control plane.
+  Learning now settles once when every imported evidence item has extraction
+  coverage instead of rescanning and rewriting the aggregate per annotation.

@@ -3,6 +3,7 @@
 from activegraph.packs import Pack
 
 from .object_types import OBJECT_TYPES, RELATION_TYPES
+from .behaviors import BEHAVIORS
 from .settings import ConnectorControlSettings
 from .tools import TOOLS
 
@@ -16,7 +17,7 @@ pack = Pack(
     ),
     object_types=OBJECT_TYPES,
     relation_types=RELATION_TYPES,
-    behaviors=(),
+    behaviors=BEHAVIORS,
     tools=TOOLS,
     policies=(),
     prompts=(),
