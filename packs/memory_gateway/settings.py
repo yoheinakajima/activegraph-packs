@@ -95,3 +95,10 @@ class MemoryGatewaySettings(BaseModel):
             "principals — verification happens when verification is possible."
         ),
     )
+
+    evidence_floor_min_score: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Minimum lexical relevance for the evidence-first resolver floor.",
+    )

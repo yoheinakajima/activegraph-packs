@@ -8,6 +8,11 @@ Memory Gateway Pack manages what the assistant remembers. Core Pack only produce
 
 **Design rule:** Never write memory directly. Always create a `memory_candidate` and let Memory Gateway evaluate it.
 
+**Query rule:** `resolve_memory_query` is the default evidence-first floor. It
+checks raw evidence, annotations, admitted items, and the reserved live-lookup
+slot. Returned context always places source evidence before derived artifacts;
+compiled/admitted memory can augment evidence but cannot replace it.
+
 ## Behavior Map
 
 ```

@@ -5,6 +5,15 @@
 - Treat SQLite `file:` backend URLs as URIs so shared in-memory test stores do
   not leak literal `file:mem_*?mode=memory&cache=shared` files into worktrees.
 
+## v0.8.0 — Evidence-authoritative resolution and source admission (2026-07-12)
+
+- Add a graph-visible procedure resolver spanning raw evidence, annotations,
+  admitted items, and the reserved live-lookup slot. Evidence is packaged
+  first and remains authoritative over derived artifacts.
+- Replace “missing sender means internal” with explicit evidence admission
+  posture. Unverified public content now requires corroboration/owner review;
+  injection-flagged evidence is rejected.
+
 ## v0.7.0 — Versioned promotion beyond admission (P6) (2026-07-10)
 
 ### Added

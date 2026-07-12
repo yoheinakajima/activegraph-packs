@@ -188,6 +188,7 @@ PACK_PATHS = {
     "memory_gateway": "memory_gateway",
     "identity_auth": "identity_auth",
     "agent_profile": "agent_profile",
+    "subject_profile": "subject_profile",
     "entity": "entity",
     "communication": "communication",
     "chat": "chat",

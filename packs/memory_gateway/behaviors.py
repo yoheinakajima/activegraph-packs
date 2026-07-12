@@ -72,7 +72,36 @@ _GUIDANCE_CATEGORIES = ("instruction", "preference", "decision")
 _TRUSTED_ROLES = ("owner", "admin", "collaborator")
 
 
-def _provenance_verdict(graph, candidate_data: dict, settings) -> tuple[bool, str]:
+def _source_admission_policy(graph, candidate_data: dict) -> tuple[str, str]:
+    """Classify evidence-backed candidates before judging their content.
+
+    A missing ``sender_ref`` is not evidence that content is internal. Connector
+    and importer evidence commonly has no sender at all. Those sources must
+    carry their trust/admission posture with the evidence revision so every
+    downstream candidate gets the same decision, independent of extractor.
+    """
+    for source_id in candidate_data.get("source_ids") or []:
+        try:
+            source = graph.get_object(source_id)
+        except Exception:
+            source = None
+        if source is None or source.type != "activity_evidence":
+            continue
+        data = source.data or {}
+        metadata = data.get("normalized_metadata") or {}
+        flags = metadata.get("injection_flags") or []
+        if flags:
+            return "reject", f"untrusted evidence carries injection flags: {', '.join(flags)}"
+        policy = str(metadata.get("memory_admission") or "").strip()
+        if policy == "reject":
+            return "reject", "source evidence explicitly forbids memory admission"
+        if policy == "review_required":
+            trust = metadata.get("source_trust") or "unverified"
+            return "review", f"{trust} evidence requires corroboration or owner review"
+    return "eligible", "source admission policy permits evaluation"
+
+
+def _provenance_verdict(graph, candidate_data: dict, settings) -> tuple[str, str]:
     """Decide whether this candidate's ORIGIN permits memorization.
 
     The principle: conversations build memory; documents don't give orders.
@@ -92,7 +121,11 @@ def _provenance_verdict(graph, candidate_data: dict, settings) -> tuple[bool, st
     either way, so admissions are as auditable as rejections.
     """
     if settings.provenance_admission == "off":
-        return True, "admission policy off"
+        return "eligible", "admission policy off"
+
+    source_policy, source_reason = _source_admission_policy(graph, candidate_data)
+    if source_policy != "eligible":
+        return source_policy, source_reason
 
     # Where did this text come from?
     sender_ref = None
@@ -111,11 +144,11 @@ def _provenance_verdict(graph, candidate_data: dict, settings) -> tuple[bool, st
             break
 
     if kind == "chat_message":
-        return True, "conversational source (speaker addresses the assistant)"
+        return "eligible", "conversational source (speaker addresses the assistant)"
     if not sender_ref:
-        return True, "no sender provenance (internal/system content)"
+        return "eligible", "no external-source admission restriction"
     if candidate_data.get("category") not in _GUIDANCE_CATEGORIES:
-        return True, f"knowledge category from {sender_ref!r} (subject-scoped)"
+        return "eligible", f"knowledge category from {sender_ref!r} (subject-scoped)"
 
     # Guidance from a non-conversational source: verify the sender if we can.
     try:
@@ -124,15 +157,15 @@ def _provenance_verdict(graph, candidate_data: dict, settings) -> tuple[bool, st
             resolve_known_principal,
         )
     except Exception:
-        return True, "identity_auth not installed — provenance unverifiable"
+        return "eligible", "identity_auth not installed — provenance unverifiable"
     if not principals_registered():
-        return True, "no principals registered — provenance unverifiable"
+        return "eligible", "no principals registered — provenance unverifiable"
 
     principal = resolve_known_principal(graph, sender_ref)
     role = principal.get("role") if principal else None
     if role in _TRUSTED_ROLES:
-        return True, f"guidance from trusted principal {sender_ref!r} ({role})"
-    return False, (
+        return "eligible", f"guidance from trusted principal {sender_ref!r} ({role})"
+    return "reject", (
         f"guidance category {candidate_data.get('category')!r} from "
         f"non-conversational source by untrusted sender {sender_ref!r} "
         f"(role={role!r}) — documents don't give orders"
@@ -175,7 +208,7 @@ def candidate_evaluator(event, graph, ctx, *, settings: MemoryGatewaySettings):
     # The evaluator is the governance point, so admission decisions live
     # HERE, not scattered across proposers. Rejections carry a written
     # rationale — auditable, never silent.
-    admit, prov_reason = _provenance_verdict(graph, candidate_data, settings)
+    admission, prov_reason = _provenance_verdict(graph, candidate_data, settings)
 
     # ── Threshold: category priority relieves the bar, never suspends it ───
     is_priority_category = category in settings.auto_accept_categories
@@ -184,7 +217,11 @@ def candidate_evaluator(event, graph, ctx, *, settings: MemoryGatewaySettings):
         else settings.acceptance_threshold
     )
 
-    if not admit:
+    if admission == "review":
+        judgment = "requires_review"
+        rationale = f"Provenance: {prov_reason}"
+        accepted = False
+    elif admission == "reject":
         judgment = "rejected"
         rationale = f"Provenance: {prov_reason}"
         accepted = False
@@ -218,6 +255,7 @@ def candidate_evaluator(event, graph, ctx, *, settings: MemoryGatewaySettings):
             "metadata": {
                 "category": category,
                 "threshold": threshold,
+                "admission": admission,
             },
         },
     )

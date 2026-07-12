@@ -232,6 +232,25 @@ class MemoryRanking(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class MemoryQueryResolution(BaseModel):
+    """Evidence-authoritative result from the default procedure resolver."""
+
+    query: str
+    subject_ref: Optional[str] = None
+    selected_tier: Literal[
+        "evidence", "annotated_evidence", "compiled_belief", "live_lookup", "none"
+    ] = "none"
+    procedure_id: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    annotation_ids: list[str] = Field(default_factory=list)
+    memory_item_ids: list[str] = Field(default_factory=list)
+    context_text: str = ""
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    authoritative_evidence: bool = True
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 # ================================================================ ObjectType list
 
 OBJECT_TYPES = [
@@ -267,6 +286,14 @@ OBJECT_TYPES = [
         description=(
             "Records a memory retrieval request and results. "
             "Provides audit trail of what context was fetched and when."
+        ),
+    ),
+    ObjectType(
+        name="memory_query_resolution",
+        schema=MemoryQueryResolution,
+        description=(
+            "A procedure-selected memory result whose raw evidence remains "
+            "authoritative over annotations and compiled belief."
         ),
     ),
     ObjectType(

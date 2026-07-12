@@ -23,7 +23,7 @@ from .tools import TOOLS
 # requires=["activity_normalizer", "tool_gateway"]
 pack = Pack(
     name="public_presence",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Budgeted, gateway-routed R0 fetching of the owner's public "
         "handles; results land as injection-scanned, replay-retained "

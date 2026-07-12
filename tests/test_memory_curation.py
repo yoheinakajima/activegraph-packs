@@ -30,6 +30,7 @@ from packs.identity_auth.behaviors import clear_principal_registry
 from packs.identity_auth.tools import register_principal_fn
 from packs.memory_gateway import pack as memory_pack, MemoryGatewaySettings
 from packs.memory_gateway.backend import SqliteMemoryBackend
+from packs.activity_normalizer import pack as normalizer_pack
 
 
 @pytest.fixture(autouse=True)
@@ -146,6 +147,42 @@ def test_conversational_sources_always_build_memory():
     rt.run_until_idle()
     items = list(rt.graph.objects(type="memory_item"))
     assert len(items) == 1
+
+
+def test_unverified_public_evidence_requires_review_even_without_sender():
+    rt = _rt(identity=False)
+    rt.load_pack(normalizer_pack)
+    text = "Home About Work Contact Yohei builds small deterministic tools."
+    digest = __import__("hashlib").sha256(text.encode()).hexdigest()
+    item = rt.graph.add_object("acquired_item", {
+        "source_surface_id": "public_presence", "provider_item_id": "page",
+        "dedup_key": "page", "source_ref": "https://example.test",
+        "source_hash": digest, "provider_time": None, "replay_mode": "inline",
+        "replay_payload_ref": text, "replay_payload_hash": digest,
+        "media_type": "text/plain", "importer_id": "public_presence",
+        "importer_version": "0.1.0",
+    })
+    rt.graph.add_object("acquired_content", {
+        "acquired_item_id": item.id, "normalized_content": text,
+        "normalized_metadata": {"subject_scope": "owner_profile",
+                                "source_trust": "unverified_public",
+                                "memory_admission": "review_required"},
+        "source_category": "local_knowledge", "connection_path": "pack",
+        "is_fixture": True,
+    })
+    rt.run_until_idle()
+    [evidence] = rt.graph.objects(type="activity_evidence")
+    rt.graph.add_object("memory_candidate", {
+        "text": "Home About Work Contact", "confidence": 0.99,
+        "category": "context", "source_ids": [evidence.id],
+        "observation_ids": [],
+    })
+    rt.run_until_idle()
+
+    evaluations = list(rt.graph.objects(type="evaluation"))
+    assert evaluations[-1].data["judgment"] == "requires_review"
+    assert evaluations[-1].data["metadata"]["admission"] == "review"
+    assert list(rt.graph.objects(type="memory_item")) == []
 
 
 # ------------------------------------------------------------------ category relief
