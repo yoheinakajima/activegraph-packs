@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import pytest
+
 from activegraph import Graph, Runtime
 
 from packs.activity_normalizer import ActivityNormalizerSettings, pack as normalizer_pack
 from packs.composio import pack as composio_pack
 from packs.composio.capabilities import register_composio_capabilities
-from packs.composio.client import configure_composio_transport, take_redirect
+from packs.composio.client import (
+    ComposioUnavailable,
+    configure_composio_transport,
+    resolve_catalog_tool,
+    take_redirect,
+)
 from packs.composio.tools import request_composio_link_fn
 from packs.core import pack as core_pack
 from packs.gmail import GmailSettings, pack as gmail_pack
@@ -66,6 +73,26 @@ class FakeComposio:
     def list_connections(self, **kwargs):
         return [{"id": "ca_1", "status": "ACTIVE", "toolkit_slug": "gmail"}]
 
+    def resolve_tool(self, *, toolkit, candidates, requested_version):
+        self.calls.append(("resolve_tool", {
+            "toolkit": toolkit,
+            "candidates": tuple(candidates),
+            "requested_version": requested_version,
+        }))
+        return resolve_catalog_tool(
+            [{
+                "slug": candidates[0],
+                "toolkit": {"slug": toolkit},
+                "version": "20260702_01",
+                "available_versions": ["20260702_01"],
+                "input_parameters": {"type": "object", "properties": {}},
+                "is_deprecated": False,
+            }],
+            toolkit=toolkit,
+            candidates=candidates,
+            requested_version=requested_version,
+        )
+
     def execute(self, **kwargs):
         self.calls.append((kwargs["tool_slug"], kwargs))
         slug = kwargs["tool_slug"]
@@ -120,6 +147,35 @@ def _runtime(tmp_path, fake: FakeComposio):
     register_composio_capabilities()
     register_gmail_capabilities(artifact_store_dir=str(tmp_path))
     return rt
+
+
+def test_catalog_resolution_hardens_latest_and_rejects_an_invalid_pin():
+    rows = [{
+        "slug": "GMAIL_GET_PROFILE",
+        "toolkit": {"slug": "gmail"},
+        "version": "20260702_01",
+        "available_versions": ["20260702_01"],
+        "input_parameters": {"type": "object", "properties": {"user_id": {"type": "string"}}},
+        "is_deprecated": False,
+    }]
+    resolved = resolve_catalog_tool(
+        rows,
+        toolkit="gmail",
+        candidates=("GMAIL_GET_PROFILE_V2", "GMAIL_GET_PROFILE"),
+        requested_version="latest",
+    )
+    assert resolved["tool_slug"] == "GMAIL_GET_PROFILE"
+    assert resolved["version"] == "20260702_01"
+    assert resolved["resolution"] == "catalog"
+    assert resolved["input_schema_fingerprint"]
+
+    with pytest.raises(ComposioUnavailable, match="available versions: 20260702_01"):
+        resolve_catalog_tool(
+            rows,
+            toolkit="gmail",
+            candidates=("GMAIL_GET_PROFILE",),
+            requested_version="20260703_00",
+        )
 
 
 def test_connect_link_is_governed_and_secret_url_never_lands_in_log(tmp_path):
@@ -208,6 +264,7 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     [profile] = [obj for obj in rt.graph.objects(type="integration_profile") if obj.data["status"] == "active"]
     assert profile.data["service"] == "gmail"
     assert profile.data["account_ref"] == "yohei@example.com"
+    assert profile.data["routes"][0]["schema_version"] == "20260702_01"
     assert profile.data["routes"][0]["path"] == "composio"
     assert {row["operation"] for row in profile.data["capability_inventory"]} >= {"gmail.messages.fetch", "gmail.drafts.send"}
     assert {claim["claim_key"] for claim in profile.data["claims"]} >= {
@@ -216,6 +273,17 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     [surface] = list(rt.graph.objects(type="connection_surface"))
     assert surface.data["path"] == "composio"
     assert surface.data["category"] == "communication"
+    assert any(
+        event.type == "source.connected"
+        and (event.payload or {}).get("surface_id") == surface.data["surface_id"]
+        for event in rt.graph.events
+    )
+    execution_rows = [
+        payload for name, payload in fake.calls
+        if name in {"GMAIL_GET_PROFILE", "GMAIL_LIST_LABELS"}
+    ]
+    assert execution_rows
+    assert {row["version"] for row in execution_rows} == {"20260702_01"}
 
     # Status polling cannot rediscover the same account into endless profile
     # versions or duplicate structural probes.
@@ -240,6 +308,12 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     rt.run_until_idle()
     assert rt.graph.get_object(run["run_id"]).data["status"] == "completed"
     assert len(list(rt.graph.objects(type="activity_evidence"))) == 2
+    assert not list(rt.graph.objects(type="profile_candidate"))
+    assert not [
+        event for event in rt.graph.events
+        if event.type == "behavior.failed"
+        and (event.payload or {}).get("behavior") == "gmail.gmail_sync_result_ingester"
+    ]
     assert all(obj.data["connection_path"] == "composio" for obj in rt.graph.objects(type="activity_evidence"))
     assert all(obj.data["replay_mode"] == "artifact" for obj in rt.graph.objects(type="activity_evidence"))
     # Provider bodies live in artifacts, not gateway result events.

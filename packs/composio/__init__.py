@@ -7,6 +7,7 @@ from .settings import ComposioSettings
 from .tools import TOOLS
 
 # requires=["tool_gateway"]
+# integrates_with=["secrets"]
 pack = Pack(
     name="composio",
     version="0.1.0",

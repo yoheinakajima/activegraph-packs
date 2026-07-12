@@ -6,6 +6,16 @@ This file tracks repo-level changes. Per-pack changes are recorded in each pack'
 
 ## Unreleased
 
+- **ADR 0031 live-connector hardening.** Usage custom events now emit on
+  both full Graph and constrained BehaviorGraph surfaces, closing the missing
+  `source.connected` receipt found by the first Gmail run. Composio resolves
+  its key through the Secrets seam. The seeded extraction profile bounds
+  high-volume communication to structural facets (including migration for
+  stack-owned legacy profiles), and profile projection now requires explicit
+  `subject_scope=owner_profile`; arbitrary mail can no longer become owner
+  identity. The real 250-message run that motivated this produced roughly
+  261k events under the old generic fan-out.
+
 - **H2: runtime-version preflight at `import packs`.** A pre-v1.9
   runtime used to die mid-import with `CapabilityDecl.__init__() got an
   unexpected keyword argument 'action_class'`; it now raises

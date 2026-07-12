@@ -157,6 +157,7 @@ def acquire_presence_result(event, graph, ctx, *, settings: PublicPresenceSettin
             "acquired_item_id": item.id,
             "normalized_content": text,
             "normalized_metadata": {
+                "subject_scope": "owner_profile",
                 "url": url,
                 "final_url": output.get("final_url"),
                 "status": output.get("status"),

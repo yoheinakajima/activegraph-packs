@@ -28,6 +28,19 @@ class SemanticExtractionSettings(BaseModel):
         default=DEFAULT_EAGER_FLOOR,
         description="Facet floor written into the seeded profile (D041).",
     )
+    default_facets_by_source_category: dict[str, tuple[str, ...]] = Field(
+        default_factory=lambda: {
+            "communication": (
+                "entity_mention",
+                "question",
+                "temporal_expression",
+            ),
+        },
+        description=(
+            "Seeded per-category facet policy. High-volume, multi-subject "
+            "sources use a bounded structural floor."
+        ),
+    )
     mint_profile_candidates: bool = Field(default=True)
     mint_memory_candidates: bool = Field(default=True)
 

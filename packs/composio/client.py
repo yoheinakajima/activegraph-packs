@@ -7,12 +7,11 @@ retired it for managed OAuth on 2026-07-03.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, Protocol, Sequence
 from urllib.parse import urlsplit
 
-from packs.tool_gateway.integrations import safe_sha256_fingerprint
+from packs.tool_gateway.integrations import safe_sha256_fingerprint, shape_fingerprint
 
 
 class ComposioUnavailable(RuntimeError):
@@ -31,6 +30,13 @@ class ComposioTransport(Protocol):
         connected_account_id: str,
         version: str,
     ) -> dict[str, Any]: ...
+    def resolve_tool(
+        self,
+        *,
+        toolkit: str,
+        candidates: Sequence[str],
+        requested_version: str,
+    ) -> dict[str, Any]: ...
 
 
 def _plain(value: Any) -> Any:
@@ -45,9 +51,81 @@ def _plain(value: Any) -> Any:
     return value
 
 
+def resolve_catalog_tool(
+    rows: Sequence[Any],
+    *,
+    toolkit: str,
+    candidates: Sequence[str],
+    requested_version: str = "latest",
+) -> dict[str, Any]:
+    """Harden canonical candidates into one concrete provider tool version.
+
+    Discovery is deliberately bounded to caller-supplied candidates.  The
+    Composio catalog is route metadata, not a capability namespace we mirror
+    into the graph.  A concrete version and schema fingerprint are returned so
+    the execution receipt says exactly what was selected.
+    """
+
+    ordered = tuple(dict.fromkeys(str(row).strip() for row in candidates if str(row).strip()))
+    if not ordered:
+        raise ComposioUnavailable(f"no provider tool candidates configured for {toolkit}")
+    by_slug: dict[str, dict[str, Any]] = {}
+    for raw in rows:
+        row = _plain(raw)
+        if not isinstance(row, dict):
+            continue
+        slug = str(row.get("slug") or row.get("name") or "")
+        row_toolkit = row.get("toolkit") or {}
+        if isinstance(row_toolkit, dict):
+            row_toolkit = row_toolkit.get("slug") or row_toolkit.get("name")
+        if slug and (not row_toolkit or str(row_toolkit).lower() == toolkit.lower()):
+            by_slug[slug] = row
+    selected = next((by_slug[slug] for slug in ordered if slug in by_slug), None)
+    if selected is None:
+        raise ComposioUnavailable(
+            f"Composio {toolkit} catalog contains none of the configured tools: "
+            + ", ".join(ordered)
+        )
+    slug = str(selected.get("slug") or selected.get("name"))
+    current = str(selected.get("version") or "").strip()
+    available = [str(row) for row in (selected.get("available_versions") or []) if str(row)]
+    if current and current not in available:
+        available.insert(0, current)
+    requested = str(requested_version or "latest").strip()
+    if requested in {"", "latest"}:
+        if not current:
+            raise ComposioUnavailable(f"Composio returned no concrete version for {slug}")
+        resolved_version = current
+    elif requested in available:
+        resolved_version = requested
+    else:
+        choices = ", ".join(available) or "none"
+        raise ComposioUnavailable(
+            f"configured Composio version {requested!r} is unavailable for {slug}; "
+            f"available versions: {choices}"
+        )
+    deprecated = bool(
+        selected.get("is_deprecated")
+        or (
+            isinstance(selected.get("deprecated"), dict)
+            and selected["deprecated"].get("is_deprecated")
+        )
+    )
+    if deprecated:
+        raise ComposioUnavailable(f"configured Composio tool {slug} is deprecated")
+    return {
+        "tool_slug": slug,
+        "version": resolved_version,
+        "input_schema_fingerprint": shape_fingerprint(selected.get("input_parameters") or {}),
+        "resolution": "catalog",
+    }
+
+
 class SDKComposioTransport:
     def __init__(self, *, api_key_env: str = "COMPOSIO_API_KEY") -> None:
-        api_key = os.environ.get(api_key_env, "").strip()
+        from packs.secrets.tools import resolve_credential_fn
+
+        api_key = (resolve_credential_fn(api_key_env) or "").strip()
         if not api_key:
             raise ComposioUnavailable(
                 f"{api_key_env} is not set; add a Composio project key and restart the engine"
@@ -59,6 +137,7 @@ class SDKComposioTransport:
                 "Composio SDK is not installed; install activegraph-packs[composio]"
             ) from exc
         self._client = Composio(api_key=api_key)
+        self._resolved_tools: dict[tuple[str, tuple[str, ...], str], dict[str, Any]] = {}
 
     def authorize(self, *, user_id: str, toolkit: str, callback_url: str) -> dict[str, Any]:
         session = self._client.create(
@@ -97,6 +176,28 @@ class SDKComposioTransport:
             version=version,
         )
         return _plain(result)
+
+    def resolve_tool(
+        self,
+        *,
+        toolkit: str,
+        candidates: Sequence[str],
+        requested_version: str,
+    ) -> dict[str, Any]:
+        ordered = tuple(dict.fromkeys(str(row).strip() for row in candidates if str(row).strip()))
+        key = (toolkit.lower(), ordered, str(requested_version or "latest"))
+        cached = self._resolved_tools.get(key)
+        if cached is not None:
+            return dict(cached)
+        rows = self._client.tools.get_raw_composio_tools(tools=list(ordered))
+        resolved = resolve_catalog_tool(
+            rows,
+            toolkit=toolkit,
+            candidates=ordered,
+            requested_version=requested_version,
+        )
+        self._resolved_tools[key] = dict(resolved)
+        return dict(resolved)
 
 
 _transport: Optional[ComposioTransport] = None
@@ -157,6 +258,7 @@ __all__ = [
     "ComposioUnavailable",
     "ComposioTransport",
     "SDKComposioTransport",
+    "resolve_catalog_tool",
     "configure_composio_transport",
     "composio_transport",
     "store_redirect",

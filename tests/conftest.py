@@ -7,6 +7,7 @@ the activegraph runtime and the test collection phase.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -41,11 +42,16 @@ def run_fixture_script(script_path: str) -> subprocess.CompletedProcess:
     Returns the CompletedProcess so the caller can inspect returncode,
     stdout, and stderr.
     """
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    pythonpath = str(REPO_ROOT)
+    if existing_pythonpath:
+        pythonpath = os.pathsep.join((pythonpath, existing_pythonpath))
     return subprocess.run(
         [sys.executable, script_path],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        env={**os.environ, "PYTHONPATH": pythonpath},
     )
 
 

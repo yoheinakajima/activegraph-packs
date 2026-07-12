@@ -628,6 +628,78 @@ from .annotation_extractor import (  # noqa: E402  (registers the extractor)
 )
 
 STRUCTURE_EXTRACTOR_REF = "activity.structure@0.2.0"
+COMMUNICATION_FACET_FLOOR = (
+    "entity_mention",
+    "question",
+    "temporal_expression",
+)
+
+
+@behavior(
+    name="migrate_communication_extraction_floor",
+    on=["pack.loaded"],
+    where={"name": "activity_normalizer"},
+    view={"include_types": ["extraction_profile"]},
+    creates=["extraction_profile"],
+)
+def migrate_communication_extraction_floor(
+    event, graph, ctx, *, settings: ActivityNormalizerSettings
+):
+    """Upgrade only stack-owned legacy profiles on replayed stores.
+
+    Fresh bundles load activity_normalizer before semantic_extraction and
+    therefore have no profile at this event. Existing v1/v2 defaults do;
+    migrate those without overriding an owner-authored later policy.
+    """
+    profiles = sorted(
+        ctx.view.objects(type="extraction_profile"),
+        key=lambda obj: int(obj.data.get("version") or 0),
+    )
+    active = next(
+        (obj for obj in reversed(profiles) if obj.data.get("status") == "active"),
+        None,
+    )
+    if active is None:
+        return
+    data = active.data or {}
+    if data.get("created_by") not in {
+        "semantic_extraction.seed",
+        "activity_normalizer.select_shared_extraction",
+    }:
+        return
+    by_category = dict(data.get("facets_by_source_category") or {})
+    if by_category.get("communication"):
+        return
+    version = max(int(obj.data.get("version") or 0) for obj in profiles) + 1
+    by_category["communication"] = list(COMMUNICATION_FACET_FLOOR)
+    graph.add_object(
+        "extraction_profile",
+        {
+            **{
+                key: value for key, value in data.items()
+                if key not in {
+                    "profile_identity", "version", "status", "created_by",
+                    "rationale", "supersedes_profile_id",
+                }
+            },
+            "profile_identity": _stable_id("extraction_profile", version),
+            "version": version,
+            "status": "active",
+            "facets_by_source_category": by_category,
+            "created_by": "activity_normalizer.communication_floor_migration",
+            "rationale": (
+                "ADR 0031: bound eager extraction for high-volume, "
+                "multi-subject communication"
+            ),
+            "supersedes_profile_id": active.id,
+        },
+    )
+    _patch(
+        graph,
+        active.id,
+        {"status": "superseded"},
+        rationale="superseded by ADR 0031 communication-floor migration",
+    )
 
 
 @behavior(
@@ -835,6 +907,7 @@ BEHAVIORS = [
     fulfill_evidence_invalidation_request,
     publish_cursor_created,
     publish_cursor_patch,
+    migrate_communication_extraction_floor,
     select_shared_extraction,
     project_structure_candidates,
 ]

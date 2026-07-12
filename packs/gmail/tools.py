@@ -256,7 +256,16 @@ def propose_gmail_page_fn(graph, run, *, page_token: str = ""):
         route=str((data.get("metadata") or {}).get("route") or "composio"),
     )
     graph.add_relation(run.id, call.id, "gmail_sync_call")
-    graph.patch_object(run.id, {"call_ids": [*(data.get("call_ids") or []), call.id], "next_page_token": page_token or None}, rationale="Gmail backfill page proposed")
+    # This helper is also called from a behavior, where ``graph`` is the
+    # provenance-bound BehaviorGraph facade. Its patch API deliberately owns
+    # actor/rationale metadata and accepts only target + updates.
+    graph.patch_object(
+        run.id,
+        {
+            "call_ids": [*(data.get("call_ids") or []), call.id],
+            "next_page_token": page_token or None,
+        },
+    )
     return call
 
 

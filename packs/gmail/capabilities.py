@@ -9,7 +9,7 @@ shape fingerprints, and safe status fields—not mailbox bodies.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -66,16 +66,17 @@ class GmailSendDraftInput(_AccountInput):
 _INTERNAL_FIELDS = {"user_id", "connected_account_id", "idempotency_key"}
 
 _COMPOSIO_OPERATIONS = {
-    "profile.get": "GMAIL_GET_PROFILE",
-    "labels.list": "GMAIL_LIST_LABELS",
-    "messages.fetch": "GMAIL_FETCH_EMAILS",
-    "messages.get": "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
-    "history.list": "GMAIL_LIST_HISTORY",
-    "drafts.create": "GMAIL_CREATE_EMAIL_DRAFT",
-    "drafts.send": "GMAIL_SEND_DRAFT",
+    "profile.get": ("GMAIL_GET_PROFILE",),
+    "labels.list": ("GMAIL_LIST_LABELS",),
+    "messages.fetch": ("GMAIL_FETCH_EMAILS",),
+    "messages.get": ("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",),
+    "history.list": ("GMAIL_LIST_HISTORY",),
+    "drafts.create": ("GMAIL_CREATE_EMAIL_DRAFT",),
+    "drafts.send": ("GMAIL_SEND_DRAFT",),
 }
 
 RouteExecute = Callable[[str, dict[str, Any], str, str, str], Any]
+RouteResolve = Callable[[Sequence[str], str], dict[str, Any]]
 
 
 def _default_composio_execute(
@@ -98,6 +99,31 @@ def _default_composio_execute(
     )
 
 
+def _default_composio_resolve(
+    candidates: Sequence[str],
+    schema_version: str,
+) -> dict[str, Any]:
+    from packs.composio.client import composio_transport
+
+    transport = composio_transport()
+    resolver = getattr(transport, "resolve_tool", None)
+    if callable(resolver):
+        return resolver(
+            toolkit="gmail",
+            candidates=candidates,
+            requested_version=schema_version,
+        )
+    # Backward-compatible seam for injected route fakes and older adapters.
+    # Production SDK transports implement resolve_tool and always return a
+    # concrete catalog version before execution.
+    return {
+        "tool_slug": str(candidates[0]),
+        "version": schema_version,
+        "input_schema_fingerprint": None,
+        "resolution": "configured",
+    }
+
+
 def _plain(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -112,12 +138,13 @@ def _plain(value: Any) -> Any:
 
 def _execute_to_artifact(
     *,
-    provider_operation: str,
+    provider_candidates: Sequence[str],
     payload: dict[str, Any],
     artifact_store_dir: str,
     route: str,
     schema_version: str,
     execute_route: RouteExecute,
+    resolve_route: Optional[RouteResolve],
 ) -> dict[str, Any]:
     user_id = str(payload["user_id"])
     account_id = str(payload["connected_account_id"])
@@ -126,8 +153,22 @@ def _execute_to_artifact(
         for key, value in payload.items()
         if key not in _INTERNAL_FIELDS and value not in ("", None, [], {})
     }
+    resolved = (
+        resolve_route(provider_candidates, schema_version)
+        if resolve_route is not None
+        else {
+            "tool_slug": str(provider_candidates[0]),
+            "version": schema_version,
+            "input_schema_fingerprint": None,
+            "resolution": "configured",
+        }
+    )
+    provider_operation = str(resolved.get("tool_slug") or "")
+    resolved_version = str(resolved.get("version") or "")
+    if not provider_operation or not resolved_version:
+        raise RuntimeError(f"route {route!r} returned an incomplete tool resolution")
     result = _plain(
-        execute_route(provider_operation, remote, user_id, account_id, schema_version)
+        execute_route(provider_operation, remote, user_id, account_id, resolved_version)
     )
     encoded = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     _artifact_ref, digest = store_replay_artifact(encoded, artifact_store_dir)
@@ -139,7 +180,9 @@ def _execute_to_artifact(
         "error": str(error)[:500] if error else None,
         "route": route,
         "provider_operation": provider_operation,
-        "route_schema_version": schema_version,
+        "route_schema_version": resolved_version,
+        "route_resolution": str(resolved.get("resolution") or "configured"),
+        "input_schema_fingerprint": resolved.get("input_schema_fingerprint"),
         "connected_account_id": account_id,
         "replay_mode": "artifact",
         "replay_artifact_locator": portable_artifact_locator(digest),
@@ -150,29 +193,41 @@ def _execute_to_artifact(
 def register_gmail_capabilities(
     *,
     artifact_store_dir: str = ".activegraph/replay-artifacts",
-    toolkit_version: str = "20260703_00",
+    toolkit_version: str = "latest",
     route: str = "composio",
     execute_route: Optional[RouteExecute] = None,
-    operation_map: Optional[dict[str, str]] = None,
+    operation_map: Optional[dict[str, str | Sequence[str]]] = None,
+    resolve_route: Optional[RouteResolve] = None,
 ) -> tuple:
     from packs.tool_gateway.tools import register_local_capability
 
     executor = execute_route or _default_composio_execute
     operations = dict(operation_map or _COMPOSIO_OPERATIONS)
+    resolver = resolve_route
+    if resolver is None and execute_route is None and route == "composio":
+        resolver = _default_composio_resolve
 
     def handler(operation: str):
-        provider_operation = operations.get(operation)
-        if not provider_operation:
+        configured = operations.get(operation)
+        if not configured:
             raise ValueError(f"route {route!r} does not map Gmail operation {operation!r}")
+        provider_candidates = (
+            (configured,)
+            if isinstance(configured, str)
+            else tuple(str(row) for row in configured if str(row))
+        )
+        if not provider_candidates:
+            raise ValueError(f"route {route!r} maps Gmail operation {operation!r} to no candidates")
 
         def _run(execution_context: Optional[dict] = None, **kwargs):
             return _execute_to_artifact(
-                provider_operation=provider_operation,
+                provider_candidates=provider_candidates,
                 payload=kwargs,
                 artifact_store_dir=artifact_store_dir,
                 route=route,
                 schema_version=toolkit_version,
                 execute_route=executor,
+                resolve_route=resolver,
             )
         return _run
 
@@ -225,5 +280,5 @@ def register_gmail_capabilities(
 __all__ = [
     "GmailProfileInput", "GmailLabelsInput", "GmailFetchInput", "GmailMessageInput",
     "GmailHistoryInput", "GmailCreateDraftInput", "GmailSendDraftInput",
-    "RouteExecute", "register_gmail_capabilities",
+    "RouteExecute", "RouteResolve", "register_gmail_capabilities",
 ]

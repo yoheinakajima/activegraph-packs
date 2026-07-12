@@ -21,6 +21,13 @@ evidence semantics. Mailbox responses are content-addressed artifacts, not
 copied into capability-result events. Backfill restarts use query overlap plus
 the normalizer's stable evidence identity. Live polling uses Gmail `historyId`.
 
+The default Composio route resolves only the Gmail pack's explicit operation
+candidates against the live provider catalog. `latest` is converted once per
+process into a concrete available toolkit version and input-schema fingerprint;
+that hardened selection is recorded in every capability receipt. Explicit bad
+pins and missing/deprecated candidates fail before execution instead of leaking
+through as ambiguous provider 404s.
+
 The same contract covers multiple accounts and route replacement. Profile
 claims carry confidence, freshness, and probe provenance; owner corrections
 supersede the profile. Unexpected shapes record a failure, mark claims stale,
@@ -35,7 +42,16 @@ per-call manual requirement while granted scopes remain unobservable.
 
 Default backfill is `newer_than:30d`, 25 items/page, at most 250 messages and
 10 pages. These are versioned settings and may be changed without altering the
-connector contract.
+connector contract. Reaching the cap is a successful bounded sample expressed
+as `partial`, not a failed import.
+
+Communication is multi-subject and high-volume. The shared extraction profile
+therefore gives it a bounded structural facet floor; it does not eagerly run
+the generic activity candidate fan-out. In particular, email addresses, URLs,
+preferences, and assertions in mail cannot become owner profile candidates.
+Profile projection requires evidence metadata explicitly scoped as
+`subject_scope=owner_profile`. Dedicated Gmail/entity/task projectors may add
+richer semantics later without weakening this subject boundary.
 
 The deterministic conformance suite covers pagination overlap, duplicate
 delivery, interruption, partial bounds, rate limiting, invalid cursors,

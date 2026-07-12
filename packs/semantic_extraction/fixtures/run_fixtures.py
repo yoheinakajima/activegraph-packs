@@ -70,7 +70,10 @@ def _acquire(graph) -> None:
         {
             "acquired_item_id": item.id,
             "normalized_content": SUMMARY,
-            "normalized_metadata": {"role": "assistant"},
+            "normalized_metadata": {
+                "role": "assistant",
+                "subject_scope": "owner_profile",
+            },
             "source_category": "ai_activity",
             "connection_path": "pack",
             "is_fixture": True,

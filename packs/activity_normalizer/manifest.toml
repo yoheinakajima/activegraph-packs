@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:22e423ae675baac208591edf9a7c43622823a82519f848804c3b5b5e9218b24a"
+content_hash = "sha256:8eb7cc1b5be4dae21c0ae769c756c459b4524fcabcebbe19eb4eca54c7ad26c6"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -28,7 +28,7 @@ core = ">=0.1"
 [surface]
 object_types = ["acquired_item", "acquired_content", "backfill_cursor", "evidence_invalidation_request", "activity_evidence", "ingestion_failure", "extraction_record", "extractor_version_state", "preference_candidate", "task_candidate", "profile_candidate", "skill_candidate", "eval_candidate"]
 relation_types = ["content_for", "normalizes_to", "acquired_from", "supersedes", "extraction_for", "produced_candidate", "extracted_from", "failure_for"]
-behaviors = ["normalize_acquired_item", "fulfill_evidence_invalidation_request", "publish_cursor_created", "publish_cursor_patch", "select_shared_extraction", "project_structure_candidates"]
+behaviors = ["normalize_acquired_item", "fulfill_evidence_invalidation_request", "publish_cursor_created", "publish_cursor_patch", "migrate_communication_extraction_floor", "select_shared_extraction", "project_structure_candidates"]
 tools = ["reextract_evidence", "disable_extractor_version"]
 settings_schema = "ActivityNormalizerSettings"
 

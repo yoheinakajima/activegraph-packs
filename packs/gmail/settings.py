@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 
 
 class GmailSettings(BaseModel):
-    toolkit_version: str = Field(default="20260703_00")
+    # "latest" is resolved through the bounded Composio tool catalog into a
+    # concrete version before execution; receipts retain the hardened value.
+    toolkit_version: str = Field(default="latest")
     artifact_store_dir: str = Field(default=".activegraph/replay-artifacts")
     default_query: str = Field(default="newer_than:30d")
     default_page_size: int = Field(default=25, ge=1, le=100)

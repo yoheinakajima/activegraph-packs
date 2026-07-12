@@ -70,6 +70,10 @@ def _emit_event(
     *,
     caused_by: Optional[str] = None,
 ) -> Event:
+    # BehaviorGraph.emit takes (type, payload) and supplies actor/causality;
+    # the full Graph takes an Event. Tools run on either surface.
+    if not hasattr(graph, "objects"):
+        return graph.emit(event_type, payload)
     event = Event(
         id=graph.ids.event(),
         type=event_type,

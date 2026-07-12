@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:085450a41c981d6387c2058208282603832d7f6e0522768cec71bf77a0f69161"
+content_hash = "sha256:95ddc384291dc99e537f911e4147fcf633552862c0f98dc37c0c4eacd2c7825f"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -24,6 +24,9 @@ python-deps = []
 
 [dependencies.packs]
 tool_gateway = ">=0.1"
+
+[dependencies.optional-packs]
+secrets = ">=0.1"
 
 [surface]
 object_types = []
