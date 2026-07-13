@@ -30,6 +30,7 @@ class GmailSyncRun(_StrictModel):
     call_ids: list[str] = Field(default_factory=list)
     pending_message_ids: list[str] = Field(default_factory=list)
     completed_message_ids: list[str] = Field(default_factory=list)
+    missing_message_ids: list[str] = Field(default_factory=list)
     status: Literal["proposed", "running", "completed", "partial", "failed"] = "proposed"
     latest_history_id: Optional[str] = None
     deleted_message_ids: list[str] = Field(default_factory=list)

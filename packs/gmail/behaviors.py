@@ -629,6 +629,93 @@ def _classify_provider_failure(message: str) -> str:
     return "provider_failed"
 
 
+def _is_provider_not_found(message: str) -> bool:
+    """Recognize a message that vanished after Gmail listed its history row."""
+
+    lowered = message.lower()
+    return "404" in lowered or "not found" in lowered or "notfound" in lowered
+
+
+def _record_deletion_tombstone(
+    graph,
+    reader,
+    run,
+    *,
+    message_id: str,
+    watermark: Optional[str],
+    observation: str,
+) -> bool:
+    identity = stable_integration_id(
+        "gmail_tombstone", run.data["source_surface_id"], message_id, watermark or ""
+    )
+    existing = next(
+        (
+            obj for obj in reader.objects(type="evidence_invalidation_request")
+            if obj.data.get("request_identity") == identity
+        ),
+        None,
+    )
+    if existing is not None:
+        return False
+    graph.add_object(
+        "evidence_invalidation_request",
+        {
+            "request_identity": identity,
+            "source_surface_id": run.data["source_surface_id"],
+            "provider_item_id": message_id,
+            "evidence_identity": None,
+            "reason": "provider_deleted",
+            "status": "proposed",
+            "invalidated_evidence_ids": [],
+            "error": None,
+            "metadata": {
+                "history_id": watermark,
+                "gmail_sync_run_id": run.id,
+                "observation": observation,
+            },
+        },
+    )
+    return True
+
+
+def _settle_missing_history_message(graph, ctx, run, *, message_id: str) -> None:
+    """Treat a post-history 404 as a concurrent deletion, not run failure."""
+
+    watermark = run.data.get("latest_history_id")
+    created = _record_deletion_tombstone(
+        graph,
+        ctx.view,
+        run,
+        message_id=message_id,
+        watermark=watermark,
+        observation="message_lookup_not_found",
+    )
+    missing = list(run.data.get("missing_message_ids") or [])
+    if message_id not in missing:
+        missing.append(message_id)
+    deleted = list(run.data.get("deleted_message_ids") or [])
+    if message_id not in deleted:
+        deleted.append(message_id)
+    completed = list(run.data.get("completed_message_ids") or [])
+    pending = list(run.data.get("pending_message_ids") or [])
+    settled = set(completed) | set(missing)
+    updates = {
+        "missing_message_ids": missing,
+        "deleted_message_ids": deleted,
+        "tombstones_recorded": int(run.data.get("tombstones_recorded", 0)) + int(created),
+    }
+    if settled >= set(pending):
+        _advance_cursor(
+            graph,
+            _cursor(ctx, run.data["source_surface_id"]),
+            surface_id=run.data["source_surface_id"],
+            message_ids=completed,
+            watermark=watermark,
+        )
+        updates["status"] = "completed"
+    graph.patch_object(run.id, updates)
+
+
 def _active_profile(ctx, account_ref: str):
     return next(
         (
@@ -734,6 +821,13 @@ def gmail_sync_result_ingester(event, graph, ctx, *, settings: GmailSettings):
     envelope = _json(str(result_data.get("output_data") or ""))
     if not envelope.get("ok"):
         message = str(envelope.get("error") or "Gmail call failed")
+        if kind == "history_message" and _is_provider_not_found(message):
+            message_id = str(meta.get("message_id") or "")
+            if message_id:
+                _settle_missing_history_message(
+                    graph, ctx, run, message_id=message_id
+                )
+                return
         _fail_sync(
             graph,
             ctx,
@@ -790,32 +884,14 @@ def gmail_sync_result_ingester(event, graph, ctx, *, settings: GmailSettings):
         message_ids = message_ids[: int(run.data["max_messages"])]
         tombstones = 0
         for message_id in deleted_ids[: int(run.data["max_messages"])]:
-            identity = stable_integration_id(
-                "gmail_tombstone", run.data["source_surface_id"], message_id, watermark or ""
-            )
-            existing = next(
-                (
-                    obj for obj in ctx.view.objects(type="evidence_invalidation_request")
-                    if obj.data.get("request_identity") == identity
-                ),
-                None,
-            )
-            if existing is None:
-                graph.add_object(
-                    "evidence_invalidation_request",
-                    {
-                        "request_identity": identity,
-                        "source_surface_id": run.data["source_surface_id"],
-                        "provider_item_id": message_id,
-                        "evidence_identity": None,
-                        "reason": "provider_deleted",
-                        "status": "proposed",
-                        "invalidated_evidence_ids": [],
-                        "error": None,
-                        "metadata": {"history_id": watermark, "gmail_sync_run_id": run.id},
-                    },
-                )
-                tombstones += 1
+            tombstones += int(_record_deletion_tombstone(
+                graph,
+                ctx.view,
+                run,
+                message_id=message_id,
+                watermark=watermark,
+                observation="history_deleted",
+            ))
         calls = list(run.data.get("call_ids") or [])
         for message_id in message_ids:
             fetch = _capability_call(
@@ -864,7 +940,8 @@ def gmail_sync_result_ingester(event, graph, ctx, *, settings: GmailSettings):
         if message_id not in completed:
             completed.append(message_id)
     pending = list(run.data.get("pending_message_ids") or [])
-    done = set(completed) >= set(pending)
+    missing = list(run.data.get("missing_message_ids") or [])
+    done = (set(completed) | set(missing)) >= set(pending)
     updates = {"completed_message_ids": completed, "messages_imported": len(completed)}
     if done:
         _advance_cursor(

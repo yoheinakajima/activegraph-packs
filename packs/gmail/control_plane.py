@@ -226,7 +226,7 @@ def adapt_gmail_run_fn(
         cursor={
             "position_kind": position_kind,
             "has_position": has_position,
-            "advanced": has_position,
+            "advanced": state in {"succeeded", "partial"} and has_position,
             "coverage": coverage,
         },
         maintenance_mode=maintenance_mode,
