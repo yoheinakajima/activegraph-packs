@@ -48,8 +48,13 @@ def run_semantic_batch_fixture() -> dict:
     )
     assert result["created"] is True
     assert len(result["observations"]) == 4
+    runtime.run_until_idle()
     batch = graph.objects(type="interaction_batch")[0]
     assert batch.data["privacy_mode"] == "semantic_only"
+    [importance] = graph.objects(type="importance_vector")
+    assert importance.data["score_milli"] > 500
+    assert importance.data["features"]["outcome"] == 650
+    assert importance.data["policy_version"] == 1
 
     retry = record_interaction_batch_fn(
         graph,
@@ -61,7 +66,7 @@ def run_semantic_batch_fixture() -> dict:
     )
     assert retry["created"] is False
     assert len(graph.objects(type="attention_observation")) == 4
-    return {"observations": 4, "idempotent": True}
+    return {"observations": 4, "idempotent": True, "importance": "learned"}
 
 
 def run_censored_absence_fixture() -> dict:

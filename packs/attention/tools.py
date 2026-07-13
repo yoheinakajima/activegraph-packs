@@ -36,6 +36,8 @@ def record_attention_observation_fn(
     subject_kind: str = "object",
     strength_milli: int = 1_000,
     context_key: str = "global",
+    objective_ref: Optional[str] = None,
+    horizon_key: str = "current",
     session_id: Optional[str] = None,
     opportunity_id: Optional[str] = None,
     active_ms: Optional[int] = None,
@@ -59,6 +61,8 @@ def record_attention_observation_fn(
         signal_type=signal_type,
         strength_milli=strength_milli,
         context_key=context_key,
+        objective_ref=objective_ref,
+        horizon_key=horizon_key,
         session_id=session_id,
         opportunity_id=opportunity_id,
         active_ms=active_ms,
@@ -131,6 +135,8 @@ def record_interaction_batch_fn(
             subject_kind=str(item.pop("subject_kind", "object")),
             strength_milli=int(item.pop("strength_milli", 1_000)),
             context_key=str(item.pop("context_key", "global")),
+            objective_ref=item.pop("objective_ref", None),
+            horizon_key=str(item.pop("horizon_key", "current")),
             session_id=session_id,
             opportunity_id=item.pop("opportunity_id", None),
             active_ms=item.pop("active_ms", None),
@@ -192,6 +198,8 @@ def record_attention_observation(
     subject_kind: str = "object",
     strength_milli: int = 1_000,
     context_key: str = "global",
+    objective_ref: Optional[str] = None,
+    horizon_key: str = "current",
     session_id: Optional[str] = None,
     opportunity_id: Optional[str] = None,
     active_ms: Optional[int] = None,
@@ -209,6 +217,8 @@ def record_attention_observation(
         subject_kind=subject_kind,
         strength_milli=strength_milli,
         context_key=context_key,
+        objective_ref=objective_ref,
+        horizon_key=horizon_key,
         session_id=session_id,
         opportunity_id=opportunity_id,
         active_ms=active_ms,
@@ -217,6 +227,189 @@ def record_attention_observation(
         explicit=explicit,
         evidence_refs=evidence_refs,
         metadata=metadata,
+    )
+
+
+def get_importance_fn(
+    graph,
+    subject_ref: str,
+    *,
+    context_key: str = "global",
+    objective_ref: Optional[str] = None,
+    horizon_key: str = "current",
+) -> dict[str, Any]:
+    try:
+        vectors = graph.objects(type="importance_vector")
+    except Exception:
+        vectors = []
+    row = next(
+        (
+            obj for obj in vectors
+            if obj.data.get("subject_ref") == subject_ref
+            and obj.data.get("context_key") == context_key
+            and (obj.data.get("objective_ref") or None) == objective_ref
+            and obj.data.get("horizon_key") == horizon_key
+        ),
+        None,
+    )
+    if row is None:
+        return {
+            "subject_ref": subject_ref,
+            "context_key": context_key,
+            "objective_ref": objective_ref,
+            "horizon_key": horizon_key,
+            "score_milli": 500,
+            "confidence_milli": 0,
+            "priority_band": "unranked",
+            "features": {},
+            "evidence_refs": [],
+            "policy_id": "importance-trust.beta-evidence",
+            "policy_version": 1,
+        }
+    data = dict(row.data)
+    data["object_id"] = row.id
+    data["evidence_refs"] = list(data.get("observation_ids") or [])
+    return data
+
+
+def get_source_trust_fn(
+    graph,
+    source_ref: str,
+    *,
+    domain: str = "general",
+    query_scope: str = "general",
+) -> dict[str, Any]:
+    try:
+        vectors = graph.objects(type="source_trust_vector")
+    except Exception:
+        vectors = []
+    row = next(
+        (
+            obj for obj in vectors
+            if obj.data.get("source_ref") == source_ref
+            and obj.data.get("domain") == domain
+            and obj.data.get("query_scope") == query_scope
+        ),
+        None,
+    )
+    if row is None:
+        return {
+            "source_ref": source_ref,
+            "domain": domain,
+            "query_scope": query_scope,
+            "score_milli": 500,
+            "confidence_milli": 0,
+            "verdict": "unproven",
+            "features": {},
+            "evidence_refs": [],
+            "policy_id": "importance-trust.beta-evidence",
+            "policy_version": 1,
+        }
+    data = dict(row.data)
+    data["object_id"] = row.id
+    data["evidence_refs"] = list(data.get("outcome_event_ids") or [])
+    return data
+
+
+def rank_importance_fn(
+    graph,
+    subject_refs: list[str],
+    *,
+    context_key: str = "global",
+    objective_ref: Optional[str] = None,
+    horizon_key: str = "current",
+    limit: int = 10,
+    exploration_slots: int = 1,
+) -> dict[str, Any]:
+    """Rank with an explicit deterministic exploration reserve.
+
+    Missing vectors are not silently treated as low importance. Up to
+    ``exploration_slots`` unranked subjects are selected by a stable hash and
+    named as exploration in the decision trace.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    if exploration_slots < 0 or exploration_slots > limit:
+        raise ValueError("exploration_slots must be between zero and limit")
+    refs = list(dict.fromkeys(str(ref) for ref in subject_refs if ref))
+    rows = [
+        get_importance_fn(
+            graph, ref, context_key=context_key,
+            objective_ref=objective_ref, horizon_key=horizon_key,
+        )
+        for ref in refs
+    ]
+    ranked = [row for row in rows if row["priority_band"] != "unranked"]
+    unranked = [row for row in rows if row["priority_band"] == "unranked"]
+    ranked.sort(
+        key=lambda row: (
+            -int(row["score_milli"]), -int(row["confidence_milli"]),
+            str(row["subject_ref"]),
+        )
+    )
+    unranked.sort(
+        key=lambda row: hashlib.sha256(
+            f"{context_key}\x1f{objective_ref or ''}\x1f{row['subject_ref']}".encode()
+        ).hexdigest()
+    )
+    explore = unranked[:exploration_slots]
+    exploit_limit = max(0, limit - len(explore))
+    selected = [
+        {**row, "selection_reason": "importance"}
+        for row in ranked[:exploit_limit]
+    ] + [
+        {**row, "selection_reason": "exploration"}
+        for row in explore
+    ]
+    return {
+        "items": selected,
+        "considered": len(rows),
+        "exploration_slots": exploration_slots,
+        "policy_id": "importance-trust.beta-evidence",
+        "policy_version": 1,
+    }
+
+
+@tool(name="get_importance", description="Explain current learned importance for one subject.")
+def get_importance(
+    graph,
+    subject_ref: str,
+    context_key: str = "global",
+    objective_ref: Optional[str] = None,
+    horizon_key: str = "current",
+) -> dict[str, Any]:
+    return get_importance_fn(
+        graph, subject_ref, context_key=context_key,
+        objective_ref=objective_ref, horizon_key=horizon_key,
+    )
+
+
+@tool(name="get_source_trust", description="Explain learned source trust in one domain.")
+def get_source_trust(
+    graph,
+    source_ref: str,
+    domain: str = "general",
+    query_scope: str = "general",
+) -> dict[str, Any]:
+    return get_source_trust_fn(
+        graph, source_ref, domain=domain, query_scope=query_scope
+    )
+
+
+@tool(name="rank_importance", description="Rank subjects with explicit exploration reserve.")
+def rank_importance(
+    graph,
+    subject_refs: Optional[list[str]] = None,
+    context_key: str = "global",
+    objective_ref: Optional[str] = None,
+    horizon_key: str = "current",
+    limit: int = 10,
+    exploration_slots: int = 1,
+) -> dict[str, Any]:
+    return rank_importance_fn(
+        graph, list(subject_refs or []), context_key=context_key,
+        objective_ref=objective_ref, horizon_key=horizon_key,
+        limit=limit, exploration_slots=exploration_slots,
     )
 
 
@@ -253,10 +446,16 @@ def record_interaction_batch(
     )
 
 
-TOOLS = [record_attention_observation, record_interaction_batch]
+TOOLS = [
+    record_attention_observation, record_interaction_batch,
+    get_importance, get_source_trust, rank_importance,
+]
 
 __all__ = [
     "TOOLS",
     "record_attention_observation_fn",
     "record_interaction_batch_fn",
+    "get_importance_fn",
+    "get_source_trust_fn",
+    "rank_importance_fn",
 ]

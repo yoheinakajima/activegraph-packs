@@ -3,8 +3,8 @@
 
 [pack]
 name = "attention"
-version = "0.1.0"
-description = "Semantic engagement observations and bounded interaction batches, without choosing the future importance/trust vector representation."
+version = "0.2.0"
+description = "Semantic engagement observations plus explainable, scoped importance and source-trust vectors learned from recorded outcomes."
 license = "Apache-2.0"
 
 [pack.provenance]
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:11d18ad1430193c02d72566011bb383dbce7a1a6c8a14dbae054a52b8f9baf6a"
+content_hash = "sha256:1e62ce2fd96e814eea4f8294697aa4091be3253847ab286d040d1b0d55f8dbd4"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -23,10 +23,10 @@ python = ">=3.11"
 python-deps = []
 
 [surface]
-object_types = ["attention_observation", "interaction_batch"]
+object_types = ["attention_observation", "interaction_batch", "importance_vector", "source_trust_vector"]
 relation_types = []
-behaviors = []
-tools = ["record_attention_observation", "record_interaction_batch"]
+behaviors = ["importance_vector_projector", "source_trust_vector_projector"]
+tools = ["record_attention_observation", "record_interaction_batch", "get_importance", "get_source_trust", "rank_importance"]
 settings_schema = "AttentionSettings"
 
 [fixtures]

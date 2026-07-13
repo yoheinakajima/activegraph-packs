@@ -3,15 +3,18 @@ import hashlib
 from activegraph import Graph, Runtime
 
 from packs.activity_normalizer import pack as normalizer_pack
+from packs.attention import pack as attention_pack
 from packs.core import pack as core_pack
 from packs.memory_gateway import MemoryGatewaySettings, pack as memory_pack
 from packs.memory_gateway.tools import resolve_memory_query_fn
 from packs.semantic_extraction import pack as semantic_pack
+from packs.eval_outcome.tools import _emit_event
 
 
 def test_evidence_floor_precedes_derived_memory_and_is_subject_scoped():
     graph = Graph(); runtime = Runtime(graph)
     runtime.load_pack(core_pack); runtime.load_pack(normalizer_pack)
+    runtime.load_pack(attention_pack)
     runtime.load_pack(semantic_pack)
     runtime.load_pack(memory_pack, settings=MemoryGatewaySettings(backend_url=":memory:"))
     text = "Yohei prefers small deterministic tools for ActiveGraph."
@@ -25,6 +28,24 @@ def test_evidence_floor_precedes_derived_memory_and_is_subject_scoped():
     assert result["evidence_ids"]
     assert result["context_text"].startswith("[authoritative-evidence]")
     assert result["coverage"]["live_lookup_available"] is False
+    assert result["metadata"]["trust_arbitration"][0]["trust_verdict"] == "unproven"
+
+    _emit_event(graph, "outcome.helped", {
+        "artifact_id": "answer:1", "artifact_type": "answer",
+        "source_context": {
+            "source_ref": "profile", "source_kind": "connector_surface",
+            "domain": "preferences", "query_scope": "owner_preferences",
+        },
+    }, "owner:test")
+    runtime.run_until_idle()
+    trusted = resolve_memory_query_fn(
+        graph, "deterministic tools", subject_ref="owner",
+        source_domain="preferences", query_scope="owner_preferences",
+    )
+    trace = trusted["metadata"]["trust_arbitration"][0]
+    assert trace["trust_verdict"] == "supported"
+    assert trace["trust_vector_id"]
+    assert trace["trust_evidence_refs"]
 
     other = resolve_memory_query_fn(graph, "deterministic tools", subject_ref="someone_else")
     assert other["evidence_ids"] == []

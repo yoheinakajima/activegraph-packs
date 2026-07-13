@@ -5,6 +5,13 @@
 - Treat SQLite `file:` backend URLs as URIs so shared in-memory test stores do
   not leak literal `file:mem_*?mode=memory&cache=shared` files into worktrees.
 
+## v0.9.0 — Learned source-trust arbitration (2026-07-12)
+
+- Weight competing evidence sources with domain/query-scoped trust vectors
+  while preserving the evidence-authoritative floor.
+- Record raw relevance, weighted relevance, trust vector, verdict, and outcome
+  references in every query resolution. Unproven trust is neutral.
+
 ## v0.8.0 — Evidence-authoritative resolution and source admission (2026-07-12)
 
 - Add a graph-visible procedure resolver spanning raw evidence, annotations,

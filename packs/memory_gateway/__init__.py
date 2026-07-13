@@ -48,11 +48,12 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], integrates_with=["tool_gateway", "eval_outcome"]
 pack = Pack(
     name="memory_gateway",
-    version="0.8.0",
+    version="0.9.0",
     description=(
         "Memory lifecycle manager. Evaluates memory_candidates from Core Pack, "
         "accepts high-confidence items into durable MemoryItems, and provides "
-        "hybrid, outcome-aware retrieval with reversible reliability de-ranking. "
+        "hybrid, outcome-aware retrieval with reversible reliability de-ranking "
+        "and domain-scoped learned source-trust arbitration. "
         "Default backend: "
         "SQLite; external stores (mem0, …) plug in via register_backend()."
     ),

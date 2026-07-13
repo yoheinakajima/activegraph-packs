@@ -1,8 +1,4 @@
-"""Attention Pack — semantic engagement evidence for learned vectors.
-
-This pack deliberately does not own BabyAGI score, policy, authority, raw UI
-telemetry, or a universal mutable importance field.
-"""
+"""Attention Pack — semantic evidence and learned importance/trust vectors."""
 
 from __future__ import annotations
 
@@ -16,10 +12,10 @@ from .tools import TOOLS
 
 pack = Pack(
     name="attention",
-    version="0.1.0",
+    version="0.2.0",
     description=(
-        "Semantic engagement observations and bounded interaction batches, "
-        "without choosing the future importance/trust vector representation."
+        "Semantic engagement observations plus explainable, scoped importance "
+        "and source-trust vectors learned from recorded outcomes."
     ),
     object_types=OBJECT_TYPES,
     relation_types=RELATION_TYPES,

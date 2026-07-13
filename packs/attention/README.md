@@ -10,6 +10,13 @@ Neutral semantic observations for learning what deserves attention.
 - `interaction_batch` — an idempotent bounded flush from one client session.
 - The exposure rule: `nonresponse_window` fails closed without an
   `opportunity_id`; not shown and shown-but-ignored are different data.
+- `importance_vector` — subject/objective/context/horizon-scoped salience,
+  projected from semantic engagement and explicit outcomes with complete
+  observation references.
+- `source_trust_vector` — source/domain/query-scoped credibility, projected
+  only from canonical helped/hurt/contradicted/stale outcomes.
+- `rank_importance` — deterministic ranking with a named exploration reserve;
+  unseen things are unranked, never silently low-value.
 
 ## Telemetry boundary
 
@@ -17,9 +24,11 @@ Clients send semantic observations only. Do not send mouse movements, scroll
 ticks, keystrokes, DOM snapshots, CSS selectors, raw content, or background-tab
 time. Active dwell is foreground-only and summarized in milliseconds.
 
-## Deliberately deferred
+## Vector boundary
 
-This pack does **not** define an importance/trust scalar, vector, model, default
-weights, ranking projection, priority policy, score, or authority input. ADR
-0028 leaves the exact learned-vector representation to its implementation
-round. This pack supplies the honest evidence floor for that decision.
+The v1 policy is `importance-trust.beta-evidence@1`: conservative priors,
+integer evidence weights, no ambient-time decay, and zero direct weight for an
+LLM judgment. The score is a prediction, never a user reputation or source
+self-description. Confidence remains claim-local; reliability remains
+artifact-local; urgency and actionability remain domain semantics. BabyAGI may
+render `priority_band`, but game score and authority may not consume it.
