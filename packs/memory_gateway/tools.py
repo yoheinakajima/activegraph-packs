@@ -102,6 +102,8 @@ def resolve_memory_query_fn(
     top_k: int = 8,
     min_score: float = 0.2,
     backend_url: str = ":memory:",
+    source_domain: str = "general",
+    query_scope: str = "general",
 ) -> dict[str, Any]:
     """Resolve over registered procedures with raw evidence as the floor.
 
@@ -113,6 +115,8 @@ def resolve_memory_query_fn(
     """
     from .backend import lexical_score
 
+    from packs.attention.tools import get_source_trust_fn
+
     evidence_rows = []
     try:
         evidence_objects = graph.objects(type="activity_evidence")
@@ -122,12 +126,22 @@ def resolve_memory_query_fn(
         data = obj.data or {}
         if data.get("status") != "current" or not _subject_allows_evidence(data, subject_ref):
             continue
-        score = lexical_score(query, str(data.get("normalized_content") or ""))
-        if score >= min_score:
-            evidence_rows.append((score, obj))
-    evidence_rows.sort(key=lambda row: (-row[0], row[1].id))
+        raw_score = lexical_score(query, str(data.get("normalized_content") or ""))
+        if raw_score >= min_score:
+            trust = get_source_trust_fn(
+                graph,
+                str(data.get("source_surface_id") or data.get("source_ref") or "unknown"),
+                domain=source_domain,
+                query_scope=query_scope,
+            )
+            # Unknown trust is neutral (1.0 multiplier), not low trust. Learned
+            # credibility can reorder competing evidence but never remove the
+            # evidence floor or let a derivative override its source.
+            multiplier = 0.5 + (int(trust["score_milli"]) / 1_000)
+            evidence_rows.append((raw_score * multiplier, raw_score, obj, trust))
+    evidence_rows.sort(key=lambda row: (-row[0], -row[1], row[2].id))
     evidence_rows = evidence_rows[:top_k]
-    evidence_ids = [obj.id for _score, obj in evidence_rows]
+    evidence_ids = [obj.id for _weighted, _raw, obj, _trust in evidence_rows]
 
     annotation_rows = []
     if evidence_ids:
@@ -157,8 +171,10 @@ def resolve_memory_query_fn(
     if evidence_rows:
         blocks.append("[authoritative-evidence]")
         blocks.extend(
-            f"- evidence_id={obj.id} | source={obj.data.get('source_ref')} | {str(obj.data.get('normalized_content') or '')}"
-            for _score, obj in evidence_rows
+            f"- evidence_id={obj.id} | source={obj.data.get('source_ref')} | "
+            f"trust={trust.get('verdict')}:{trust.get('score_milli')} | "
+            f"{str(obj.data.get('normalized_content') or '')}"
+            for _weighted, _raw, obj, trust in evidence_rows
         )
     if annotation_rows:
         blocks.append("[evidence-annotations]")
@@ -186,7 +202,7 @@ def resolve_memory_query_fn(
         selected_tier = "none"
         procedure_id = "memory.no_match@0.1.0"
     confidence = max(
-        [score for score, _obj in evidence_rows]
+        [min(score, 1.0) for score, _raw, _obj, _trust in evidence_rows]
         + [score for score, _obj, _text in annotation_rows]
         + [float(row.get("score") or 0.0) for row in memory_rows]
         + [0.0]
@@ -199,7 +215,24 @@ def resolve_memory_query_fn(
         "context_text": "\n".join(blocks), "confidence": min(confidence, 1.0),
         "authoritative_evidence": True,
         "coverage": {"procedures_checked": ["raw_evidence", "annotated_evidence", "admitted_items", "live_lookup"], "live_lookup_available": False},
-        "metadata": {"rule": "evidence_precedes_derived_artifacts"},
+        "metadata": {
+            "rule": "evidence_precedes_derived_artifacts",
+            "trust_arbitration": [
+                {
+                    "evidence_id": obj.id,
+                    "source_ref": trust.get("source_ref"),
+                    "domain": trust.get("domain"),
+                    "query_scope": trust.get("query_scope"),
+                    "trust_score_milli": trust.get("score_milli"),
+                    "trust_verdict": trust.get("verdict"),
+                    "trust_vector_id": trust.get("object_id"),
+                    "trust_evidence_refs": list(trust.get("evidence_refs") or []),
+                    "raw_relevance": raw,
+                    "weighted_relevance": weighted,
+                }
+                for weighted, raw, obj, trust in evidence_rows
+            ],
+        },
     })
     return {"resolution_id": resolution.id, **resolution.data}
 
@@ -256,10 +289,13 @@ def resolve_memory_query(
     top_k: int = 8,
     min_score: float = 0.2,
     backend_url: str = ":memory:",
+    source_domain: str = "general",
+    query_scope: str = "general",
 ) -> dict[str, Any]:
     return resolve_memory_query_fn(
         graph, query, subject_ref=subject_ref, top_k=top_k,
         min_score=min_score, backend_url=backend_url,
+        source_domain=source_domain, query_scope=query_scope,
     )
 
 
