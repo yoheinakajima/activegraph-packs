@@ -67,12 +67,13 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core", "semantic_extraction", "entity"], composes_with=["identity_auth", "agent_profile", "memory_gateway"]
 pack = Pack(
     name="communication",
-    version="0.4.0",
+    version="0.5.0",
     description=(
         "Channel-neutral communication semantic layer. "
         "Provides the durable conversation-family contract with exact-span staged interpretation, "
         "plus the legacy CommThread/CommMessage action layer. Channel adapters own service mapping; "
-        "semantic extraction owns bounded model execution."
+        "semantic extraction owns bounded model execution. Outbound replies "
+        "emit neutral attention signals for thread and counterpart salience."
     ),
     object_types=OBJECT_TYPES,
     relation_types=RELATION_TYPES,

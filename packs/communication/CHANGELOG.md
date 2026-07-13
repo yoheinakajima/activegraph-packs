@@ -1,5 +1,13 @@
 # Communication Pack Changelog
 
+## v0.5.0 — conversation attention adapter (2026-07-12)
+
+- Emit `attention.signal_observed` for outbound messages, covering the
+  conversation thread and stable hashed counterpart identities. The attention
+  pack owns validation/scoring; this family adapter contains no weights.
+- Add `attention_refs` to native thread rows so clients can combine thread and
+  person importance across new threads without exposing raw addresses.
+
 ## v0.4.0 — bounded useful follow-up candidates (2026-07-12)
 
 - Project at most one reviewable task from an exact-span relation annotation

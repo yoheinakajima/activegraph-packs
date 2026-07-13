@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 — 2026-07-12
+
+- Add the neutral `attention.signal_observed` intake: family/domain packs may
+  emit semantic signals, while attention alone validates absence censorship
+  and owns vector state.
+- Consume outbound conversation replies as thread/person importance without
+  creating a Gmail-specific ranker.
+
 ## 0.2.0 — 2026-07-12
 
 - Add typed context-scoped `importance_vector` and domain-scoped

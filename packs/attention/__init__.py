@@ -12,7 +12,7 @@ from .tools import TOOLS
 
 pack = Pack(
     name="attention",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Semantic engagement observations plus explainable, scoped importance "
         "and source-trust vectors learned from recorded outcomes."

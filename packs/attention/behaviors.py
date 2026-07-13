@@ -7,7 +7,7 @@ from typing import Any
 
 from activegraph.packs import behavior
 
-from .object_types import ImportanceVector, SourceTrustVector
+from .object_types import AttentionObservation, ImportanceVector, SourceTrustVector
 
 
 POLICY_ID = "importance-trust.beta-evidence"
@@ -82,6 +82,57 @@ def _trust_score(support: int, challenge: int) -> tuple[int, int, str]:
     else:
         verdict = "weak"
     return score, confidence, verdict
+
+
+@behavior(
+    name="semantic_attention_signal_capture",
+    on=["attention.signal_observed"],
+    creates=["attention_observation"],
+)
+def semantic_attention_signal_capture(event, graph, ctx):
+    """Validate neutral family/domain signals into owned observations.
+
+    Producers may describe semantic behavior but cannot write vector state.
+    The attention pack owns schema validation, absence censorship, and the
+    projection policy.
+    """
+    payload = dict(event.payload or {})
+    producer = str(payload.get("producer") or event.actor or "unknown")
+    for row in payload.get("observations") or []:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        observation = AttentionObservation(
+            observation_id=str(item.pop("observation_id")),
+            subject_ref=str(item.pop("subject_ref")),
+            signal_type=str(item.pop("signal_type")),
+            subject_kind=str(item.pop("subject_kind", "object")),
+            strength_milli=int(item.pop("strength_milli", 1_000)),
+            context_key=str(item.pop("context_key", "global")),
+            objective_ref=item.pop("objective_ref", None),
+            horizon_key=str(item.pop("horizon_key", "current")),
+            opportunity_id=item.pop("opportunity_id", None),
+            active_ms=item.pop("active_ms", None),
+            occurred_at=item.pop("occurred_at", None),
+            source=str(item.pop("source", "connector")),
+            explicit=bool(item.pop("explicit", False)),
+            evidence_refs=list(item.pop("evidence_refs", [])),
+            metadata={"producer": producer, **dict(item.pop("metadata", {})), **item},
+        ).model_dump()
+        if observation["signal_type"] == "nonresponse_window" and not observation["opportunity_id"]:
+            raise ValueError("nonresponse_window requires opportunity_id")
+        existing = next(
+            (
+                obj for obj in _objects(ctx.view, "attention_observation")
+                if obj.data.get("observation_id") == observation["observation_id"]
+            ),
+            None,
+        )
+        if existing is not None:
+            if dict(existing.data) != observation:
+                raise ValueError("attention signal observation identity collision")
+            continue
+        graph.add_object("attention_observation", observation)
 
 
 @behavior(
@@ -235,6 +286,10 @@ def source_trust_vector_projector(event, graph, ctx):
             graph.patch_object(existing.id, update)
 
 
-BEHAVIORS = [importance_vector_projector, source_trust_vector_projector]
+BEHAVIORS = [
+    semantic_attention_signal_capture,
+    importance_vector_projector,
+    source_trust_vector_projector,
+]
 
 __all__ = ["BEHAVIORS", "POLICY_ID", "POLICY_VERSION"]
