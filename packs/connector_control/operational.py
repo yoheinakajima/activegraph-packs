@@ -12,15 +12,18 @@ from packs.activity_normalizer.replay import artifact_path
 from .object_types import ConnectorOperationalPolicy
 
 
-OPERATIONAL_POLICY_ID = "connector-operational@0.1.0"
+OPERATIONAL_POLICY_ID = "connector-operational@0.2.0"
+SUPERSEDED_POLICY_IDS = ("connector-operational@0.1.0",)
 
 
 def operational_policy_payload() -> dict[str, Any]:
     return ConnectorOperationalPolicy(
         policy_identity=OPERATIONAL_POLICY_ID,
+        version=2,
         rationale=(
             "ADR 0034 provisional local release bounds for the recorded "
-            "250-item deterministic connector fixture"
+            "250-item deterministic connector fixture; v2 names the "
+            "acquisition ceilings ingestion plans validate against (ADR 0039)"
         ),
     ).model_dump()
 
@@ -167,6 +170,7 @@ def operational_budget_violations(
 
 __all__ = [
     "OPERATIONAL_POLICY_ID",
+    "SUPERSEDED_POLICY_IDS",
     "ConnectorOperationalMeasurement",
     "measure_connector_run",
     "operational_budget_violations",

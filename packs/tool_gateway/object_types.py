@@ -49,13 +49,21 @@ class IntegrationCapability(_StrictModel):
 
 
 class IntegrationSignal(_StrictModel):
-    """A profile surface's predicted downstream yield, never a truth claim."""
+    """A profile surface's predicted downstream yield, never a truth claim.
+
+    Richness is measured or honestly absent (ADR 0039): ``unmeasured`` marks a
+    surface the probes said nothing about, and a numeric confidence may only
+    accompany a measurement carried with provenance references.
+    """
 
     surface: str = Field(min_length=1)
     candidate_types: list[str] = Field(default_factory=list)
-    estimated_richness: Literal["unknown", "low", "medium", "high"] = "unknown"
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    estimated_richness: Literal[
+        "unknown", "unmeasured", "low", "medium", "high"
+    ] = "unknown"
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     provenance: list[str] = Field(default_factory=list)
+    measurement: dict[str, Any] = Field(default_factory=dict)
 
 
 class IntegrationClaim(_StrictModel):

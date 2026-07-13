@@ -3,8 +3,8 @@
 
 [pack]
 name = "connector_control"
-version = "0.3.0"
-description = "Neutral connector surface bindings, authoritative-run adapters, learning deltas, and validated family-native read shapes."
+version = "0.4.0"
+description = "Neutral connector surface bindings, authoritative-run adapters, learning deltas, ingestion plans, and validated family-native read shapes."
 license = "Apache-2.0"
 
 [pack.provenance]
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:b178672d81954056a4acd818a84cea3ae001cb67166a54c8ca675c7e277ef446"
+content_hash = "sha256:de35b6e0424f97e1a98a56dfe4cc9aaa5654cd2133c4217d00ea36d7d8484df7"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -23,10 +23,10 @@ python = ">=3.11"
 python-deps = []
 
 [surface]
-object_types = ["connector_surface_binding", "connector_run_observation", "connector_learning_delta", "connector_native_view", "connector_operational_policy", "connector_maintenance_request"]
+object_types = ["connector_surface_binding", "connector_run_observation", "connector_learning_delta", "connector_native_view", "connector_operational_policy", "connector_maintenance_request", "connector_ingestion_plan"]
 relation_types = []
-behaviors = ["seed_connector_operational_policy", "project_source_lifecycle_to_connector_binding"]
-tools = ["record_connector_binding", "record_connector_run_observation", "record_connector_learning_delta", "record_connector_native_view", "project_connector_control_plane", "project_connector_learning_deltas", "request_connector_refresh"]
+behaviors = ["seed_connector_operational_policy", "project_source_lifecycle_to_connector_binding", "settle_ingestion_plan_on_terminal_run"]
+tools = ["record_connector_binding", "record_connector_run_observation", "record_connector_learning_delta", "record_connector_native_view", "project_connector_control_plane", "project_connector_learning_deltas", "request_connector_refresh", "propose_ingestion_plan", "edit_ingestion_plan", "approve_ingestion_plan", "abandon_ingestion_plan", "execute_ingestion_plan", "project_ingestion_plans"]
 settings_schema = "ConnectorControlSettings"
 
 [fixtures]

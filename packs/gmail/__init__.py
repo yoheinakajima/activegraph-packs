@@ -8,13 +8,15 @@ from .object_types import OBJECT_TYPES, RELATION_TYPES
 from .settings import GmailSettings
 from .tools import TOOLS
 from .maintenance import register_gmail_maintenance
+from .plan import register_gmail_ingestion_plans
 
 register_gmail_maintenance()
+register_gmail_ingestion_plans()
 
 # requires=["activity_normalizer", "semantic_extraction", "communication", "usage", "tool_gateway", "connector_control"]
 pack = Pack(
     name="gmail",
-    version="0.3.0",
+    version="0.4.0",
     description=(
         "Canonical Gmail service connector: budgeted exploration into a service/account profile, "
         "bounded replayable backfill, history-watermark polling, provider-neutral evidence, local "

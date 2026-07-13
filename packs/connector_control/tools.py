@@ -7,6 +7,14 @@ from typing import Any, Optional
 
 from activegraph.packs import tool
 from .maintenance import request_connector_refresh_fn
+from .plans import (
+    abandon_ingestion_plan_fn,
+    approve_ingestion_plan_fn,
+    edit_ingestion_plan_fn,
+    execute_ingestion_plan_fn,
+    project_ingestion_plans_fn,
+    propose_ingestion_plan_fn,
+)
 
 from .contracts import validate_native_data
 from .object_types import (
@@ -18,7 +26,7 @@ from .object_types import (
 from .settings import ConnectorControlSettings
 
 
-CONTROL_CONTRACT_VERSION = "connector_control@0.1.0"
+CONTROL_CONTRACT_VERSION = "connector_control@0.2.0"
 TERMINAL_STATES = frozenset({"succeeded", "partial", "failed"})
 SUCCESS_STATES = frozenset({"succeeded", "partial"})
 
@@ -213,6 +221,7 @@ def record_connector_learning_delta_fn(
     exceptions: Optional[list[dict[str, Any]]] = None,
     cost: Optional[dict[str, Any]] = None,
     refs: Optional[list[str]] = None,
+    plan: Optional[dict[str, Any]] = None,
     metadata: Optional[dict[str, Any]] = None,
     settings: Optional[ConnectorControlSettings] = None,
     reader=None,
@@ -237,6 +246,7 @@ def record_connector_learning_delta_fn(
         exceptions=list(exceptions or [])[: configured.max_exceptions_per_delta],
         cost=dict(cost or {}),
         refs=list(dict.fromkeys(refs or []))[: configured.max_refs_per_delta],
+        plan=dict(plan or {}),
         metadata=dict(metadata or {}),
     ).model_dump()
     obj, created = _upsert(
@@ -378,6 +388,36 @@ def request_connector_refresh(graph, source_surface_id: str, requested_by: str =
     return request_connector_refresh_fn(graph, source_surface_id, requested_by=requested_by)
 
 
+@tool(name="propose_ingestion_plan", description="Record a service-derived, versioned acquisition proposal for owner review.")
+def propose_ingestion_plan(graph, source_surface_id: str = "", service: str = "", account_ref: str = "", family: str = "conversation", **kwargs):
+    return propose_ingestion_plan_fn(graph, source_surface_id=source_surface_id, service=service, account_ref=account_ref, family=family, **kwargs)
+
+
+@tool(name="edit_ingestion_plan", description="Supersede an ingestion plan with an owner-edited version; ceilings are policy-enforced.")
+def edit_ingestion_plan(graph, plan_ref: str = "", edited_by: str = "owner", **kwargs):
+    return edit_ingestion_plan_fn(graph, plan_ref=plan_ref, edited_by=edited_by, **kwargs)
+
+
+@tool(name="approve_ingestion_plan", description="Approve the current ingestion plan version; approval is the receipted verdict.")
+def approve_ingestion_plan(graph, plan_ref: str = "", approved_by: str = "owner"):
+    return approve_ingestion_plan_fn(graph, plan_ref=plan_ref, approved_by=approved_by)
+
+
+@tool(name="abandon_ingestion_plan", description="Abandon the current ingestion plan version without executing it.")
+def abandon_ingestion_plan(graph, plan_ref: str = "", actor: str = "owner", reason: str = ""):
+    return abandon_ingestion_plan_fn(graph, plan_ref=plan_ref, actor=actor, reason=reason)
+
+
+@tool(name="execute_ingestion_plan", description="Execute the approved current plan through its service's registered executor.")
+def execute_ingestion_plan(graph, plan_ref: str = "", executed_by: str = "owner"):
+    return execute_ingestion_plan_fn(graph, plan_ref=plan_ref, executed_by=executed_by)
+
+
+@tool(name="project_ingestion_plans", description="Project every versioned ingestion plan with prediction and verdict state.")
+def project_ingestion_plans(graph, _ctx=None):
+    return project_ingestion_plans_fn(graph)
+
+
 TOOLS = [
     record_connector_binding,
     record_connector_run_observation,
@@ -386,6 +426,12 @@ TOOLS = [
     project_connector_control_plane,
     project_connector_learning_deltas,
     request_connector_refresh,
+    propose_ingestion_plan,
+    edit_ingestion_plan,
+    approve_ingestion_plan,
+    abandon_ingestion_plan,
+    execute_ingestion_plan,
+    project_ingestion_plans,
 ]
 
 __all__ = [

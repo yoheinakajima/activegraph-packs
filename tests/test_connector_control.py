@@ -130,9 +130,12 @@ def test_operational_policy_is_versioned_and_enforces_every_measurement():
     runtime.load_pack(pack)
     runtime.run_until_idle()
     [policy] = list(runtime.graph.objects(type="connector_operational_policy"))
-    assert policy.data["policy_identity"] == "connector-operational@0.1.0"
+    assert policy.data["policy_identity"] == "connector-operational@0.2.0"
+    assert policy.data["version"] == 2
     assert policy.data["max_events_per_evidence"] == 100
     assert policy.data["max_annotations_per_evidence"] == 20
+    assert policy.data["max_acquisition_items"] == 250
+    assert policy.data["max_acquisition_pages"] == 10
 
     measurement = ConnectorOperationalMeasurement(
         domain_run_id="fixture-run",

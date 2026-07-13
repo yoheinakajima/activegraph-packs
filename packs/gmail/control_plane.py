@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Optional
 
+from packs.connector_control.plans import plan_outcome_fn
 from packs.connector_control.tools import (
     record_connector_binding_fn,
     record_connector_learning_delta_fn,
@@ -199,6 +200,14 @@ def adapt_gmail_run_fn(
         "partial": "sample_ready",
         "failed": "failed",
     }[state]
+    run_metadata = dict(data.get("metadata") or {})
+    plan_identity = str(run_metadata.get("plan_identity") or "")
+    counts = {
+        "imported": int(data.get("messages_imported") or 0),
+        "pages": int(data.get("pages_completed") or 0),
+        "deleted": len(data.get("deleted_message_ids") or []),
+        "tombstones": int(data.get("tombstones_recorded") or 0),
+    }
     record_connector_run_observation_fn(
         graph,
         domain_run_id=run.id,
@@ -217,12 +226,7 @@ def adapt_gmail_run_fn(
             "max_pages": int(data.get("max_pages") or 0),
             "page_size": int(data.get("page_size") or 0),
         },
-        counts={
-            "imported": int(data.get("messages_imported") or 0),
-            "pages": int(data.get("pages_completed") or 0),
-            "deleted": len(data.get("deleted_message_ids") or []),
-            "tombstones": int(data.get("tombstones_recorded") or 0),
-        },
+        counts=counts,
         cursor={
             "position_kind": position_kind,
             "has_position": has_position,
@@ -234,7 +238,16 @@ def adapt_gmail_run_fn(
         next_sync_available=state in {"succeeded", "partial"},
         error_code=data.get("error_code"),
         error=data.get("error"),
-        metadata={"adapter": "gmail.control_plane@0.1.0"},
+        metadata={
+            "adapter": "gmail.control_plane@0.1.0",
+            **(
+                {
+                    "plan_identity": plan_identity,
+                    "plan_version": int(run_metadata.get("plan_version") or 0),
+                }
+                if plan_identity else {}
+            ),
+        },
         reader=reader,
     )
 
@@ -249,6 +262,17 @@ def adapt_gmail_run_fn(
     }[state]
     if state in {"succeeded", "partial"} and not settled:
         delta_status = "collecting"
+    plan_report: dict[str, Any] = {}
+    if plan_identity:
+        plan_obj = next(
+            (
+                obj for obj in _objects(reader, "connector_ingestion_plan")
+                if obj.data.get("plan_identity") == plan_identity
+            ),
+            None,
+        )
+        if plan_obj is not None:
+            plan_report = plan_outcome_fn(dict(plan_obj.data), counts)
     record_connector_learning_delta_fn(
         graph,
         domain_run_id=run.id,
@@ -257,6 +281,7 @@ def adapt_gmail_run_fn(
         family="conversation",
         status=delta_status,
         **learning,
+        plan=plan_report,
         metadata={"adapter": "gmail.control_plane@0.1.0"},
         reader=reader,
     )

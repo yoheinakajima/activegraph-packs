@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 — comprehension spent: plans and measured signal maps (2026-07-12)
+
+- Exploration ends with a service-derived ingestion-plan proposal — the first
+  consumer of the recorded `data_topology` (ADR 0039). An optional third R0
+  probe samples the newest message ids+dates (no payloads) so the window
+  derivation can cite a measured recent-activity rate; without it the plan
+  says exactly what stayed unmeasured.
+- `request_gmail_backfill` now executes the current approved plan version:
+  window, caps, and page size come from the plan, superseded plans can never
+  execute, and a backfill without an approved plan fails loud. Owner label
+  exclusions render into the Gmail query when the label name allows it.
+- Replace the hardcoded signal map: inbox richness derives from measured
+  volume/rate with measurement provenance, per-label surfaces are explicitly
+  `unmeasured`, and the `signal.inbox_richness` claim mirrors the measured
+  value. Learning deltas report planned-vs-actual for plan-bound runs.
+
 ## 0.3.0 — continuous manual maintenance (2026-07-12)
 
 - Register Gmail behind the neutral maintenance contract and poll from the

@@ -66,9 +66,10 @@ def request_gmail_exploration_fn(
     *,
     user_id: str,
     connected_account_id: str,
-    budget: int = 2,
+    budget: int = 3,
     force: bool = False,
     route: str = "composio",
+    sample_messages: int = 25,
 ) -> dict[str, Any]:
     route = _validated_route(route)
     if budget < 2:
@@ -96,14 +97,31 @@ def request_gmail_exploration_fn(
     if existing:
         return {"ok": True, "created": False, "exploration_id": existing.id, "call_ids": existing.data.get("probe_call_ids") or []}
 
+    probes: list[tuple[str, str, dict[str, Any]]] = [
+        ("profile.get", "profile", {}),
+        ("labels.list", "labels", {}),
+    ]
+    # Third bounded probe: newest message ids + dates only (no payloads), so
+    # the ingestion plan can derive a measured recent-activity rate. Skipped
+    # when the budget only covers the two structural probes.
+    if budget >= 3 and sample_messages > 0:
+        probes.append((
+            "messages.fetch",
+            "recent_activity",
+            {"max_results": min(int(sample_messages), 100), "include_payload": False},
+        ))
     calls = []
-    for operation, probe in (("profile.get", "profile"), ("labels.list", "labels")):
+    for operation, probe, extra_input in probes:
         call = _capability_call(
             graph,
             operation=operation,
             action_class="R0",
             risk_class="low",
-            input_data={"user_id": user_id, "connected_account_id": connected_account_id},
+            input_data={
+                "user_id": user_id,
+                "connected_account_id": connected_account_id,
+                **extra_input,
+            },
             metadata={
                 "kind": "exploration",
                 "probe": probe,
@@ -128,6 +146,8 @@ def request_gmail_exploration_fn(
             "connected_account_id": connected_account_id,
             "forced_refresh": force,
             "route": route,
+            "probes": [probe for _operation, probe, _extra in probes],
+            "user_id": user_id,
         },
     )
     # The generic helper's canonical identity also includes call ids; the stable
@@ -142,17 +162,60 @@ def request_gmail_backfill_fn(
     account_ref: str,
     user_id: str,
     connected_account_id: str,
-    query: str = "newer_than:30d",
-    page_size: int = 25,
-    max_messages: int = 250,
-    max_pages: int = 10,
     route: str = "composio",
+    plan_ref: Optional[str] = None,
 ) -> dict[str, Any]:
+    """Start the bounded backfill the approved ingestion plan describes.
+
+    Every bounded acquisition binds to the exact approved plan version
+    (ADR 0039): window, caps, and page size come from the plan, and a run
+    without a current approved plan fails loud.
+    """
+    from packs.connector_control.plans import (
+        bind_plan_execution_fn,
+        current_plan_for_surface_fn,
+        resolve_plan_fn,
+    )
+    from .plan import plan_backfill_query
+
     route = _validated_route(route)
+    plan = (
+        resolve_plan_fn(graph, plan_ref)
+        if plan_ref
+        else current_plan_for_surface_fn(graph, source_surface_id)
+    )
+    if plan is None:
+        raise ValueError(
+            f"no ingestion plan exists for surface {source_surface_id!r}; a "
+            "Gmail backfill only runs against a current approved plan — "
+            "propose and approve one first (ADR 0039)"
+        )
+    plan_data = dict(plan.data or {})
+    if plan_data.get("source_surface_id") != source_surface_id:
+        raise ValueError(
+            f"plan {plan_data.get('plan_identity')!r} belongs to surface "
+            f"{plan_data.get('source_surface_id')!r}, not {source_surface_id!r}"
+        )
+    plan_caps = dict(plan_data.get("caps") or {})
+    query = plan_backfill_query(plan_data)
+    page_size = int(plan_caps.get("page_size") or 25)
+    max_messages = int(plan_caps.get("max_items") or 0)
+    max_pages = int(plan_caps.get("max_pages") or 0)
+    if max_messages < 1 or max_pages < 1:
+        raise ValueError(
+            f"plan {plan_data.get('plan_identity')!r} carries no usable caps"
+        )
+    plan_status = plan_data.get("status")
     identity = _stable("gmail_sync", source_surface_id, "backfill", query, max_messages, max_pages)
     existing = next((obj for obj in graph.objects(type="gmail_sync_run") if (obj.data or {}).get("run_identity") == identity), None)
     if existing and (existing.data or {}).get("status") in {"running", "completed", "partial"}:
         return {"ok": True, "created": False, "run_id": existing.id, "call_ids": existing.data.get("call_ids") or []}
+    if plan_status not in {"approved", "executing"}:
+        raise ValueError(
+            f"ingestion plan {plan_data.get('plan_identity')!r} is "
+            f"{plan_status!r}; only a current approved plan can execute "
+            "(a superseded plan can never execute)"
+        )
     if existing and (existing.data or {}).get("status") == "failed":
         active_profile = next(
             (
@@ -188,6 +251,13 @@ def request_gmail_backfill_fn(
                 "metadata": metadata,
             },
             rationale="resume Gmail backfill from query overlap after interruption",
+        )
+        # A failed run released its plan back to approved; re-bind the resume.
+        bind_plan_execution_fn(
+            graph,
+            plan_ref=str(plan_data.get("plan_identity") or ""),
+            domain_run_id=existing.id,
+            source_surface_id=source_surface_id,
         )
         call = propose_gmail_page_fn(graph, graph.get_object(existing.id))
         return {"ok": True, "created": False, "resumed": True, "run_id": existing.id, "call_ids": [call.id]}
@@ -230,8 +300,17 @@ def request_gmail_backfill_fn(
                 "restart_strategy": "query_overlap_plus_evidence_dedup",
                 "integration_profile_id": active_profile.id if active_profile else None,
                 "route": route,
+                "plan_identity": plan_data.get("plan_identity"),
+                "plan_version": int(plan_data.get("version") or 0),
+                "plan_object_id": plan.id,
             },
         },
+    )
+    bind_plan_execution_fn(
+        graph,
+        plan_ref=str(plan_data.get("plan_identity") or ""),
+        domain_run_id=run.id,
+        source_surface_id=source_surface_id,
     )
     call = propose_gmail_page_fn(graph, run)
     return {"ok": True, "created": True, "run_id": run.id, "call_ids": [call.id]}
@@ -537,14 +616,27 @@ def request_gmail_draft_send_fn(graph, *, draft_id: str, user_id: str) -> dict[s
     return {"ok": True, "created": True, "draft_id": draft.id, "call_id": call.id}
 
 
-@tool(name="request_gmail_exploration", description="Propose two budgeted R0 Gmail structure probes.")
-def request_gmail_exploration(graph, user_id: str = "", connected_account_id: str = "", budget: int = 2, force: bool = False, route: str = "composio"):
-    return request_gmail_exploration_fn(graph, user_id=user_id, connected_account_id=connected_account_id, budget=budget, force=force, route=route)
+@tool(name="request_gmail_exploration", description="Propose budgeted R0 Gmail structure and activity probes.")
+def request_gmail_exploration(graph, user_id: str = "", connected_account_id: str = "", budget: int = 3, force: bool = False, route: str = "composio", sample_messages: int = 25):
+    return request_gmail_exploration_fn(graph, user_id=user_id, connected_account_id=connected_account_id, budget=budget, force=force, route=route, sample_messages=sample_messages)
 
 
-@tool(name="request_gmail_backfill", description="Start a bounded resumable Gmail backfill.")
-def request_gmail_backfill(graph, source_surface_id: str = "", account_ref: str = "", user_id: str = "", connected_account_id: str = "", query: str = "newer_than:30d", page_size: int = 25, max_messages: int = 250, max_pages: int = 10, route: str = "composio"):
-    return request_gmail_backfill_fn(graph, source_surface_id=source_surface_id, account_ref=account_ref, user_id=user_id, connected_account_id=connected_account_id, query=query, page_size=page_size, max_messages=max_messages, max_pages=max_pages, route=route)
+@tool(name="request_gmail_backfill", description="Start the bounded resumable Gmail backfill its approved ingestion plan describes.")
+def request_gmail_backfill(graph, source_surface_id: str = "", account_ref: str = "", user_id: str = "", connected_account_id: str = "", route: str = "composio", plan_ref: str = ""):
+    return request_gmail_backfill_fn(graph, source_surface_id=source_surface_id, account_ref=account_ref, user_id=user_id, connected_account_id=connected_account_id, route=route, plan_ref=plan_ref or None)
+
+
+@tool(name="propose_gmail_ingestion_plan", description="Derive Gmail's ingestion-plan proposal from the recorded mailbox topology.")
+def propose_gmail_ingestion_plan(graph, source_surface_id: str = "", account_ref: str = "", purpose: str = "initial_backfill", window_days: int = 0):
+    from .plan import propose_gmail_ingestion_plan_fn
+
+    return propose_gmail_ingestion_plan_fn(
+        graph,
+        source_surface_id=source_surface_id,
+        account_ref=account_ref,
+        purpose=purpose,
+        window_days=window_days or None,
+    )
 
 
 @tool(name="request_gmail_poll", description="Poll Gmail from a provider-stable history watermark.")
@@ -578,6 +670,7 @@ def reprocess_gmail_evidence(graph, source_surface_id: str = "", max_items: int 
 TOOLS = [
     request_gmail_exploration,
     request_gmail_backfill,
+    propose_gmail_ingestion_plan,
     request_gmail_poll,
     create_gmail_draft_candidate,
     request_gmail_draft_sync,

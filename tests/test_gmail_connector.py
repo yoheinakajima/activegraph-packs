@@ -18,12 +18,18 @@ from packs.composio.client import (
 from packs.composio.tools import request_composio_link_fn
 from packs.communication import pack as communication_pack
 from packs.connector_control import pack as connector_control_pack
+from packs.connector_control.plans import (
+    approve_ingestion_plan_fn,
+    current_plan_for_surface_fn,
+    edit_ingestion_plan_fn,
+)
 from packs.connector_control.tools import (
     project_connector_control_plane_fn,
     project_connector_learning_deltas_fn,
 )
 from packs.core import pack as core_pack
 from packs.entity import pack as entity_pack
+from packs.entity.behaviors import clear_entity_registry
 from packs.gmail import GmailSettings, pack as gmail_pack
 from packs.gmail.capabilities import register_gmail_capabilities
 from packs.gmail.tools import (
@@ -154,8 +160,172 @@ class FakeComposio:
         return {"successful": True, "data": {"response_data": data}, "error": None}
 
 
+class RichTopologyComposio(FakeComposio):
+    """A mailbox with realistic scale so the plan derivation has real inputs.
+
+    42,341 messages; the newest 25 arrive half a day apart, so the sampled
+    span is exactly 12.0 days and the measured rate is 2.0 messages/day.
+    """
+
+    NEWEST_MS = 1_800_000_000_000
+    STEP_MS = 43_200_000  # half a day
+
+    def execute(self, **kwargs):
+        slug = kwargs["tool_slug"]
+        args = kwargs["arguments"]
+        if slug == "GMAIL_GET_PROFILE":
+            data = {
+                "emailAddress": "yohei@example.com",
+                "messagesTotal": 42_341,
+                "threadsTotal": 39_002,
+                "historyId": "900",
+            }
+            return {"successful": True, "data": {"response_data": data}, "error": None}
+        if slug == "GMAIL_LIST_LABELS":
+            data = {"labels": [
+                {"id": "INBOX", "name": "INBOX", "type": "system"},
+                {"id": "SPAM", "name": "SPAM", "type": "system"},
+                {"id": "Label_7", "name": "Founders", "type": "user"},
+            ]}
+            return {"successful": True, "data": {"response_data": data}, "error": None}
+        if slug == "GMAIL_FETCH_EMAILS" and args.get("include_payload") is False:
+            data = {"messages": [
+                {"id": f"probe-{i}", "internalDate": str(self.NEWEST_MS - i * self.STEP_MS)}
+                for i in range(25)
+            ]}
+            return {"successful": True, "data": {"response_data": data}, "error": None}
+        return super().execute(**kwargs)
+
+
+def test_fresh_connect_derives_the_plan_from_discovered_topology(tmp_path):
+    """ADR 0039 acceptance: the window derives from the measured span, the
+    plan renders before acquire, and the run executes only the approved
+    version."""
+    fake = RichTopologyComposio()
+    rt = _runtime(tmp_path, fake)
+    request_gmail_exploration_fn(
+        rt.graph, user_id="agent:owner", connected_account_id="ca_1"
+    )
+    rt.run_until_idle()
+
+    [profile] = [
+        obj for obj in rt.graph.objects(type="integration_profile")
+        if obj.data["status"] == "active"
+    ]
+    sample = profile.data["data_topology"]["activity_sample"]
+    assert sample["sampled_messages"] == 25
+    assert sample["sampled_span_days"] == 12.0
+    assert sample["messages_per_day"] == 2.0
+    assert sample["probe_call_id"]
+
+    # Measured signal map: the inbox richness cites its measurement; every
+    # label surface the probes said nothing about is explicitly unmeasured.
+    by_surface = {row["surface"]: row for row in profile.data["signal_map"]}
+    inbox = by_surface["inbox"]
+    assert inbox["estimated_richness"] == "medium"
+    assert inbox["confidence"] == 0.8
+    assert inbox["measurement"]["messages_per_day"] == 2.0
+    assert inbox["measurement"]["messages_total"] == 42_341
+    assert inbox["provenance"]
+    founders = by_surface["label:Founders"]
+    assert founders["estimated_richness"] == "unmeasured"
+    assert founders["confidence"] is None
+    assert founders["measurement"] == {}
+    richness_claim = next(
+        row for row in profile.data["claims"]
+        if row["claim_key"] == "signal.inbox_richness"
+    )
+    assert richness_claim["value"] == "medium"
+    assert richness_claim["metadata"]["measured"] is True
+
+    # The proposal exists before anything is fetched, window derived from the
+    # measured topology: 2.0/day * 30 days = 60 messages.
+    [surface] = list(rt.graph.objects(type="connection_surface"))
+    plan = current_plan_for_surface_fn(rt.graph, surface.data["surface_id"])
+    assert plan is not None
+    assert plan.data["status"] == "proposed"
+    assert plan.data["window"] == {
+        "kind": "recent_days", "days": 30, "estimated_items": 60,
+    }
+    derivation = plan.data["derivation"]
+    assert derivation["basis"] == "measured_topology"
+    assert derivation["measurements"] == {
+        "messages_total": 42_341,
+        "sampled_messages": 25,
+        "sampled_span_days": 12.0,
+        "messages_per_day": 2.0,
+        "window_estimate_items": 60,
+    }
+    assert "42341" in derivation["summary"].replace(",", "")
+    assert "30 days" in derivation["summary"]
+    assert derivation["provenance"]
+    assert plan.data["caps"]["max_items"] == 250
+    assert plan.data["caps"]["policy_id"] == "connector-operational@0.2.0"
+    assert plan.data["predicted_verdict"] == "approved_as_proposed"
+    assert plan.data["verdict"] is None
+    surfaces = {row["surface_ref"]: row for row in plan.data["surfaces"]}
+    assert surfaces["inbox"]["included"] is True
+    assert surfaces["inbox"]["expectation"]["estimated_richness"] == "medium"
+    assert surfaces["label:SPAM"]["included"] is False
+    assert "default search scope" in surfaces["label:SPAM"]["expectation"]["note"]
+    assert surfaces["label:Founders"]["expectation"]["estimated_richness"] == "unmeasured"
+    assert plan.data["interpretation_stages"][0].startswith("gmail.conversation-mapper")
+
+    # Nothing was fetched before approval: no sync run, no backfill call.
+    assert not list(rt.graph.objects(type="gmail_sync_run"))
+    assert not [
+        obj for obj in rt.graph.objects(type="capability_call")
+        if ((obj.data.get("metadata") or {}).get("gmail") or {}).get("kind") == "backfill"
+    ]
+
+    approve_ingestion_plan_fn(
+        rt.graph, plan_ref=plan.data["plan_identity"], approved_by="owner"
+    )
+    run = request_gmail_backfill_fn(
+        rt.graph,
+        source_surface_id=surface.data["surface_id"],
+        account_ref="yohei@example.com",
+        user_id="agent:owner",
+        connected_account_id="ca_1",
+    )
+    rt.run_until_idle()
+    run_obj = rt.graph.get_object(run["run_id"])
+    assert run_obj.data["query"] == "newer_than:30d"
+    assert run_obj.data["max_messages"] == 250
+    assert run_obj.data["metadata"]["plan_identity"] == plan.data["plan_identity"]
+    assert run_obj.data["metadata"]["plan_version"] == 1
+
+
+def _approve_gmail_plan(
+    graph,
+    source_surface_id,
+    *,
+    max_messages=None,
+    max_pages=None,
+    page_size=None,
+):
+    """Owner path: review the exploration's proposed plan, edit caps, approve."""
+    plan = current_plan_for_surface_fn(graph, source_surface_id)
+    assert plan is not None, "exploration must end with a proposed ingestion plan"
+    caps = {}
+    if max_messages is not None:
+        caps["max_items"] = max_messages
+    if max_pages is not None:
+        caps["max_pages"] = max_pages
+    if page_size is not None:
+        caps["page_size"] = page_size
+    if caps:
+        plan = edit_ingestion_plan_fn(
+            graph, plan_ref=plan.data["plan_identity"], caps=caps, edited_by="owner"
+        )["plan"]
+    return approve_ingestion_plan_fn(
+        graph, plan_ref=plan.data["plan_identity"], approved_by="owner"
+    )["plan"]
+
+
 def _runtime(tmp_path, fake: FakeComposio):
     clear_local_registry()
+    clear_entity_registry()
     configure_composio_transport(fake)
     rt = Runtime(Graph())
     rt.load_pack(core_pack)
@@ -319,19 +489,21 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     assert repeat["created"] is False
     assert len(list(rt.graph.objects(type="integration_profile"))) == 1
 
+    approved = _approve_gmail_plan(
+        rt.graph, surface.data["surface_id"],
+        max_messages=2, max_pages=2, page_size=1,
+    )
     run = request_gmail_backfill_fn(
         rt.graph,
         source_surface_id=surface.data["surface_id"],
         account_ref="yohei@example.com",
         user_id="agent:owner",
         connected_account_id="ca_1",
-        query="newer_than:30d",
-        page_size=1,
-        max_messages=2,
-        max_pages=2,
     )
     rt.run_until_idle()
-    assert rt.graph.get_object(run["run_id"]).data["status"] == "completed"
+    run_obj = rt.graph.get_object(run["run_id"])
+    assert run_obj.data["status"] == "completed"
+    assert run_obj.data["metadata"]["plan_identity"] == approved.data["plan_identity"]
     assert len(list(rt.graph.objects(type="activity_evidence"))) == 2
 
     calls_before_reprocess = len(fake.calls)
@@ -396,11 +568,23 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
         rt.graph,
         source_surface_id=surface.data["surface_id"], account_ref="yohei@example.com",
         user_id="agent:owner", connected_account_id="ca_1",
-        query="newer_than:30d", page_size=1, max_messages=2, max_pages=2,
     )
     rt.run_until_idle()
     assert again["created"] is False
     assert len(list(rt.graph.objects(type="activity_evidence"))) == 2
+    # The fulfilled plan reports planned-vs-actual through the learning delta.
+    delta = next(
+        row for row in project_connector_learning_deltas_fn(rt.graph)["deltas"]
+        if row["domain_run_id"] == run["run_id"]
+    )
+    assert delta["plan"]["plan_identity"] == approved.data["plan_identity"]
+    assert delta["plan"]["planned"]["max_items"] == 2
+    assert delta["plan"]["actual"]["imported"] == 2
+    assert delta["plan"]["within_bounds"] is True
+    settled_plan = rt.graph.get_object(approved.id)
+    assert settled_plan.data["status"] == "fulfilled"
+    assert settled_plan.data["version"] == 2
+    assert settled_plan.data["verdict"] == "approved_as_proposed"
 
     poll = request_gmail_poll_fn(
         rt.graph,
@@ -496,20 +680,27 @@ def test_interrupted_backfill_restarts_with_overlap_and_dedups(tmp_path):
     request_gmail_exploration_fn(rt.graph, user_id="agent:owner", connected_account_id="ca_1")
     rt.run_until_idle()
     [surface] = list(rt.graph.objects(type="connection_surface"))
+    plan = _approve_gmail_plan(
+        rt.graph, surface.data["surface_id"],
+        max_messages=2, max_pages=2, page_size=1,
+    )
     fake.fail_next_fetch = True
     first = request_gmail_backfill_fn(
         rt.graph, source_surface_id=surface.data["surface_id"], account_ref="yohei@example.com",
-        user_id="agent:owner", connected_account_id="ca_1", page_size=1, max_messages=2, max_pages=2,
+        user_id="agent:owner", connected_account_id="ca_1",
     )
     rt.run_until_idle()
     assert rt.graph.get_object(first["run_id"]).data["status"] == "failed"
+    # The failed run released its plan binding; the retry re-binds it.
+    assert rt.graph.get_object(plan.id).data["status"] == "approved"
     resumed = request_gmail_backfill_fn(
         rt.graph, source_surface_id=surface.data["surface_id"], account_ref="yohei@example.com",
-        user_id="agent:owner", connected_account_id="ca_1", page_size=1, max_messages=2, max_pages=2,
+        user_id="agent:owner", connected_account_id="ca_1",
     )
     rt.run_until_idle()
     assert resumed["resumed"] is True
     assert rt.graph.get_object(first["run_id"]).data["status"] == "completed"
+    assert rt.graph.get_object(plan.id).data["status"] == "fulfilled"
     assert len(list(rt.graph.objects(type="activity_evidence"))) == 2
 
 
@@ -518,15 +709,16 @@ def test_bound_hit_is_partial_and_requires_an_explicit_deeper_window(tmp_path):
     request_gmail_exploration_fn(rt.graph, user_id="agent:owner", connected_account_id="ca_1")
     rt.run_until_idle()
     [surface] = list(rt.graph.objects(type="connection_surface"))
+    _approve_gmail_plan(
+        rt.graph, surface.data["surface_id"],
+        max_messages=1, max_pages=1, page_size=1,
+    )
     first = request_gmail_backfill_fn(
         rt.graph,
         source_surface_id=surface.data["surface_id"],
         account_ref="yohei@example.com",
         user_id="agent:owner",
         connected_account_id="ca_1",
-        page_size=1,
-        max_messages=1,
-        max_pages=1,
     )
     rt.run_until_idle()
     assert rt.graph.get_object(first["run_id"]).data["status"] == "partial"
@@ -536,9 +728,6 @@ def test_bound_hit_is_partial_and_requires_an_explicit_deeper_window(tmp_path):
         account_ref="yohei@example.com",
         user_id="agent:owner",
         connected_account_id="ca_1",
-        page_size=1,
-        max_messages=1,
-        max_pages=1,
     )
     assert same["created"] is False and same["run_id"] == first["run_id"]
     assert len(list(rt.graph.objects(type="gmail_sync_run"))) == 1
@@ -586,6 +775,9 @@ def test_unexpected_shape_records_drift_and_forced_reexploration(tmp_path):
     request_gmail_exploration_fn(rt.graph, user_id="agent:owner", connected_account_id="ca_1")
     rt.run_until_idle()
     [surface] = list(rt.graph.objects(type="connection_surface"))
+    _approve_gmail_plan(
+        rt.graph, surface.data["surface_id"], max_messages=1, max_pages=1,
+    )
     fake.bad_shape_next_fetch = True
     started = request_gmail_backfill_fn(
         rt.graph,
@@ -593,8 +785,6 @@ def test_unexpected_shape_records_drift_and_forced_reexploration(tmp_path):
         account_ref="yohei@example.com",
         user_id="agent:owner",
         connected_account_id="ca_1",
-        max_messages=1,
-        max_pages=1,
     )
     rt.run_until_idle()
     run = rt.graph.get_object(started["run_id"])

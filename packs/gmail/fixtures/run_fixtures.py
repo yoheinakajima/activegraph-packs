@@ -6,6 +6,11 @@ from activegraph import Graph, Runtime
 from packs.activity_normalizer import ActivityNormalizerSettings, pack as normalizer_pack
 from packs.composio import pack as composio_pack
 from packs.connector_control import pack as connector_control_pack
+from packs.connector_control.plans import (
+    approve_ingestion_plan_fn,
+    current_plan_for_surface_fn,
+    edit_ingestion_plan_fn,
+)
 from packs.composio.client import configure_composio_transport
 from packs.core import pack as core_pack
 from packs.gmail import GmailSettings, pack as gmail_pack
@@ -66,18 +71,36 @@ def main():
         )
         runtime.run_until_idle()
         surface = list(runtime.graph.objects(type="connection_surface"))[0]
+        # Thin topology (no measured volume) still yields a plan proposal —
+        # the service default — and the backfill runs only through it.
+        proposal = current_plan_for_surface_fn(
+            runtime.graph, surface.data["surface_id"]
+        )
+        assert proposal is not None
+        assert proposal.data["derivation"]["basis"] == "service_default"
+        edited = edit_ingestion_plan_fn(
+            runtime.graph,
+            plan_ref=proposal.data["plan_identity"],
+            caps={"max_items": 1, "max_pages": 1},
+            edited_by="fixture:owner",
+        )["plan"]
+        approve_ingestion_plan_fn(
+            runtime.graph,
+            plan_ref=edited.data["plan_identity"],
+            approved_by="fixture:owner",
+        )
         request_gmail_backfill_fn(
             runtime.graph,
             source_surface_id=surface.data["surface_id"],
             account_ref="fixture@example.com",
             user_id="fixture:owner",
             connected_account_id="ca_fixture",
-            max_messages=1,
-            max_pages=1,
         )
         runtime.run_until_idle()
         assert len(list(runtime.graph.objects(type="integration_profile"))) == 1
         assert len(list(runtime.graph.objects(type="activity_evidence"))) == 1
+        plan = current_plan_for_surface_fn(runtime.graph, surface.data["surface_id"])
+        assert plan.data["status"] == "fulfilled"
         assert not runtime.errors
     configure_composio_transport(None)
     clear_local_registry()

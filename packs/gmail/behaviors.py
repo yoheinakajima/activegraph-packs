@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import base64
+import email.utils
 import hashlib
 import json
+from datetime import timezone
 from typing import Any, Optional
 
 from activegraph.packs import behavior
@@ -41,6 +43,7 @@ _VIEW = {
         "integration_profile", "aggregator_profile", "gmail_sync_run",
         "backfill_cursor", "source_connection_request", "gmail_draft_candidate",
         "evidence_invalidation_request", "ingestion_failure",
+        "connector_ingestion_plan", "connector_operational_policy",
     ],
     "recent_events": 20_000,
 }
@@ -50,7 +53,7 @@ _CONTROL_VIEW = {
         "gmail_sync_run", "backfill_cursor",
         "connector_surface_binding", "connector_run_observation",
         "connector_learning_delta", "connector_native_view",
-        "connector_operational_policy",
+        "connector_operational_policy", "connector_ingestion_plan",
         "activity_evidence", "semantic_annotation", "extraction_coverage",
         "ingestion_failure",
         "preference_candidate", "task_candidate", "profile_candidate",
@@ -166,6 +169,128 @@ def _labels(payload: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _message_epoch_ms(message: dict[str, Any]) -> Optional[int]:
+    raw = message.get("internalDate") or message.get("internal_date")
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+    date_header = _header_map(message).get("date")
+    if not date_header:
+        return None
+    try:
+        parsed = email.utils.parsedate_to_datetime(date_header)
+    except (TypeError, ValueError):
+        return None
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp() * 1000)
+
+
+def _activity_sample(payload: Any, probe_call_id: str) -> Optional[dict[str, Any]]:
+    """Measure recent activity from the id+date sample probe, or admit nothing."""
+    stamps = sorted(
+        stamp
+        for row in _message_rows(payload)
+        if (stamp := _message_epoch_ms(row)) is not None
+    )
+    if not stamps:
+        return None
+    newest, oldest = stamps[-1], stamps[0]
+    sample: dict[str, Any] = {
+        "sampled_messages": len(stamps),
+        "newest_ms": newest,
+        "oldest_sampled_ms": oldest,
+        "sampled_span_days": None,
+        "messages_per_day": None,
+        "probe_call_id": probe_call_id,
+    }
+    if len(stamps) >= 2 and newest > oldest:
+        span_days = round((newest - oldest) / 86_400_000, 2)
+        if span_days > 0:
+            sample["sampled_span_days"] = span_days
+            sample["messages_per_day"] = round((len(stamps) - 1) / span_days, 2)
+    return sample
+
+
+_INBOX_CANDIDATE_TYPES = ["relationship", "task", "preference", "followup", "project"]
+
+
+def _inbox_signal(
+    volume: Optional[int],
+    sample: Optional[dict[str, Any]],
+    provenance: list[str],
+    receipt_id: str,
+) -> dict[str, Any]:
+    """Richness measured from the probes, or explicitly unmeasured.
+
+    Thresholds are conservative service defaults; what matters contractually
+    is that every value traces to a measurement (ADR 0039) — rate from the
+    dated sample, else volume from the profile totals, else ``unmeasured``
+    with no numeric confidence at all.
+    """
+    if sample and sample.get("messages_per_day") is not None:
+        rate = float(sample["messages_per_day"])
+        richness = "high" if rate >= 5 else "medium" if rate >= 0.5 else "low"
+        return {
+            "surface": "inbox",
+            "candidate_types": list(_INBOX_CANDIDATE_TYPES),
+            "estimated_richness": richness,
+            "confidence": 0.8,
+            "provenance": [ref for ref in provenance if ref],
+            "measurement": {
+                "messages_total": volume,
+                "sampled_messages": sample.get("sampled_messages"),
+                "sampled_span_days": sample.get("sampled_span_days"),
+                "messages_per_day": rate,
+                "newest_ms": sample.get("newest_ms"),
+                "oldest_sampled_ms": sample.get("oldest_sampled_ms"),
+            },
+        }
+    if volume is not None:
+        richness = "high" if volume >= 10_000 else "medium" if volume >= 500 else "low"
+        return {
+            "surface": "inbox",
+            "candidate_types": list(_INBOX_CANDIDATE_TYPES),
+            "estimated_richness": richness,
+            "confidence": 0.5,
+            "provenance": [ref for ref in provenance if ref],
+            "measurement": {"messages_total": volume},
+        }
+    return {
+        "surface": "inbox",
+        "candidate_types": list(_INBOX_CANDIDATE_TYPES),
+        "estimated_richness": "unmeasured",
+        "confidence": None,
+        "provenance": [receipt_id],
+        "measurement": {},
+    }
+
+
+def _signal_map(
+    label_rows: list[dict[str, Any]], inbox_signal: dict[str, Any], receipt_id: str
+) -> list[dict[str, Any]]:
+    signals = [inbox_signal]
+    for row in label_rows:
+        name = str(row.get("name") or row.get("id") or "")
+        if not name or name == "INBOX":
+            continue
+        # The two structural probes measure nothing per label; say so rather
+        # than predicting richness the probes never observed.
+        signals.append({
+            "surface": f"label:{name}",
+            "candidate_types": [],
+            "estimated_richness": "unmeasured",
+            "confidence": None,
+            "provenance": [receipt_id],
+            "measurement": {},
+        })
+    return signals
+
+
 def _inventory(version: str, route: str) -> list[dict[str, Any]]:
     rows = [
         ("gmail.profile.get", "R0", "GMAIL_GET_PROFILE", "none"),
@@ -196,7 +321,10 @@ def _inventory(version: str, route: str) -> list[dict[str, Any]]:
     on=["object.created"],
     where={"object.type": "capability_result"},
     view=_VIEW,
-    creates=["integration_profile", "aggregator_profile", "source_connection_request", "backfill_cursor"],
+    creates=[
+        "integration_profile", "aggregator_profile", "source_connection_request",
+        "backfill_cursor", "connector_ingestion_plan",
+    ],
 )
 def gmail_exploration_projector(event, graph, ctx, *, settings: GmailSettings):
     result_data = ((event.payload or {}).get("object") or {}).get("data") or {}
@@ -218,13 +346,21 @@ def gmail_exploration_projector(event, graph, ctx, *, settings: GmailSettings):
     probe = str(gmail_meta.get("probe") or "")
     results[probe] = envelope
     metadata["results"] = results
-    if not envelope.get("ok"):
+    required = {"profile", "labels"}
+    expected = set(metadata.get("probes") or []) or set(required)
+    if not all(
+        (results.get(name) or {}).get("ok", True)
+        for name in required
+        if name in results
+    ):
         graph.patch_object(
             receipt.id,
             {"status": "failed", "metadata": metadata},
         )
         return
-    if not {"profile", "labels"} <= set(results):
+    # Wait until every proposed probe reported (a failed optional probe
+    # counts as reported) so the profile is built exactly once.
+    if not expected <= set(results):
         graph.patch_object(receipt.id, {"status": "partial", "metadata": metadata})
         return
 
@@ -248,6 +384,36 @@ def gmail_exploration_projector(event, graph, ctx, *, settings: GmailSettings):
     history_id = str(_find_key(profile_payload, ("historyId", "history_id")) or "") or None
     label_rows = _labels(labels_payload)
     observed = {"profile": profile_payload, "labels": labels_payload}
+
+    probes_order = list(metadata.get("probes") or ["profile", "labels"])
+    call_ids = list(receipt.data.get("probe_call_ids") or [])
+
+    def _probe_call_id(name: str) -> str:
+        if name in probes_order and probes_order.index(name) < len(call_ids):
+            return str(call_ids[probes_order.index(name)])
+        return ""
+
+    activity_sample = None
+    sample_envelope = results.get("recent_activity")
+    if sample_envelope and sample_envelope.get("ok"):
+        try:
+            sample_payload = _read_route_payload(sample_envelope, settings)
+        except (OSError, RuntimeError, ValueError):
+            sample_payload = None
+        if sample_payload is not None:
+            activity_sample = _activity_sample(
+                sample_payload, _probe_call_id("recent_activity")
+            )
+
+    raw_volume = _find_key(profile_payload, ("messagesTotal", "messages_total"))
+    volume = int(raw_volume) if isinstance(raw_volume, (int, float)) else None
+    measurement_provenance = [
+        ref for ref in (_probe_call_id("profile"), _probe_call_id("recent_activity"))
+        if ref
+    ]
+    inbox_signal = _inbox_signal(
+        volume, activity_sample, measurement_provenance, receipt.id
+    )
     aggregator = None
     if route == "composio":
         aggregator = ensure_aggregator_profile_fn(
@@ -284,16 +450,9 @@ def gmail_exploration_projector(event, graph, ctx, *, settings: GmailSettings):
                 "threads": _find_key(profile_payload, ("threadsTotal", "threads_total")),
             },
             "history_watermark": history_id,
+            **({"activity_sample": activity_sample} if activity_sample else {}),
         },
-        signal_map=[
-            {
-                "surface": "inbox",
-                "candidate_types": ["relationship", "task", "preference", "followup", "project"],
-                "estimated_richness": "high",
-                "confidence": 0.6,
-                "provenance": [receipt.id],
-            }
-        ],
+        signal_map=_signal_map(label_rows, inbox_signal, receipt.id),
         claims=[
             {
                 "claim_key": "account.identity",
@@ -319,14 +478,18 @@ def gmail_exploration_projector(event, graph, ctx, *, settings: GmailSettings):
             },
             {
                 "claim_key": "signal.inbox_richness",
-                "value": "high",
-                "confidence": 0.6,
+                "value": inbox_signal["estimated_richness"],
+                "confidence": float(inbox_signal.get("confidence") or 0.0),
                 "freshness": "current",
-                "provenance": [receipt.id],
+                "provenance": list(inbox_signal.get("provenance") or [receipt.id]),
                 "classification_source": "evidence",
                 "asserted_by": "gmail.integration_explorer",
                 "observed_at_event_id": event.id,
-                "metadata": {"predicted": True},
+                "metadata": {
+                    "predicted": True,
+                    "measured": bool(inbox_signal.get("measurement")),
+                    "measurement": dict(inbox_signal.get("measurement") or {}),
+                },
             },
         ],
         health={
@@ -348,6 +511,11 @@ def gmail_exploration_projector(event, graph, ctx, *, settings: GmailSettings):
         ),
         None,
     )
+    explorer_user_id = str(
+        (call.data or {}).get("input_data", {}).get("user_id")
+        or metadata.get("user_id")
+        or ""
+    )
     if prior_request is None:
         graph.add_object(
             "source_connection_request",
@@ -366,7 +534,20 @@ def gmail_exploration_projector(event, graph, ctx, *, settings: GmailSettings):
                 "status": "proposed",
                 "surface_object_id": None,
                 "error": None,
-                "metadata": {"integration_profile_id": profile.id},
+                "metadata": {
+                    "integration_profile_id": profile.id,
+                    "user_id": explorer_user_id,
+                },
+            },
+        )
+    elif not (prior_request.data.get("metadata") or {}).get("user_id") and explorer_user_id:
+        graph.patch_object(
+            prior_request.id,
+            {
+                "metadata": {
+                    **dict(prior_request.data.get("metadata") or {}),
+                    "user_id": explorer_user_id,
+                },
             },
         )
     if history_id and not any(
@@ -383,6 +564,23 @@ def gmail_exploration_projector(event, graph, ctx, *, settings: GmailSettings):
                 "cursor_version": 1,
             },
         )
+    # First consumer of the recorded topology (ADR 0039): comprehension ends
+    # with a service-derived, owner-reviewable ingestion plan proposal. An
+    # approved or executing plan stands — topology refresh never yanks it.
+    from .plan import propose_gmail_ingestion_plan_fn
+
+    try:
+        proposal = propose_gmail_ingestion_plan_fn(
+            graph,
+            source_surface_id=surface_id,
+            account_ref=email,
+            profile=profile,
+            settings=settings,
+            reader=ctx.view,
+        )
+        metadata["ingestion_plan_id"] = proposal["plan"].data.get("plan_identity")
+    except ValueError as exc:
+        metadata["ingestion_plan_skipped"] = str(exc)[:200]
     graph.patch_object(
         receipt.id,
         {

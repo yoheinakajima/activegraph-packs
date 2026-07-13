@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed (v0.10.0 measured signal maps)
+
+- `IntegrationSignal` carries measured comprehension or honest ignorance
+  (ADR 0039): richness gains an explicit `unmeasured` value, `confidence`
+  becomes optional (absent unless a measurement backs it), and a `measurement`
+  dict holds the measured values beside their provenance references.
+
 ### Added (v0.9.0 connector chassis)
 
 - Provider-neutral `aggregator_profile`, versioned `integration_profile`, and
