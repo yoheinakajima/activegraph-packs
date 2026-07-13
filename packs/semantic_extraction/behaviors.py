@@ -30,6 +30,9 @@ _VIEW = {
         "extraction_coverage",
         "extraction_profile",
         "annotation_extractor_state",
+        "procedure_candidate",
+        "procedure_guard",
+        "procedure_deoptimization",
     ]
 }
 
@@ -140,6 +143,7 @@ def seed_extraction_profile(event, graph, ctx, *, settings: SemanticExtractionSe
         "extraction_run",
         "extraction_coverage",
         "semantic_annotation",
+        "procedure_deoptimization",
     ],
 )
 def annotate_evidence(event, graph, ctx, *, settings: SemanticExtractionSettings):
@@ -169,7 +173,7 @@ def annotate_evidence(event, graph, ctx, *, settings: SemanticExtractionSettings
     on=["object.created"],
     where={"object.type": "selection_extraction_request", "object.data.status": "proposed"},
     view=_VIEW,
-    creates=["extraction_run", "extraction_coverage", "semantic_annotation"],
+    creates=["extraction_run", "extraction_coverage", "semantic_annotation", "procedure_deoptimization"],
 )
 def extract_selected_evidence(event, graph, ctx, *, settings: SemanticExtractionSettings):
     """Settle an exact-span request without giving the caller provider access."""

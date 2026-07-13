@@ -92,10 +92,28 @@ runs and annotations, and demotes dependent candidates through
 provenance (`projected_from_annotation`). Evidence is never touched
 (ADR 0014).
 
+## Guarded proceduralization — ADR 0029 pilot
+
+`semantic.request_rule@0.1.0` is a shipped deterministic parser that may become
+active only as a graph candidate earned from reviewed `semantic.llm@0.1.0`
+annotations. `synthesize_request_procedure` declares schemas, objective,
+effects, R0 ceiling, resource bounds, witness/held-out/counterexample sets,
+guard, and exact fallback. `evaluate_request_procedure_fn(runtime, ...)` runs
+the candidate in a real SQLite-backed runtime fork and fail-closed promotes only
+the evaluation audit state. `promote_request_procedure` additionally requires a
+named approver and perfect held-out exact-selector parity with zero false
+admissions/rejections.
+
+At serving time, the promoted procedure intercepts only its calibrated
+communication request region. Guard abstention or drift records a deopt and
+runs the LLM reference. Three distinct shape drifts demote the procedure. The
+reference path remains teacher and fallback; no generated code is imported.
+
 ## What this pack deliberately does NOT do
 
 - Migrate the existing `activity_normalizer` extraction path — that
   follows ADR 0026's ordering in a later workstream.
-- Promote anything: candidates stay candidates until a verdict or a
-  governed gate.
+- Promote domain facts or tasks: those candidates still require their owning
+  verdict/gate. Procedure promotion is a separate explicit, evidence-citing
+  lifecycle and cannot promote its extracted content.
 - Read or influence score, authority, or policy.

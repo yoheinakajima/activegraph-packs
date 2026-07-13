@@ -1,5 +1,18 @@
 # Changelog — semantic_extraction
 
+## v0.3.0 — guarded proceduralization pilot (2026-07-12)
+
+- Add the first concrete ADR 0029 lifecycle: reviewed LLM reference witnesses
+  -> declarative deterministic parser candidate -> real runtime fork over
+  witnessed/held-out/counterexample sets -> fail-closed evaluation promotion ->
+  named approval -> guarded execution.
+- The guard is part of the artifact, uses a calibrated communication shape plus
+  explicit-request cue, and requires zero false admissions and exact held-out
+  selector parity. A counterexample false admission blocks promotion.
+- Guard abstention/shape drift records `procedure_deoptimization`, invokes the
+  exact LLM reference fallback, and demotes after three distinct shape drifts.
+  Candidate execution makes zero provider calls and cannot widen R0 effects.
+
 ## v0.2.0 — exact-span domain requests (2026-07-12)
 
 - Added `selection_extraction_request`, allowing domain/family projectors to

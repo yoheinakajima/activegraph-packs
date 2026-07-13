@@ -257,6 +257,89 @@ class ExtractorPromotionEvidence(_StrictModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProcedureGuard(_StrictModel):
+    guard_identity: str = Field(min_length=1)
+    guard_kind: Literal["shape_and_cue"] = "shape_and_cue"
+    source_category: str = Field(min_length=1)
+    facet: str = Field(min_length=1)
+    shape_fingerprints: list[str] = Field(min_length=1)
+    cue_pattern_id: str = Field(min_length=1)
+    max_content_chars: int = Field(ge=1)
+    false_admissions: int = Field(default=0, ge=0)
+    abstentions: int = Field(default=0, ge=0)
+    calibration_examples: int = Field(default=0, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcedureCandidate(_StrictModel):
+    candidate_identity: str = Field(min_length=1)
+    domain: Literal["semantic_extraction"] = "semantic_extraction"
+    procedure_kind: Literal["deterministic_parser"] = "deterministic_parser"
+    candidate_ref: str = Field(min_length=1)
+    reference_ref: str = Field(min_length=1)
+    facet: str = Field(min_length=1)
+    semantic_objective: str = Field(min_length=1)
+    equivalence_rule: Literal["facet_exact_selector"] = "facet_exact_selector"
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    allowed_effects: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list)
+    action_class: Literal["R0"] = "R0"
+    resource_bounds: dict[str, Any]
+    witness_evidence_ids: list[str] = Field(min_length=1)
+    held_out_evidence_ids: list[str] = Field(min_length=1)
+    counterexample_evidence_ids: list[str] = Field(min_length=1)
+    reference_annotation_ids: list[str] = Field(min_length=1)
+    correction_evaluation_ids: list[str] = Field(min_length=1)
+    guard_id: str = Field(min_length=1)
+    fallback_ref: str = Field(min_length=1)
+    status: Literal["candidate", "evaluated", "promoted", "demoted", "disabled"] = "candidate"
+    status_reason: str = ""
+    created_by: str = Field(min_length=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcedureEvaluation(_StrictModel):
+    evaluation_identity: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    fork_run_id: str = Field(min_length=1)
+    forked_at_event_id: str = Field(min_length=1)
+    witness_count: int = Field(ge=0)
+    held_out_count: int = Field(ge=0)
+    counterexample_count: int = Field(ge=0)
+    witness_parity_milli: int = Field(ge=0, le=1_000)
+    held_out_parity_milli: int = Field(ge=0, le=1_000)
+    false_admissions: int = Field(ge=0)
+    false_rejections: int = Field(ge=0)
+    selector_mismatches: int = Field(ge=0)
+    guard_abstentions: int = Field(ge=0)
+    candidate_calls: int = Field(ge=0)
+    reference_calls: int = Field(ge=0)
+    verdict: Literal["pass", "fail"]
+    failures: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    correction_evaluation_ids: list[str] = Field(default_factory=list)
+    promote_marker_event_id: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcedureDeoptimization(_StrictModel):
+    deoptimization_identity: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    reason: Literal[
+        "guard_abstained", "shape_drift", "contract_mismatch",
+        "execution_failed", "bad_outcome",
+    ]
+    guard_id: str = Field(min_length=1)
+    fallback_ref: str = Field(min_length=1)
+    fallback_status: Literal["requested", "completed", "failed"] = "requested"
+    fallback_run_ids: list[str] = Field(default_factory=list)
+    input_fingerprint: str = Field(min_length=1)
+    evidence_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 OBJECT_TYPES = [
     ObjectType(
         "semantic_annotation",
@@ -294,6 +377,10 @@ OBJECT_TYPES = [
         "A recorded extractor trial: candidate vs baseline on recorded "
         "content (ADR 0014 promotion evidence).",
     ),
+    ObjectType("procedure_guard", ProcedureGuard, "A calibrated applicability guard for one deterministic procedure."),
+    ObjectType("procedure_candidate", ProcedureCandidate, "A declared deterministic extraction procedure and its reference/fallback contract."),
+    ObjectType("procedure_evaluation", ProcedureEvaluation, "Forked witnessed/held-out/counterexample evaluation of a procedure candidate."),
+    ObjectType("procedure_deoptimization", ProcedureDeoptimization, "A guard abstention, drift, failure, or mismatch that fell back to the reference path."),
 ]
 
 # Every candidate type a projector may mint from annotations — the
@@ -339,6 +426,9 @@ RELATION_TYPES = [
         target_types=("semantic_annotation",),
         description="A domain candidate was minted by a projector from an annotation.",
     ),
+    RelationType("procedure_has_guard", source_types=("procedure_candidate",), target_types=("procedure_guard",), description="A procedure candidate's versioned applicability guard."),
+    RelationType("procedure_evaluated_by", source_types=("procedure_candidate",), target_types=("procedure_evaluation",), description="A procedure candidate's forked evaluation."),
+    RelationType("procedure_deoptimized_by", source_types=("procedure_candidate",), target_types=("procedure_deoptimization",), description="A promoted procedure fell back to its dynamic reference."),
 ]
 
 
@@ -350,6 +440,10 @@ __all__ = [
     "ExtractionProfile",
     "AnnotationExtractorState",
     "ExtractorPromotionEvidence",
+    "ProcedureGuard",
+    "ProcedureCandidate",
+    "ProcedureEvaluation",
+    "ProcedureDeoptimization",
     "Attribution",
     "Modality",
     "Polarity",

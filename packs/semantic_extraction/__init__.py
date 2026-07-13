@@ -26,11 +26,12 @@ from .tools import TOOLS
 # integrates_with=["core", "memory_gateway"]
 pack = Pack(
     name="semantic_extraction",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Shared annotation layer: typed source-anchored annotations under "
         "one provenance envelope, cache-identified deterministic extraction, "
-        "first-class coverage, generic exact-span extraction requests, and per-domain candidate projectors."
+        "first-class coverage, exact-span requests, per-domain candidate "
+        "projectors, and guarded dynamic-to-deterministic procedures."
     ),
     object_types=OBJECT_TYPES,
     relation_types=RELATION_TYPES,
