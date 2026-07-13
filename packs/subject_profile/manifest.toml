@@ -3,7 +3,7 @@
 
 [pack]
 name = "subject_profile"
-version = "0.2.0"
+version = "0.3.0"
 description = "Evidence-backed, explicitly reviewed subject facts with contradiction and supersession lifecycles, the owner alias-set projection, and importance seeding from confirmed facts."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:b2818e778fff66019b036c9ce7d86461a9cfb4e3bdf243eb70cfd0cfab767af6"
+content_hash = "sha256:c34de43540094bf3df85a44b605a94cd8b060b2920d1516ed8255a8d3ef2bcd2"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

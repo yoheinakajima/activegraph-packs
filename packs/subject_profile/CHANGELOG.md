@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0 — promotion is idempotent and multi-valued (2026-07-13)
+
+- Promotion is idempotent by value: re-confirming a value the subject
+  already holds resolves the verdict to the existing fact instead of
+  minting a near-duplicate (ADR 0042 / D062).
+- Contradictions apply only to declared single-valued attributes
+  (`single_valued_attributes`, default `["name"]`); every other attribute
+  accumulates — a second confirmed handle, url, project, or company is
+  more identity, not a conflict.
+- `review_subject_fact_fn` accepts host `metadata`; the verdict carries it
+  and the applied fact inherits it (e.g. marking self-declared seeds).
+
 ## 0.2.0 — owner anchoring (2026-07-12)
 
 - Add the owner alias-set projection (`owner_alias_set_fn`): a deterministic,

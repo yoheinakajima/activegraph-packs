@@ -6,12 +6,12 @@ from typing import Any, Literal
 from activegraph.packs import tool
 
 
-def review_subject_fact_fn(graph, candidate_id: str, decision: Literal["confirm", "reject", "correct"], *, subject_ref: str = "owner", corrected_value: str | None = None, decided_by: str = "owner", rationale: str = "") -> dict[str, Any]:
+def review_subject_fact_fn(graph, candidate_id: str, decision: Literal["confirm", "reject", "correct"], *, subject_ref: str = "owner", corrected_value: str | None = None, decided_by: str = "owner", rationale: str = "", metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     verdict = graph.add_object("subject_fact_verdict", {
         "candidate_id": candidate_id, "subject_ref": subject_ref,
         "decision": decision, "corrected_value": corrected_value,
         "decided_by": decided_by, "rationale": rationale, "status": "proposed",
-        "result_fact_id": None, "metadata": {},
+        "result_fact_id": None, "metadata": dict(metadata or {}),
     })
     graph.add_relation(verdict.id, candidate_id, "verdict_for_profile_candidate")
     return {"verdict_id": verdict.id, "status": "proposed"}
@@ -33,7 +33,10 @@ def forget_subject_fact_fn(graph, fact_id: str, *, forgotten_by: str = "owner", 
         "verdict_id": data.get("verdict_id"), "supersedes_fact_id": fact_id,
         "metadata": {"forgotten_by": forgotten_by, "rationale": rationale},
     })
-    graph.patch_object(fact_id, {"status": "superseded"})
+    graph.patch_object(
+        fact_id, {"status": "superseded"},
+        actor=forgotten_by, rationale=rationale,
+    )
     graph.add_relation(tombstone.id, fact_id, "subject_fact_supersedes")
     return {"fact_id": fact_id, "tombstone_fact_id": tombstone.id, "status": "forgotten"}
 

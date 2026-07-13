@@ -120,11 +120,13 @@ def test_confirmed_relationship_fact_seeds_importance_and_provably_no_trust():
 
 
 def test_conflict_and_forget_are_append_only_lifecycles():
+    # "name" is single-valued by default: a differing confirmed value is a
+    # real conflict, surfaced as an open contradiction — never a silent swap.
     graph, runtime = _runtime(); _evidence(graph); runtime.run_until_idle()
     evidence = graph.objects(type="activity_evidence")[0]
-    first = _candidate(graph, evidence, "ActiveGraph")
+    first = _candidate(graph, evidence, "Yohei Nakajima", "name")
     review_subject_fact_fn(graph, first.id, "confirm"); runtime.run_until_idle()
-    second = _candidate(graph, evidence, "BabyAGI")
+    second = _candidate(graph, evidence, "Yohei N.", "name")
     review_subject_fact_fn(graph, second.id, "confirm"); runtime.run_until_idle()
     assert graph.objects(type="subject_contradiction")
     facts = graph.objects(type="subject_fact")
@@ -133,3 +135,68 @@ def test_conflict_and_forget_are_append_only_lifecycles():
     tombstone = graph.get_object(result["tombstone_fact_id"])
     assert tombstone.data["status"] == "forgotten"
     assert graph.get_object(current.id).data["status"] == "superseded"
+
+
+def test_multi_valued_attributes_accumulate_without_contradiction():
+    # A second handle (or project, url, company…) is more identity, not a
+    # conflict — the alias set is DESIGNED to hold several. Only declared
+    # single-valued attributes contradict.
+    graph, runtime = _runtime(); _evidence(graph); runtime.run_until_idle()
+    evidence = graph.objects(type="activity_evidence")[0]
+    for value in ("@yoheinakajima", "@babyagi_"):
+        review_subject_fact_fn(
+            graph, _candidate(graph, evidence, value, "handle").id, "confirm"
+        )
+        runtime.run_until_idle()
+    promoted = [
+        fact for fact in graph.objects(type="subject_fact")
+        if fact.data["status"] == "promoted"
+    ]
+    assert len(promoted) == 2
+    assert not graph.objects(type="subject_contradiction")
+    aliases = owner_alias_set_fn(graph)
+    assert aliases["handles"] == ["babyagi_", "yoheinakajima"]
+
+
+def test_promotion_is_idempotent_by_value():
+    # Re-confirming a value the subject already holds resolves the verdict
+    # to the existing fact: richer evidence never mints near-duplicates.
+    graph, runtime = _runtime(); _evidence(graph); runtime.run_until_idle()
+    evidence = graph.objects(type="activity_evidence")[0]
+    first = review_subject_fact_fn(
+        graph, _candidate(graph, evidence, "@yoheinakajima", "handle").id, "confirm"
+    )
+    runtime.run_until_idle()
+    # A distinct candidate (different identity) carrying the same value.
+    again = _candidate(graph, evidence, "@yoheinakajima", "handle")
+    graph.patch_object(again.id, {"candidate_identity": "c-handle-dup"})
+    second = review_subject_fact_fn(graph, again.id, "confirm")
+    runtime.run_until_idle()
+    facts = [
+        fact for fact in graph.objects(type="subject_fact")
+        if fact.data["status"] == "promoted"
+    ]
+    assert len(facts) == 1
+    first_verdict = graph.get_object(first["verdict_id"]).data
+    second_verdict = graph.get_object(second["verdict_id"]).data
+    assert first_verdict["status"] == second_verdict["status"] == "applied"
+    assert second_verdict["result_fact_id"] == facts[0].id
+
+
+def test_verdict_metadata_lands_on_the_fact():
+    # Hosts annotate promotions (e.g. self-declared seeds) through the
+    # verdict; the applied fact carries the annotation with provenance.
+    graph, runtime = _runtime(); _evidence(graph); runtime.run_until_idle()
+    evidence = graph.objects(type="activity_evidence")[0]
+    review_subject_fact_fn(
+        graph,
+        _candidate(graph, evidence, "Yohei Nakajima", "name").id,
+        "confirm",
+        decided_by="owner:client",
+        metadata={"self_declared": True},
+    )
+    runtime.run_until_idle()
+    [fact] = graph.objects(type="subject_fact")
+    assert fact.data["metadata"]["self_declared"] is True
+    assert fact.data["metadata"]["decided_by"] == "owner:client"
+    assert fact.data["metadata"]["decision"] == "confirm"

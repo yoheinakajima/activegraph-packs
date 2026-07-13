@@ -9,7 +9,7 @@ from .tools import TOOLS
 
 # requires=["activity_normalizer"], integrates_with=["semantic_extraction", "entity", "memory_gateway"]
 pack = Pack(
-    name="subject_profile", version="0.2.0",
+    name="subject_profile", version="0.3.0",
     description=(
         "Evidence-backed, explicitly reviewed subject facts with contradiction "
         "and supersession lifecycles, the owner alias-set projection, and "

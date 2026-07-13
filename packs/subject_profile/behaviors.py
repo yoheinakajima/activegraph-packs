@@ -70,13 +70,31 @@ def apply_subject_fact_verdict(event, graph, ctx, *, settings: SubjectProfileSet
         graph.patch_object(verdict_id, {"status": "failed", "metadata": {"error": "empty_value"}})
         return
 
+    # Re-confirming a value the subject already holds resolves to the
+    # existing fact: promotion is idempotent by value, so richer evidence
+    # never mints near-duplicates for consumers to dedupe.
+    existing = next(
+        (
+            fact for fact in ctx.view.objects(type="subject_fact")
+            if fact.data.get("subject_ref") == subject_ref
+            and fact.data.get("attribute") == attribute
+            and fact.data.get("status") == "promoted"
+            and fact.data.get("value") == value
+        ),
+        None,
+    )
+    if existing is not None:
+        graph.patch_object(verdict_id, {"status": "applied", "result_fact_id": existing.id})
+        return
+
+    # Only single-valued attributes contradict; everything else accumulates.
     active = [
         fact for fact in ctx.view.objects(type="subject_fact")
         if fact.data.get("subject_ref") == subject_ref
         and fact.data.get("attribute") == attribute
         and fact.data.get("status") == "promoted"
         and fact.data.get("value") != value
-    ]
+    ] if attribute in set(settings.single_valued_attributes) else []
     fact = graph.add_object("subject_fact", {
         "fact_identity": _stable_id("subject_fact", subject_ref, attribute, value, candidate.id),
         "subject_ref": subject_ref, "attribute": attribute, "value": value,
@@ -87,7 +105,11 @@ def apply_subject_fact_verdict(event, graph, ctx, *, settings: SubjectProfileSet
         "evidence_id": evidence_id,
         "source_surface_id": evidence.data.get("source_surface_id"),
         "verdict_id": verdict_id, "supersedes_fact_id": None,
-        "metadata": {"decision": decision, "decided_by": data.get("decided_by")},
+        "metadata": {
+            **(data.get("metadata") or {}),
+            "decision": decision,
+            "decided_by": data.get("decided_by"),
+        },
     })
     graph.add_relation(fact.id, candidate.id, "promoted_from_profile_candidate")
     graph.add_relation(fact.id, evidence_id, "subject_fact_grounded_in")
