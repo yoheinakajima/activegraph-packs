@@ -75,3 +75,11 @@ proposes `gmail.history.list`; clients never parse Gmail cursor fields. A
 successful poll with no watermark advance does not disable future checks: each
 later owner request receives a fresh bounded run, while concurrent work and a
 rate-limited retry remain idempotent.
+
+Gmail history is a change feed, not a transaction with message hydration. A
+message can be listed and then disappear before `messages.get`. A message-level
+404 is therefore settled as a concurrent provider deletion: the pack records a
+tombstone, never counts the message as imported, and advances the watermark only
+after every listed id is either imported or tombstoned. This rule is independent
+of result arrival order. A history-list 404 remains a distinct invalid-cursor
+failure that requires re-anchoring.
