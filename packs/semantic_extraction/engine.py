@@ -81,6 +81,10 @@ def resolve_extractor(
         extractor = build_llm_extractor(settings)
         register_annotation_extractor(extractor, replace=True)
         return extractor
+    if extractor_id == "semantic.request_rule" and extractor_version == "0.1.0":
+        from .procedures import RequestRuleExtractorV1
+
+        return RequestRuleExtractorV1()
     return get_annotation_extractor(extractor_id, extractor_version)
 
 
@@ -461,8 +465,26 @@ def run_profile_extraction(
     extractor_map = active_profile_extractor_map(reader)
 
     groups: dict[Optional[str], list[str]] = {}
+    deoptimizations_by_ref: dict[str, list[str]] = {}
     for facet in requested:
-        groups.setdefault(extractor_map.get(facet), []).append(facet)
+        ref = extractor_map.get(facet)
+        if ref is not None:
+            from .procedures import active_procedure_for, record_deoptimization
+
+            procedure = active_procedure_for(reader, evidence, facet)
+            if procedure is not None:
+                candidate, guard, admitted, reason = procedure
+                if ref == candidate.data.get("reference_ref"):
+                    if admitted:
+                        ref = str(candidate.data.get("candidate_ref"))
+                    else:
+                        deopt_id = record_deoptimization(
+                            graph, reader, candidate, guard, evidence_obj, reason
+                        )
+                        ref = str(candidate.data.get("fallback_ref"))
+                        if deopt_id:
+                            deoptimizations_by_ref.setdefault(ref, []).append(deopt_id)
+        groups.setdefault(ref, []).append(facet)
 
     results = []
     # The default group first, then explicit refs in sorted order —
@@ -474,8 +496,7 @@ def run_profile_extraction(
         facets = groups.get(ref)
         if not facets:
             continue
-        results.append(
-            run_annotation_extraction(
+        result = run_annotation_extraction(
                 graph,
                 evidence_obj,
                 settings=settings,
@@ -485,7 +506,17 @@ def run_profile_extraction(
                 selection_id=selection_id,
                 content_segments=content_segments,
             )
-        )
+        results.append(result)
+        for deopt_id in deoptimizations_by_ref.get(str(ref), []):
+            patch(
+                graph,
+                deopt_id,
+                {
+                    "fallback_status": "completed" if result.get("ok") else "failed",
+                    "fallback_run_ids": [result["run"].id],
+                },
+                rationale="record dynamic reference fallback",
+            )
     return results
 
 

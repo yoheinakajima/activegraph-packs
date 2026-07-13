@@ -14,6 +14,11 @@ from .engine import (
 )
 from .facets import LLM_UPGRADE_FACETS, STANDARD_FACETS
 from .settings import SemanticExtractionSettings
+from .procedures import (
+    evaluate_request_procedure_fn,
+    promote_request_procedure_fn,
+    synthesize_request_procedure_fn,
+)
 
 
 def extract_annotations_fn(
@@ -638,6 +643,47 @@ def promote_llm_extractor(
     )
 
 
+@tool(
+    name="synthesize_request_procedure",
+    description=(
+        "Declare a deterministic request-extraction procedure from reviewed "
+        "LLM witnesses, held-out examples, and counterexamples."
+    ),
+)
+def synthesize_request_procedure(
+    graph,
+    witness_evidence_ids: Optional[list[str]] = None,
+    held_out_evidence_ids: Optional[list[str]] = None,
+    counterexample_evidence_ids: Optional[list[str]] = None,
+    created_by: str = "owner",
+) -> dict[str, Any]:
+    return synthesize_request_procedure_fn(
+        graph,
+        witness_evidence_ids=list(witness_evidence_ids or []),
+        held_out_evidence_ids=list(held_out_evidence_ids or []),
+        counterexample_evidence_ids=list(counterexample_evidence_ids or []),
+        created_by=created_by,
+    )
+
+
+@tool(
+    name="promote_request_procedure",
+    description=(
+        "Promote a guarded deterministic request extractor only with its "
+        "passing forked evaluation and a named approver."
+    ),
+)
+def promote_request_procedure(
+    graph,
+    candidate_id: str = "",
+    evaluation_id: str = "",
+    approver: str = "",
+) -> dict[str, Any]:
+    return promote_request_procedure_fn(
+        graph, candidate_id, evaluation_id, approver=approver
+    )
+
+
 TOOLS = [
     extract_annotations,
     update_extraction_profile,
@@ -645,6 +691,8 @@ TOOLS = [
     annotation_coverage,
     run_extractor_trial,
     promote_llm_extractor,
+    synthesize_request_procedure,
+    promote_request_procedure,
 ]
 
 __all__ = [
@@ -655,5 +703,8 @@ __all__ = [
     "invalidate_annotation_extractor_fn",
     "promote_llm_extractor_fn",
     "run_extractor_trial_fn",
+    "synthesize_request_procedure_fn",
+    "evaluate_request_procedure_fn",
+    "promote_request_procedure_fn",
     "update_extraction_profile_fn",
 ]
