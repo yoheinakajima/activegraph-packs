@@ -65,15 +65,15 @@ def test_project_candidates_derive_in_seed_priority_order(runtime):
     _fact(graph, "company", "Untapped Capital")
     _fact(graph, "project", "BabyAGI")
     _fact(graph, "email", "yohei@x.com")  # identity alias — never a project
-    graph.add_object("integration_profile", {
+    profile = graph.add_object("integration_profile", {
         "profile_identity": "prof-1", "profile_version": 1, "service": "gmail",
         "account_ref": "yohei@x.com", "account_display": None, "status": "active",
         "routes": [], "scopes_granted": [], "scopes_available": [],
         "facets": [], "capability_inventory": [],
         "data_topology": {"containers": [
             {"id": "INBOX", "name": "INBOX", "type": "system"},
-            {"id": "L1", "name": "Deal Flow", "type": "user"},
-            {"id": "L2", "name": "Fund/LPs", "type": "user"},
+            {"id": "L1", "name": "BabyAGI", "type": "user"},
+            {"id": "L2", "name": "Black Friday Sale", "type": "user"},
         ]},
         "signal_map": [], "claims": [], "health": {},
         "exploration_receipts": [], "supersedes_id": None, "metadata": {},
@@ -91,20 +91,25 @@ def test_project_candidates_derive_in_seed_priority_order(runtime):
         })
 
     result = derive_project_candidates_fn(graph)
-    assert result["created"] >= 4
+    assert result["created"] == 3
     rows = project_projects_fn(graph)["candidates"]
     by_name = {row["name"]: row for row in rows}
     assert by_name["Untapped Capital"]["kind"] == "fact_seeded"
     assert by_name["BabyAGI"]["kind"] == "fact_seeded"
-    assert by_name["Deal Flow"]["kind"] == "label_seeded"
-    assert by_name["LPs"]["kind"] == "label_seeded"  # nested label leaf
     assert by_name["ActiveGraph"]["kind"] == "engagement_clustered"
     assert "appears 3×" in by_name["ActiveGraph"]["rationale"]
     assert all(row["sources"] for row in rows)
     assert "yohei@x.com" not in by_name
-    # Priority ordering: fact seeds above labels above clusters.
+    # ADR 0043: labels corroborate, never propose. The matching label
+    # joined BabyAGI's sources and lifted its score; the campaign label
+    # proposed nothing.
+    assert "Black Friday Sale" not in by_name
+    assert "corroborated by your label 'BabyAGI'" in by_name["BabyAGI"]["rationale"]
+    assert profile.id in by_name["BabyAGI"]["sources"]
+    assert by_name["BabyAGI"]["score_milli"] > by_name["Untapped Capital"]["score_milli"]
+    # Priority ordering: fact seeds above clusters; corroboration on top.
     scores = [row["score_milli"] for row in rows]
-    assert by_name["Untapped Capital"]["score_milli"] > by_name["Deal Flow"]["score_milli"] > by_name["ActiveGraph"]["score_milli"]
+    assert by_name["Untapped Capital"]["score_milli"] > by_name["ActiveGraph"]["score_milli"]
     assert scores == sorted(scores, reverse=True)
 
     # Idempotent: re-derivation refreshes, never duplicates.

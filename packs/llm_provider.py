@@ -195,6 +195,51 @@ def clear_llm_provider() -> None:
     _PROVIDER_INSTANCE = None
 
 
+def parse_json_payload(text: str) -> Optional[dict]:
+    """Best-effort extraction of one JSON object from a model response.
+
+    Providers wrap JSON in prose or code fences, and a strict first-brace
+    regex silently yields nothing (live bug: research "found nothing" with
+    no error). Order: the whole text, then fenced blocks, then balanced
+    top-level objects. Returns the first dict that parses, else None —
+    callers keep their own schema validation.
+    """
+    import json
+    import re
+
+    candidate = (text or "").strip()
+    if not candidate:
+        return None
+    try:
+        parsed = json.loads(candidate)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    for match in re.finditer(r"```(?:json)?\s*(.*?)```", candidate, re.DOTALL):
+        try:
+            parsed = json.loads(match.group(1).strip())
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+    depth, start = 0, None
+    for index, char in enumerate(candidate):
+        if char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    parsed = json.loads(candidate[start:index + 1])
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
+                    start = None
+    return None
+
+
 __all__ = [
     "PROVIDER_KEY_ENVS",
     "LLMProviderSettings",
@@ -205,6 +250,7 @@ __all__ = [
     "configured_llm_provider",
     "default_model_for",
     "get_llm_provider",
+    "parse_json_payload",
     "resolve_llm_provider",
     "set_llm_provider",
 ]

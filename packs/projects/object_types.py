@@ -17,8 +17,10 @@ class ProjectCandidate(_StrictModel):
 
     candidate_identity: str = Field(min_length=1)
     name: str = Field(min_length=1)
+    # label_seeded remains valid for replaying pre-ADR-0043 stores; new
+    # derivations corroborate with labels instead of proposing from them.
     kind: str = Field(
-        pattern="^(fact_seeded|label_seeded|engagement_clustered|presence_clustered)$"
+        pattern="^(fact_seeded|synthesized|label_seeded|engagement_clustered|presence_clustered)$"
     )
     score_milli: int = Field(ge=0, le=1_000)
     sources: list[str] = Field(default_factory=list)

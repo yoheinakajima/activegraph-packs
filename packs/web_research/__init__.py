@@ -10,7 +10,7 @@ register_web_research()
 # requires=["tool_gateway", "connector_control", "subject_profile", "activity_normalizer"]
 pack = Pack(
     name="web_research",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Owner-consented web research: queries derive only from confirmed "
         "subject facts, run as strikeable surfaces of an approved ingestion "

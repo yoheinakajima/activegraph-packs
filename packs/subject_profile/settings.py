@@ -10,6 +10,19 @@ class SubjectProfileSettings(BaseModel):
     single_valued_attributes: list[str] = Field(
         default_factory=lambda: ["name"]
     )
+    # ADR 0043: attributes carry a class. Identity anchors interpretation
+    # and headlines recognition; instructions belong in the behavior
+    # surface; anything unlisted is narrative — the subject's own words.
+    attribute_classes: dict[str, list[str]] = Field(
+        default_factory=lambda: {
+            "identity": [
+                "name", "handle", "url", "email", "company", "organization",
+                "affiliation", "project", "person", "relationship", "role",
+                "location",
+            ],
+            "instruction": ["preference", "communication_style", "instruction"],
+        }
+    )
     # Confirmed facts about who matters (never identity aliases) may seed
     # importance as explicit owner acts (ADR 0038 rule 3 / ADR 0039).
     importance_seed_attributes: list[str] = Field(

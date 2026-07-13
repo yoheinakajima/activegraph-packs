@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — attribute classes (2026-07-13)
+
+- ADR 0043: subject attributes carry a class — identity, instruction, or
+  narrative (the unlisted default). `attribute_classes` settings plus the
+  `classify_subject_attribute` helper and `DEFAULT_ATTRIBUTE_CLASSES` for
+  projectors without a settings instance. Identity headlines recognition;
+  instructions belong in the behavior surface; narrative folds.
+
 ## 0.3.0 — promotion is idempotent and multi-valued (2026-07-13)
 
 - Promotion is idempotent by value: re-confirming a value the subject

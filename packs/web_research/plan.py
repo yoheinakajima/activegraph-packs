@@ -180,13 +180,9 @@ def _research_prompt(query: str, limit: int) -> tuple[str, str]:
 
 
 def _parse_findings(text: str) -> list[dict[str, str]]:
-    match = re.search(r"\{.*\}", text or "", re.DOTALL)
-    if not match:
-        return []
-    try:
-        payload = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return []
+    from packs.llm_provider import parse_json_payload
+
+    payload = parse_json_payload(text) or {}
     findings = []
     for row in payload.get("findings") or []:
         claim = str((row or {}).get("claim") or "").strip()
@@ -222,6 +218,7 @@ def perform_research_queries(
 
     findings: list[dict[str, str]] = []
     errors: list[str] = []
+    responses: list[dict[str, Any]] = []
     calls = 0
     for query in queries:
         system, user = _research_prompt(query, max_findings_per_query)
@@ -242,7 +239,17 @@ def perform_research_queries(
                 }],
             )
             calls += 1
-            for finding in _parse_findings(getattr(response, "text", "") or ""):
+            text = getattr(response, "text", "") or ""
+            parsed = _parse_findings(text)
+            # A bounded breadcrumb per query: "found nothing" must always be
+            # diagnosable from the run record alone (ADR 0043).
+            responses.append({
+                "query": query,
+                "length": len(text),
+                "parsed_findings": len(parsed),
+                "sample": text[:400],
+            })
+            for finding in parsed:
                 finding["query"] = query
                 findings.append(finding)
         except Exception as exc:  # one query's failure stays one query's failure
@@ -251,6 +258,7 @@ def perform_research_queries(
         "findings": findings,
         "calls": calls,
         "model": model,
+        "responses": responses,
         "error": "; ".join(errors)[:500] if errors else None,
     }
 
@@ -332,6 +340,12 @@ def execute_web_research_plan_fn(
         "model": outcome.get("model"),
         "calls": int(outcome.get("calls") or 0),
         "error": outcome.get("error"),
+        "metadata": {
+            "plan_version": int(data.get("version") or 0),
+            # Bounded per-query breadcrumbs (ADR 0043): zero findings must
+            # be diagnosable from the run record alone.
+            "responses": list(outcome.get("responses") or [])[:8],
+        },
     }, rationale="web research settled")
 
     state = {"completed": "succeeded", "partial": "partial", "failed": "failed"}[status]

@@ -33,10 +33,14 @@ def derive_project_candidates_fn(
     """Deterministic, explainable derivation in seed-priority order (D060).
 
     1. Owner-confirmed facts naming orgs/projects/affiliations.
-    2. The owner's own connector taxonomy (user-created labels).
-    3. Entities recurring in communication (mention frequency; owner-engaged
+    2. Entities recurring in communication (mention frequency; owner-engaged
        threads carry the mentions in the first place).
-    4. Presence/research entities from owner-scoped evidence.
+    3. Presence/research entities from owner-scoped evidence.
+
+    The owner's connector taxonomy (user-created labels) CORROBORATES a
+    proposal — a matching label joins its sources and lifts its score —
+    but never proposes by itself: labels map how the owner uses a tool,
+    not what their world is made of (ADR 0043, amending ADR 0040 §3b).
 
     Idempotent per name: an existing candidate for the same normalized name
     is refreshed (sources/score merged), never duplicated; confirmed and
@@ -78,7 +82,9 @@ def derive_project_candidates_fn(
                 f"you confirmed this {data.get('attribute')} yourself",
             )
 
-    # 2 — the owner's own connector taxonomy (user labels).
+    # 2 — the owner's own connector taxonomy: collected as corroborating
+    # priors, applied after the proposing rungs (ADR 0043).
+    labels: dict[str, tuple[str, str]] = {}
     for profile in view.objects(type="integration_profile"):
         if profile.data.get("status") != "active":
             continue
@@ -89,10 +95,7 @@ def derive_project_candidates_fn(
             leaf = name.split("/")[-1].strip()
             if not leaf or leaf.casefold() in _GENERIC_LABELS:
                 continue
-            offer(
-                leaf, "label_seeded", 700, [profile.id],
-                f"you already file mail under the label '{name}'",
-            )
+            labels.setdefault(_norm(leaf), (profile.id, name))
 
     # 3 — entities recurring in communication.
     mention_counts: Counter[str] = Counter()
@@ -130,6 +133,17 @@ def derive_project_candidates_fn(
                 text, "presence_clustered", 300, [annotation.id],
                 "named in your public presence",
             )
+
+    # Labels corroborate whatever the proposing rungs surfaced: the
+    # matching taxonomy ref joins the sources and lifts the score.
+    for key, proposal in proposals.items():
+        match = labels.get(key)
+        if match is None:
+            continue
+        label_source, label_name = match
+        proposal["sources"] = list(dict.fromkeys([*proposal["sources"], label_source]))
+        proposal["score_milli"] = min(1_000, proposal["score_milli"] + 100)
+        proposal["rationale"] += f"; corroborated by your label '{label_name}'"
 
     existing_by_name = {
         _norm(obj.data.get("name") or ""): obj

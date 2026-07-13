@@ -74,4 +74,38 @@ def owner_alias_set_fn(
     }
 
 
-__all__ = ["ALIAS_ATTRIBUTES", "owner_alias_set_fn"]
+#: Default class map, mirroring SubjectProfileSettings.attribute_classes —
+#: importable by projectors that have no settings instance in hand.
+DEFAULT_ATTRIBUTE_CLASSES: dict[str, tuple[str, ...]] = {
+    "identity": (
+        "name", "handle", "url", "email", "company", "organization",
+        "affiliation", "project", "person", "relationship", "role",
+        "location",
+    ),
+    "instruction": ("preference", "communication_style", "instruction"),
+}
+
+
+def classify_subject_attribute(
+    attribute: str, classes: dict[str, Iterable[str]] | None = None
+) -> str:
+    """identity | instruction | narrative (the unlisted default).
+
+    ADR 0043: identity anchors interpretation and headlines recognition;
+    instructions are how the subject wants an agent to behave, never who
+    they are; narrative is their own words, kept whole and folded.
+    """
+    resolved = classes or DEFAULT_ATTRIBUTE_CLASSES
+    name = str(attribute or "").strip().lower()
+    for class_name in ("identity", "instruction"):
+        if name in {str(row).lower() for row in resolved.get(class_name, ())}:
+            return class_name
+    return "narrative"
+
+
+__all__ = [
+    "ALIAS_ATTRIBUTES",
+    "DEFAULT_ATTRIBUTE_CLASSES",
+    "classify_subject_attribute",
+    "owner_alias_set_fn",
+]
