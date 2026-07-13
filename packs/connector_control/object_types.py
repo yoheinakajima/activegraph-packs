@@ -118,12 +118,26 @@ class ConnectorOperationalPolicy(_StrictModel):
     rationale: str = Field(min_length=1)
 
 
+class ConnectorMaintenanceRequest(_StrictModel):
+    request_identity: str = Field(min_length=1)
+    source_surface_id: str = Field(min_length=1)
+    service: str = Field(min_length=1)
+    account_ref: str = Field(min_length=1)
+    kind: Literal["manual_refresh"] = "manual_refresh"
+    requested_by: str = Field(min_length=1)
+    status: Literal["proposed", "accepted", "failed", "rejected"] = "proposed"
+    domain_run_id: Optional[str] = None
+    error: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 OBJECT_TYPES = [
     ObjectType("connector_surface_binding", ConnectorSurfaceBinding, "A service surface bound to one connector family."),
     ObjectType("connector_run_observation", ConnectorRunObservation, "A neutral adapter view of an authoritative domain run."),
     ObjectType("connector_learning_delta", ConnectorLearningDelta, "Run-scoped counts and references for derived learning."),
     ObjectType("connector_native_view", ConnectorNativeView, "A validated family-native read projection materialization."),
     ObjectType("connector_operational_policy", ConnectorOperationalPolicy, "Versioned release budgets for connector work."),
+    ObjectType("connector_maintenance_request", ConnectorMaintenanceRequest, "A provider-neutral owner request for bounded connector maintenance."),
 ]
 
 RELATION_TYPES = []

@@ -17,6 +17,15 @@ This pack owns no OAuth, provider operation, payload parser, product copy,
 ranking, or universal provider ontology. Route changes update a binding while
 preserving service/account/surface identity.
 
+## Maintenance
+
+`request_connector_refresh` creates a neutral `connector_maintenance_request`
+and dispatches through a service-registered handler. The control plane checks
+binding state, refresh availability, and already-running work; the service pack
+alone interprets its cursor and proposes provider calls. Revoked bindings fail
+closed. Run observations preserve last attempt/success and safe cursor coverage
+for clients without exposing provider tokens.
+
 ## Operational release policy
 
 `connector_operational_policy` is the versioned ADR 0034 conformance floor.

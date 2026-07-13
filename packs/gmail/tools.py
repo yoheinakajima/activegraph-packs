@@ -284,8 +284,16 @@ def request_gmail_poll_fn(
     route = _validated_route(route)
     if not start_history_id:
         raise ValueError("start_history_id is required")
-    identity = _stable("gmail_sync", source_surface_id, "poll", start_history_id)
-    existing = next((obj for obj in graph.objects(type="gmail_sync_run") if (obj.data or {}).get("run_identity") == identity), None)
+    matching = [
+        obj for obj in graph.objects(type="gmail_sync_run")
+        if obj.data.get("source_surface_id") == source_surface_id
+        and obj.data.get("mode") == "poll"
+        and obj.data.get("start_history_id") == start_history_id
+    ]
+    active = next((obj for obj in reversed(matching) if obj.data.get("status") in {"proposed", "running"}), None)
+    if active is not None:
+        return {"ok": True, "created": False, "already_running": True, "run_id": active.id, "call_ids": active.data.get("call_ids") or []}
+    existing = matching[-1] if matching else None
     if existing:
         if (existing.data or {}).get("status") == "failed" and (existing.data or {}).get("error_code") == "rate_limited":
             graph.patch_object(
@@ -313,7 +321,7 @@ def request_gmail_poll_fn(
                 rationale="Gmail history retry proposed",
             )
             return {"ok": True, "created": False, "resumed": True, "run_id": existing.id, "call_ids": [retry.id]}
-        return {"ok": True, "created": False, "run_id": existing.id, "call_ids": existing.data.get("call_ids") or []}
+    identity = _stable("gmail_sync", source_surface_id, "poll", start_history_id, len(matching) + 1)
     run = graph.add_object(
         "gmail_sync_run",
         {

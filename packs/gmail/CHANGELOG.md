@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 — continuous manual maintenance (2026-07-12)
+
+- Register Gmail behind the neutral maintenance contract and poll from the
+  durable history watermark with bounded work receipts.
+- Repeated no-advance polls create fresh runs while active/rate-limited retries
+  remain idempotent; expose namespaced thread labels beside family unread data.
+
 ## 0.2.0 — conversation-family mapping (2026-07-12)
 
 - Map recorded Gmail evidence into strict service-neutral conversation threads,

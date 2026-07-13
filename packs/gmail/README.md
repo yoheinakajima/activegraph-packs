@@ -68,3 +68,10 @@ delivery, interruption, partial bounds, rate limiting, invalid cursors,
 unexpected shape/drift, tombstones, replay, multi-account identity, OAuth
 revocation, and write idempotency. Polling ships first; push/webhook delivery
 can later target the same history-watermark handoff.
+
+After one bounded backfill, the neutral connector maintenance tool can request
+a manual refresh. Gmail alone resolves the stored `history:<id>` watermark and
+proposes `gmail.history.list`; clients never parse Gmail cursor fields. A
+successful poll with no watermark advance does not disable future checks: each
+later owner request receives a fresh bounded run, while concurrent work and a
+rate-limited retry remain idempotent.
