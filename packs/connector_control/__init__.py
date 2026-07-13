@@ -10,7 +10,7 @@ from .tools import TOOLS
 
 pack = Pack(
     name="connector_control",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Neutral connector surface bindings, authoritative-run adapters, "
         "learning deltas, and validated family-native read shapes."

@@ -6,6 +6,7 @@ import hashlib
 from typing import Any, Optional
 
 from activegraph.packs import tool
+from .maintenance import request_connector_refresh_fn
 
 from .contracts import validate_native_data
 from .object_types import (
@@ -372,6 +373,11 @@ def project_connector_learning_deltas(graph, _ctx=None):
     return project_connector_learning_deltas_fn(graph)
 
 
+@tool(name="request_connector_refresh", description="Request bounded maintenance through a connector's registered service adapter.")
+def request_connector_refresh(graph, source_surface_id: str, requested_by: str = "owner"):
+    return request_connector_refresh_fn(graph, source_surface_id, requested_by=requested_by)
+
+
 TOOLS = [
     record_connector_binding,
     record_connector_run_observation,
@@ -379,6 +385,7 @@ TOOLS = [
     record_connector_native_view,
     project_connector_control_plane,
     project_connector_learning_deltas,
+    request_connector_refresh,
 ]
 
 __all__ = [
@@ -391,4 +398,5 @@ __all__ = [
     "record_connector_native_view_fn",
     "project_connector_control_plane_fn",
     "project_connector_learning_deltas_fn",
+    "request_connector_refresh_fn",
 ]

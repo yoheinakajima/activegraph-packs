@@ -281,6 +281,11 @@ def adapt_gmail_run_fn(
             "gmail": {
                 "messages_imported": int(data.get("messages_imported") or 0),
                 "thread_materialization": "ready" if native_data is not None else "pending",
+                "thread_labels": {
+                    obj.id: list(obj.data.get("labels") or [])
+                    for obj in _objects(reader, "conversation_thread")
+                    if obj.data.get("source_surface_id") == source_surface_id
+                },
             }
         },
         error=data.get("error"),

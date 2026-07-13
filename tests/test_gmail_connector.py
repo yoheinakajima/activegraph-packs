@@ -35,6 +35,7 @@ from packs.gmail.tools import (
     request_gmail_poll_fn,
     reprocess_gmail_evidence_fn,
 )
+from packs.connector_control.maintenance import request_connector_refresh_fn
 from packs.semantic_extraction import pack as extraction_pack
 from packs.tool_gateway import pack as gateway_pack
 from packs.tool_gateway.integrations import correct_integration_claim_fn
@@ -353,6 +354,10 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     assert native["state"] == "ready"
     assert native["data"]["total_count"] == 2
     assert {row["title"] for row in native["data"]["threads"]} == {"First", "Second"}
+    assert all(
+        "INBOX" in labels
+        for labels in native["service_extensions"]["gmail"]["thread_labels"].values()
+    )
     assert len(list(rt.graph.objects(type="conversation_message"))) == 2
     assert len(list(rt.graph.objects(type="conversation_thread"))) == 2
     assert len(list(rt.graph.objects(type="entity_mention"))) == 2
@@ -408,6 +413,25 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     assert m1_usage.data["invalidated"] is True
     [cursor] = list(rt.graph.objects(type="backfill_cursor"))
     assert cursor.data["watermark_ref"] == "history:901"
+
+    # A successful empty/no-advance refresh must not make this watermark
+    # permanently idempotent. The next owner refresh creates a fresh run.
+    refresh = request_connector_refresh_fn(rt.graph, surface.data["surface_id"])
+    repeated = refresh["service_result"]
+    assert refresh["domain_run_id"] == repeated["run_id"]
+    rt.run_until_idle()
+    again = request_gmail_poll_fn(
+        rt.graph,
+        source_surface_id=surface.data["surface_id"],
+        account_ref="yohei@example.com",
+        user_id="agent:owner",
+        connected_account_id="ca_1",
+        start_history_id="901",
+        max_messages=10,
+    )
+    assert repeated["created"] is True
+    assert again["created"] is True
+    assert repeated["run_id"] != again["run_id"]
 
     set_surface_status_fn(rt.graph, surface.data["surface_id"], "revoked", reason="owner revoked OAuth")
     rt.run_until_idle()

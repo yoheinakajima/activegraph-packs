@@ -1,5 +1,11 @@
 # Connector Control Pack Changelog
 
+## v0.3.0 — maintenance requests and lifecycle truth (2026-07-12)
+
+- Add graph-visible provider-neutral manual refresh requests dispatched through
+  service-owned handlers, with active-work dedup and fail-closed revoke gates.
+- Project source lifecycle changes into connector binding authority state.
+
 ## v0.2.0 — conversation visibility (2026-07-12)
 
 - Extended the family-neutral conversation summary with a bounded latest-message
