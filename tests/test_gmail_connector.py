@@ -70,6 +70,7 @@ class FakeComposio:
         self.bad_shape_next_fetch = False
         self.rate_limit_next_history = False
         self.invalid_cursor_next_history = False
+        self.missing_history_message = False
 
     def authorize(self, **kwargs):
         self.calls.append(("authorize", kwargs))
@@ -128,14 +129,25 @@ class FakeComposio:
             if self.invalid_cursor_next_history:
                 self.invalid_cursor_next_history = False
                 return {"successful": False, "error": "404 historyId is too old", "data": {}}
+            added = [{"message": {"id": "m3"}}]
+            if self.missing_history_message:
+                # Put the vanished row first so a successful hydration settles
+                # last; completion must be independent of result order.
+                added.insert(0, {"message": {"id": "m-gone"}})
             data = {
                 "history": [{
-                    "messagesAdded": [{"message": {"id": "m3"}}],
+                    "messagesAdded": added,
                     "messagesDeleted": [{"message": {"id": "m1"}}],
                 }],
                 "historyId": "901",
             }
         elif slug == "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID":
+            if args.get("message_id") == "m-gone":
+                return {
+                    "successful": False,
+                    "error": "404 Requested entity was not found",
+                    "data": {},
+                }
             data = _message("m3", "Third", "new mail", "901")
         else:
             data = {"id": "provider-result"}
@@ -439,6 +451,45 @@ def test_explore_backfill_poll_and_revoke_without_erasing_history(tmp_path):
     assert list(rt.graph.objects(type="connection_surface"))[0].data["status"] == "revoked"
 
 
+def test_history_message_404_is_settled_as_a_concurrent_deletion(tmp_path):
+    fake = FakeComposio()
+    fake.missing_history_message = True
+    rt = _runtime(tmp_path, fake)
+    request_gmail_exploration_fn(
+        rt.graph, user_id="agent:owner", connected_account_id="ca_1"
+    )
+    rt.run_until_idle()
+    [surface] = list(rt.graph.objects(type="connection_surface"))
+
+    poll = request_gmail_poll_fn(
+        rt.graph,
+        source_surface_id=surface.data["surface_id"],
+        account_ref="yohei@example.com",
+        user_id="agent:owner",
+        connected_account_id="ca_1",
+        start_history_id="900",
+    )
+    rt.run_until_idle()
+
+    run = rt.graph.get_object(poll["run_id"])
+    assert run.data["status"] == "completed"
+    assert run.data["completed_message_ids"] == ["m3"]
+    assert run.data["missing_message_ids"] == ["m-gone"]
+    assert run.data["messages_imported"] == 1
+    assert run.data["deleted_message_ids"] == ["m1", "m-gone"]
+    assert run.data["tombstones_recorded"] == 2
+    [cursor] = list(rt.graph.objects(type="backfill_cursor"))
+    assert cursor.data["watermark_ref"] == "history:901"
+    tombstones = list(rt.graph.objects(type="evidence_invalidation_request"))
+    assert {row.data["provider_item_id"] for row in tombstones} == {"m1", "m-gone"}
+    observation = next(
+        row for row in rt.graph.objects(type="connector_run_observation")
+        if row.data["domain_run_id"] == run.id
+    )
+    assert observation.data["state"] == "succeeded"
+    assert observation.data["cursor"]["advanced"] is True
+
+
 def test_interrupted_backfill_restarts_with_overlap_and_dedups(tmp_path):
     fake = FakeComposio()
     rt = _runtime(tmp_path, fake)
@@ -620,6 +671,12 @@ def test_rate_limit_retries_but_invalid_cursor_requires_reanchor(tmp_path):
     run = rt.graph.get_object(invalid["run_id"])
     assert run.data["error_code"] == "cursor_invalid"
     assert run.data["metadata"]["reanchor_required"] is True
+    observation = next(
+        row for row in rt.graph.objects(type="connector_run_observation")
+        if row.data["domain_run_id"] == run.id
+    )
+    assert observation.data["cursor"]["has_position"] is True
+    assert observation.data["cursor"]["advanced"] is False
 
 
 def test_owner_correction_supersedes_an_integration_claim(tmp_path):
