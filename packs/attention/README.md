@@ -17,6 +17,10 @@ Neutral semantic observations for learning what deserves attention.
   only from canonical helped/hurt/contradicted/stale outcomes.
 - `rank_importance` — deterministic ranking with a named exploration reserve;
   unseen things are unranked, never silently low-value.
+- `attention.signal_observed` — a neutral event bridge for family/domain packs.
+  Producers describe semantic outcomes; this pack validates and owns the
+  resulting observation/vector. Conversation outbound replies are the first
+  adapter and learn both thread and stable counterpart-person salience.
 
 ## Telemetry boundary
 

@@ -10,6 +10,8 @@ from packs.attention.tools import (
     record_attention_observation_fn,
 )
 from packs.eval_outcome.tools import _emit_event
+from packs.communication import pack as communication_pack
+from packs.communication.conversation import project_conversation_native_fn
 
 
 def _runtime() -> Runtime:
@@ -138,3 +140,46 @@ def test_source_self_description_without_outcome_never_creates_trust():
     })
     runtime.run_until_idle()
     assert not runtime.graph.objects(type="source_trust_vector")
+
+
+def test_outbound_conversation_reply_learns_thread_and_cross_thread_person_importance():
+    runtime = _runtime()
+    runtime.load_pack(communication_pack)
+    graph = runtime.graph
+    thread = graph.add_object("conversation_thread", {
+        "thread_identity": "thread-identity", "source_surface_id": "mail:owner",
+        "service": "fixture_mail", "account_ref": "owner",
+        "provider_thread_id": "provider-thread", "subject": "Planning",
+    })
+    participant = graph.add_object("conversation_participant", {
+        "participant_identity": "participant-identity", "thread_id": thread.id,
+        "address": "alice@example.com", "display_name": "Alice",
+        "roles": ["recipient"],
+    })
+    graph.patch_object(thread.id, {"participant_ids": [participant.id]})
+    message = graph.add_object("conversation_message", {
+        "message_identity": "message-identity", "thread_id": thread.id,
+        "source_surface_id": "mail:owner", "service": "fixture_mail",
+        "account_ref": "owner", "provider_message_id": "provider-message",
+        "provider_revision_ref": "revision", "sender": "owner@example.com",
+        "recipients": ["alice@example.com"], "direction": "outbound",
+        "message_kind": "human", "evidence_id": "evidence:reply",
+    })
+    graph.patch_object(thread.id, {"message_ids": [message.id], "message_count": 1})
+    runtime.run_until_idle()
+
+    vectors = {
+        (row.data["subject_kind"], row.data["subject_ref"]): row.data
+        for row in graph.objects(type="importance_vector")
+    }
+    assert vectors[("conversation_thread", thread.id)]["features"]["outcome"] == 650
+    person_rows = [
+        row for (kind, _ref), row in vectors.items() if kind == "person"
+    ]
+    assert len(person_rows) == 1
+    assert person_rows[0]["score_milli"] > 500
+    assert person_rows[0]["metadata"]["llm_direct_weight"] == 0
+
+    native = project_conversation_native_fn(graph, "mail:owner")
+    [native_thread] = native["threads"]
+    assert native_thread["attention_refs"] == [person_rows[0]["subject_ref"]]

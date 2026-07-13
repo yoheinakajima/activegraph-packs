@@ -7,6 +7,7 @@ import json
 import re
 from typing import Any, Optional
 
+from activegraph import Event
 from activegraph.packs import behavior
 
 from .hygiene import FILTER_VERSION, HygieneResult
@@ -36,6 +37,17 @@ def _patch(graph, target: str, updates: dict[str, Any]) -> None:
         graph.patch_object(target, updates, rationale="refresh conversation family state")
     else:
         graph.patch_object(target, updates)
+
+
+def _emit_event(graph, event_type: str, payload: dict[str, Any], actor: str):
+    if not hasattr(graph, "ids"):
+        return graph.emit(event_type, payload)
+    event = Event(
+        id=graph.ids.event(), type=event_type, payload=payload, actor=actor,
+        timestamp=graph.clock.now(),
+    )
+    graph.emit(event)
+    return event
 
 
 def _active_profile(reader):
@@ -410,6 +422,7 @@ def project_conversation_native_fn(reader, source_surface_id: str) -> dict[str, 
     rows = []
     for thread in threads:
         participant_refs = []
+        attention_refs = []
         for participant_id in thread.data.get("participant_ids") or []:
             participant = participants.get(participant_id)
             if participant is None:
@@ -419,6 +432,7 @@ def project_conversation_native_fn(reader, source_surface_id: str) -> dict[str, 
                 mention = mentions.get(participant.data["entity_mention_id"])
                 entity_ref = mention.data.get("entity_id") if mention else None
             participant_refs.append(entity_ref or participant.id)
+            attention_refs.append(stable_id("person_email", participant.data.get("address")))
         thread_messages = [
             messages[mid] for mid in thread.data.get("message_ids") or [] if mid in messages
         ]
@@ -432,6 +446,7 @@ def project_conversation_native_fn(reader, source_surface_id: str) -> dict[str, 
                 "thread_ref": thread.id,
                 "title": str(thread.data.get("subject") or ""),
                 "participant_refs": list(dict.fromkeys(participant_refs)),
+                "attention_refs": list(dict.fromkeys(attention_refs)),
                 "last_message_at": thread.data.get("last_message_at"),
                 "unread_count": int(thread.data.get("unread_count") or 0),
                 "message_count": int(thread.data.get("message_count") or 0),
@@ -487,6 +502,69 @@ def settle_conversation_interpretation(
             "annotation_ids": list(payload.get("annotation_ids") or []),
             "error": payload.get("error"),
         },
+    )
+
+
+@behavior(
+    name="conversation_outbound_attention_signal",
+    on=["object.created"],
+    where={"object.type": "conversation_message", "object.data.direction": "outbound"},
+    view={"include_types": ["conversation_thread", "conversation_participant"]},
+)
+def conversation_outbound_attention_signal(
+    event, graph, ctx, *, settings: CommunicationSettings
+):
+    """A recorded reply is strong salience evidence for thread and people.
+
+    This emits a neutral semantic signal. The attention pack owns validation
+    and scoring; without that optional pack the event remains inert evidence.
+    """
+    del settings
+    wrapper = (event.payload or {}).get("object") or {}
+    data = dict(wrapper.get("data") or {})
+    message_id = str(wrapper.get("id") or "")
+    message_identity = str(data.get("message_identity") or message_id)
+    thread_id = str(data.get("thread_id") or "")
+    if not message_id or not thread_id:
+        return
+    counterpart_addresses = {
+        str(address).strip().lower()
+        for address in [*(data.get("recipients") or []), *(data.get("cc") or [])]
+        if str(address).strip()
+    }
+    observations = [{
+        "observation_id": stable_id(
+            "attention_observation", "outbound_reply", message_identity, thread_id
+        ),
+        "subject_ref": thread_id,
+        "subject_kind": "conversation_thread",
+        "signal_type": "replied",
+        "strength_milli": 1_000,
+        "context_key": "communication",
+        "source": "connector",
+        "evidence_refs": [str(data.get("evidence_id") or "")],
+        "metadata": {"message_id": message_id, "derivation": "outbound_message"},
+    }]
+    for address in sorted(counterpart_addresses):
+        person_ref = stable_id("person_email", address)
+        observations.append({
+            "observation_id": stable_id(
+                "attention_observation", "outbound_reply", message_identity, person_ref
+            ),
+            "subject_ref": person_ref,
+            "subject_kind": "person",
+            "signal_type": "replied",
+            "strength_milli": 800,
+            "context_key": "communication",
+            "source": "connector",
+            "evidence_refs": [str(data.get("evidence_id") or "")],
+            "metadata": {"message_id": message_id, "derivation": "outbound_counterpart"},
+        })
+    _emit_event(
+        graph,
+        "attention.signal_observed",
+        {"producer": "communication", "observations": observations},
+        "communication",
     )
 
 
@@ -569,7 +647,11 @@ def project_conversation_followup_candidate(event, graph, ctx, *, settings: Comm
     graph.add_relation(candidate.id, annotation_id, "projected_from_annotation")
 
 
-BEHAVIORS = [settle_conversation_interpretation, project_conversation_followup_candidate]
+BEHAVIORS = [
+    settle_conversation_interpretation,
+    conversation_outbound_attention_signal,
+    project_conversation_followup_candidate,
+]
 
 
 __all__ = [
