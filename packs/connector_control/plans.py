@@ -41,6 +41,171 @@ def unregister_ingestion_plan_executor(service: str) -> None:
     _EXECUTORS.pop(service.strip().lower(), None)
 
 
+# ---- deferred execution (ADR 0041 / D061) ---------------------------------
+# A service may additionally register the three-phase seam so a host can run
+# its network wait off the engine thread: prepare (graph reads → payload),
+# perform (network only, ZERO graph access), commit (graph writes). The
+# synchronous executor remains the default and its semantics are the
+# contract — a deferred host must mirror them exactly. Approval stays the
+# only trigger either way; nothing here weakens ADR 0039's gates.
+
+_DEFERRED_EXECUTIONS: dict[str, dict[str, Callable[..., dict[str, Any]]]] = {}
+
+
+def register_deferred_plan_execution(
+    service: str,
+    *,
+    prepare: Callable[[Any, Any], dict[str, Any]],
+    perform: Callable[[dict[str, Any]], dict[str, Any]],
+    commit: Callable[[Any, Any, dict[str, Any], dict[str, Any]], dict[str, Any]],
+    replace: bool = True,
+) -> None:
+    key = service.strip().lower()
+    if not key:
+        raise ValueError("service is required")
+    if key in _DEFERRED_EXECUTIONS and not replace:
+        raise ValueError(f"deferred plan execution already registered for {key!r}")
+    _DEFERRED_EXECUTIONS[key] = {
+        "prepare": prepare, "perform": perform, "commit": commit,
+    }
+
+
+def unregister_deferred_plan_execution(service: str) -> None:
+    _DEFERRED_EXECUTIONS.pop(service.strip().lower(), None)
+
+
+def has_deferred_plan_execution(service: str) -> bool:
+    return service.strip().lower() in _DEFERRED_EXECUTIONS
+
+
+def _executable_plan(view, plan_ref: str):
+    """The one place the execution gates live (used by sync and deferred
+    paths alike): the plan exists, is approved, and is current."""
+    plan = resolve_plan_fn(view, plan_ref)
+    if plan is None:
+        raise ValueError(f"ingestion plan {plan_ref!r} does not exist")
+    data = plan.data or {}
+    status = data.get("status")
+    if status == "executing":
+        return plan, "already_executing"
+    if status not in PLAN_EXECUTABLE_STATUSES:
+        raise ValueError(
+            f"plan {data.get('plan_identity')!r} is {status!r}; approve the "
+            "current version before executing"
+        )
+    head = current_plan_for_surface_fn(view, str(data.get("source_surface_id")))
+    if head is None or head.id != plan.id:
+        raise ValueError(
+            f"plan {data.get('plan_identity')!r} is not current; a superseded "
+            "plan can never execute"
+        )
+    return plan, None
+
+
+def pending_deferred_plan_executions_fn(reader) -> list[dict[str, Any]]:
+    """Approved, current plans whose service registered the deferred seam.
+
+    The host pump polls this — approval is the trigger, the pump is only
+    the vehicle. One row per plan version so hosts can bound retries.
+    """
+    rows: list[dict[str, Any]] = []
+    for plan in reader.objects(type="connector_ingestion_plan"):
+        data = plan.data or {}
+        if data.get("status") not in PLAN_EXECUTABLE_STATUSES:
+            continue
+        service = str(data.get("service") or "").lower()
+        if service not in _DEFERRED_EXECUTIONS:
+            continue
+        head = current_plan_for_surface_fn(
+            reader, str(data.get("source_surface_id"))
+        )
+        if head is None or head.id != plan.id:
+            continue
+        rows.append({
+            "plan_identity": str(data.get("plan_identity") or ""),
+            "version": int(data.get("version") or 0),
+            "service": service,
+            "source_surface_id": str(data.get("source_surface_id") or ""),
+        })
+    rows.sort(key=lambda row: (row["service"], row["plan_identity"]))
+    return rows
+
+
+def begin_deferred_plan_execution_fn(
+    graph, *, plan_ref: str, reader=None
+) -> dict[str, Any]:
+    """Engine-thread phase 1: validate exactly like synchronous execution,
+    then run the service's prepare. The returned payload is what the host
+    hands to ``perform_deferred_plan_execution`` off-thread."""
+    view = reader or graph
+    plan, note = _executable_plan(view, plan_ref)
+    data = plan.data or {}
+    if note == "already_executing":
+        return {
+            "ok": False, "reason": "already_executing",
+            "plan_id": plan.id, "domain_run_id": data.get("domain_run_id"),
+        }
+    service = str(data.get("service") or "").lower()
+    seam = _DEFERRED_EXECUTIONS.get(service)
+    if seam is None:
+        return {"ok": False, "reason": "no_deferred_execution", "plan_id": plan.id}
+    payload = seam["prepare"](graph, plan)
+    return {
+        "ok": True, "plan_id": plan.id, "service": service,
+        "plan_identity": str(data.get("plan_identity") or ""),
+        "payload": payload,
+    }
+
+
+def perform_deferred_plan_execution(
+    service: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Host-worker phase 2: network only, zero graph access."""
+    seam = _DEFERRED_EXECUTIONS.get(service.strip().lower())
+    if seam is None:
+        raise ValueError(f"no deferred plan execution registered for {service!r}")
+    return seam["perform"](payload)
+
+
+def commit_deferred_plan_execution_fn(
+    graph, *, plan_ref: str, payload: dict[str, Any], outcome: dict[str, Any],
+    reader=None,
+) -> dict[str, Any]:
+    """Engine-thread phase 3: re-validate (a plan superseded mid-flight
+    fails closed, ADR 0020), commit, and bind — mirroring the synchronous
+    executor's settlement semantics exactly."""
+    view = reader or graph
+    plan, note = _executable_plan(view, plan_ref)
+    data = plan.data or {}
+    if note == "already_executing":
+        return {
+            "ok": True, "already_executing": True,
+            "domain_run_id": data.get("domain_run_id"), "plan_id": plan.id,
+        }
+    service = str(data.get("service") or "").lower()
+    seam = _DEFERRED_EXECUTIONS.get(service)
+    if seam is None:
+        return {"ok": False, "plan_id": plan.id,
+                "error": "ingestion_plan_executor_unavailable"}
+    result = seam["commit"](graph, plan, payload, outcome)
+    domain_run_id = str(
+        result.get("run_id") or result.get("domain_run_id") or ""
+    ) or None
+    current = graph.get_object(plan.id)
+    if domain_run_id and current.data.get("status") != "executing":
+        bind_plan_execution_fn(
+            graph,
+            plan_ref=str(data.get("plan_identity")),
+            domain_run_id=domain_run_id,
+            source_surface_id=str(data.get("source_surface_id")),
+            reader=reader,
+        )
+    return {
+        "ok": True, "plan_id": plan.id,
+        "domain_run_id": domain_run_id, "service_result": result,
+    }
+
+
 def _stable_id(prefix: str, *parts: Any) -> str:
     material = "\x1f".join(str(part) for part in parts).encode("utf-8")
     return f"{prefix}_{hashlib.sha256(material).hexdigest()}"
@@ -513,27 +678,13 @@ def execute_ingestion_plan_fn(
 ) -> dict[str, Any]:
     """Dispatch the approved current plan to its service's registered executor."""
     view = reader or graph
-    plan = resolve_plan_fn(view, plan_ref)
-    if plan is None:
-        raise ValueError(f"ingestion plan {plan_ref!r} does not exist")
+    plan, note = _executable_plan(view, plan_ref)
     data = plan.data or {}
-    status = data.get("status")
-    if status == "executing":
+    if note == "already_executing":
         return {
             "ok": True, "already_executing": True,
             "domain_run_id": data.get("domain_run_id"), "plan_id": plan.id,
         }
-    if status not in PLAN_EXECUTABLE_STATUSES:
-        raise ValueError(
-            f"plan {data.get('plan_identity')!r} is {status!r}; approve the "
-            "current version before executing"
-        )
-    head = current_plan_for_surface_fn(view, str(data.get("source_surface_id")))
-    if head is None or head.id != plan.id:
-        raise ValueError(
-            f"plan {data.get('plan_identity')!r} is not current; a superseded "
-            "plan can never execute"
-        )
     executor = _EXECUTORS.get(str(data.get("service") or "").lower())
     if executor is None:
         return {
@@ -640,17 +791,24 @@ __all__ = [
     "PLAN_VERDICTS",
     "abandon_ingestion_plan_fn",
     "approve_ingestion_plan_fn",
+    "begin_deferred_plan_execution_fn",
     "bind_plan_execution_fn",
     "ceiling_escalation_error",
+    "commit_deferred_plan_execution_fn",
     "current_plan_for_surface_fn",
     "edit_ingestion_plan_fn",
     "execute_ingestion_plan_fn",
+    "has_deferred_plan_execution",
+    "pending_deferred_plan_executions_fn",
+    "perform_deferred_plan_execution",
     "plan_outcome_fn",
     "plan_series_id",
     "project_ingestion_plans_fn",
     "propose_ingestion_plan_fn",
+    "register_deferred_plan_execution",
     "register_ingestion_plan_executor",
     "resolve_plan_fn",
     "settle_plan_for_run_fn",
+    "unregister_deferred_plan_execution",
     "unregister_ingestion_plan_executor",
 ]

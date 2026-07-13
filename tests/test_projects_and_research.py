@@ -12,9 +12,13 @@ from packs.activity_normalizer import pack as normalizer_pack
 from packs.connector_control import pack as connector_control_pack
 from packs.connector_control.plans import (
     approve_ingestion_plan_fn,
+    begin_deferred_plan_execution_fn,
+    commit_deferred_plan_execution_fn,
     current_plan_for_surface_fn,
     edit_ingestion_plan_fn,
     execute_ingestion_plan_fn,
+    has_deferred_plan_execution,
+    pending_deferred_plan_executions_fn,
 )
 from packs.projects import pack as projects_pack
 from packs.projects.tools import (
@@ -251,3 +255,85 @@ def test_research_without_provider_fails_honestly(runtime):
     [run] = graph.objects(type="web_research_run")
     assert run.data["status"] == "failed"
     assert "research_provider_unavailable" in run.data["error"]
+
+
+def test_research_queries_prefer_the_confirmed_name_company_pair(runtime):
+    graph = runtime.graph
+    _fact(graph, "name", "Yohei Nakajima")
+    _fact(graph, "company", "Untapped Capital")
+    _fact(graph, "handle", "@yoheinakajima")
+    _fact(graph, "url", "https://yoheinakajima.com")
+    queries, provenance = derive_research_queries(graph)
+    assert queries == [
+        '"Yohei Nakajima" Untapped Capital',
+        '"@yoheinakajima"',
+        "yoheinakajima.com",
+    ]
+    assert len(provenance) >= 4  # every term names the fact it came from
+
+
+def test_deferred_execution_mirrors_the_synchronous_settlement(runtime):
+    """ADR 0041/D061: prepare (reads) -> perform (network, injected here) ->
+    commit lands the identical run, delta, and plan fulfillment the
+    synchronous executor produces."""
+    graph = runtime.graph
+    _fact(graph, "handle", "@yoheinakajima")
+    assert has_deferred_plan_execution("web_research")
+
+    proposal = propose_web_research_plan_fn(graph, confirmed_terms=("Yohei Nakajima",))
+    plan = proposal["plan"]
+    plan_ref = plan.data["plan_identity"]
+    # Nothing pending before approval — approval is the only trigger.
+    assert pending_deferred_plan_executions_fn(graph) == []
+    approve_ingestion_plan_fn(graph, plan_ref=plan_ref, approved_by="owner:test")
+    [row] = pending_deferred_plan_executions_fn(graph)
+    assert row["service"] == "web_research"
+
+    begun = begin_deferred_plan_execution_fn(graph, plan_ref=plan_ref)
+    assert begun["ok"] is True
+    assert begun["payload"]["queries"] == ['"Yohei Nakajima"', '"@yoheinakajima"']
+
+    canned = {
+        "findings": [
+            {"claim": "GP at Untapped Capital",
+             "url": "https://untapped.vc/team", "query": '"Yohei Nakajima"'},
+        ],
+        "calls": 1, "model": "claude-test", "error": None,
+    }
+    committed = commit_deferred_plan_execution_fn(
+        graph, plan_ref=plan_ref, payload=begun["payload"], outcome=canned
+    )
+    runtime.run_until_idle()
+    assert committed["ok"] is True
+    [run] = graph.objects(type="web_research_run")
+    assert run.data["status"] == "completed"
+    assert run.data["urls_ingested"] == 1
+    plan_after = current_plan_for_surface_fn(graph, RESEARCH_SURFACE_ID)
+    assert plan_after.data["status"] == "fulfilled"
+    # Fulfilled plans leave the pending pool.
+    assert pending_deferred_plan_executions_fn(graph) == []
+
+
+def test_deferred_commit_fails_closed_when_the_plan_was_superseded(runtime):
+    """ADR 0020: a plan edited mid-flight can never commit its stale run."""
+    graph = runtime.graph
+    _fact(graph, "handle", "@yoheinakajima")
+    proposal = propose_web_research_plan_fn(graph)
+    plan = proposal["plan"]
+    plan_ref = plan.data["plan_identity"]
+    approve_ingestion_plan_fn(graph, plan_ref=plan_ref, approved_by="owner:test")
+    begun = begin_deferred_plan_execution_fn(graph, plan_ref=plan_ref)
+    assert begun["ok"] is True
+
+    # The owner edits while the perform phase is in flight elsewhere.
+    edit_ingestion_plan_fn(
+        graph, plan_ref=plan_ref,
+        surfaces=[{**plan.data["surfaces"][0], "included": False}],
+        edited_by="owner:test",
+    )
+    with pytest.raises(ValueError, match="superseded"):
+        commit_deferred_plan_execution_fn(
+            graph, plan_ref=plan_ref, payload=begun["payload"],
+            outcome={"findings": [], "calls": 0, "model": None, "error": None},
+        )
+    assert not graph.objects(type="web_research_run")

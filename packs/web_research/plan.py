@@ -19,6 +19,7 @@ from typing import Any, Optional
 from packs.connector_control.plans import (
     bind_plan_execution_fn,
     propose_ingestion_plan_fn,
+    register_deferred_plan_execution,
     register_ingestion_plan_executor,
 )
 from packs.connector_control.tools import (
@@ -32,10 +33,13 @@ from packs.subject_profile.projection import owner_alias_set_fn
 
 
 RESEARCH_SURFACE_ID = "web_research:owner"
-RESEARCH_PROPOSER = "web_research.plan_proposer@0.1.0"
-_MAX_QUERIES = 3
+RESEARCH_PROPOSER = "web_research.plan_proposer@0.2.0"
+_MAX_QUERIES = 4
 _MAX_FINDINGS_PER_QUERY = 5
 _URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+# Display attributes that may join outward queries. Aliases (handle/url)
+# come through the alias set; emails NEVER qualify (D060).
+_QUERY_TERM_ATTRIBUTES = ("name", "company")
 
 
 def _stable(prefix: str, *parts: Any) -> str:
@@ -48,24 +52,45 @@ def derive_research_queries(
 ) -> tuple[list[str], list[str]]:
     """Queries from owner-confirmed material only (D060 disclosure boundary).
 
-    Handles and confirmed domains qualify; email addresses never do —
-    an address in an outward query is a disclosure the owner did not make.
-    ``confirmed_terms`` lets a host add terms the owner explicitly typed and
-    confirmed (e.g. their own name from the identity seed); the caller
+    Promoted name/company facts and the alias set (handles, confirmed
+    domains) qualify; email addresses never do — an address in an outward
+    query is a disclosure the owner did not make. ``confirmed_terms`` lets a
+    host add terms the owner explicitly typed and confirmed; the caller
     attests that confirmation.
     """
     aliases = owner_alias_set_fn(reader)
-    queries: list[str] = []
     provenance: list[str] = list(aliases.get("fact_refs") or [])
+    terms: dict[str, str] = {}
+    for fact in reader.objects(type="subject_fact"):
+        data = fact.data or {}
+        if data.get("subject_ref") != "owner" or data.get("status") != "promoted":
+            continue
+        attribute = str(data.get("attribute") or "")
+        value = str(data.get("value") or "").strip()
+        if attribute in _QUERY_TERM_ATTRIBUTES and value and attribute not in terms:
+            terms[attribute] = value
+            provenance.append(str(data.get("fact_identity") or fact.id))
+
+    queries: list[str] = []
+
+    def _push(query: str) -> None:
+        if query and query not in queries:
+            queries.append(query)
+
     for term in confirmed_terms:
         cleaned = str(term).strip()
-        if cleaned and f'"{cleaned}"' not in queries:
-            queries.append(f'"{cleaned}"')
+        if cleaned:
+            _push(f'"{cleaned}"')
+    name, company = terms.get("name"), terms.get("company")
+    if name and company:
+        _push(f'"{name}" {company}')  # the strongest disambiguator first
+    elif name:
+        _push(f'"{name}"')
     for handle in aliases.get("handles") or []:
-        queries.append(f'"@{handle}"')
+        _push(f'"@{handle}"')
     for domain in aliases.get("domains") or []:
-        queries.append(domain)
-    return queries[:_MAX_QUERIES], provenance
+        _push(domain)
+    return queries[:_MAX_QUERIES], sorted(set(provenance))
 
 
 def propose_web_research_plan_fn(
@@ -360,15 +385,51 @@ def execute_web_research_plan_fn(
     return {"ok": state != "failed", "run_id": run.id, "findings": len(findings), "urls": urls}
 
 
+def prepare_web_research_execution(graph, plan) -> dict[str, Any]:
+    """Deferred phase 1 (graph reads only): the included queries."""
+    del graph
+    data = plan.data or {}
+    return {
+        "queries": [
+            str(surface.get("label") or "")
+            for surface in data.get("surfaces") or []
+            if surface.get("included") and str(surface.get("label") or "").strip()
+        ],
+    }
+
+
+def perform_prepared_web_research(payload: dict[str, Any]) -> dict[str, Any]:
+    """Deferred phase 2: network only, zero graph access."""
+    return perform_research_queries(list(payload.get("queries") or []))
+
+
+def commit_web_research_execution(
+    graph, plan, payload: dict[str, Any], outcome: dict[str, Any]
+) -> dict[str, Any]:
+    """Deferred phase 3: the synchronous executor with the perform result
+    injected — settlement semantics stay byte-identical (D061)."""
+    del payload
+    return execute_web_research_plan_fn(graph, plan, research=outcome)
+
+
 def register_web_research() -> None:
     register_ingestion_plan_executor("web_research", execute_web_research_plan_fn)
+    register_deferred_plan_execution(
+        "web_research",
+        prepare=prepare_web_research_execution,
+        perform=perform_prepared_web_research,
+        commit=commit_web_research_execution,
+    )
 
 
 __all__ = [
     "RESEARCH_SURFACE_ID",
+    "commit_web_research_execution",
     "derive_research_queries",
     "execute_web_research_plan_fn",
+    "perform_prepared_web_research",
     "perform_research_queries",
+    "prepare_web_research_execution",
     "propose_web_research_plan_fn",
     "register_web_research",
 ]
