@@ -3,8 +3,8 @@
 
 [pack]
 name = "communication"
-version = "0.5.0"
-description = "Channel-neutral communication semantic layer. Provides the durable conversation-family contract with exact-span staged interpretation, plus the legacy CommThread/CommMessage action layer. Channel adapters own service mapping; semantic extraction owns bounded model execution. Outbound replies emit neutral attention signals for thread and counterpart salience."
+version = "0.6.0"
+description = "Channel-neutral communication semantic layer. Provides the durable conversation-family contract with exact-span staged interpretation, plus the legacy CommThread/CommMessage action layer. Channel adapters own service mapping; semantic extraction owns bounded model execution. Participants carry owner anchoring from the confirmed alias set; outbound replies emit neutral attention signals for thread and counterpart salience."
 license = "Apache-2.0"
 
 [pack.provenance]
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:d551484aef0d34aa6cb239bd3d21a00ff8144902861482d7e3af04c655b8a1b3"
+content_hash = "sha256:4aec6dce1d79b5ee06292274a5788f02263660333985ad44e33219fca4774fd3"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -26,6 +26,7 @@ python-deps = []
 core = ">=0.1"
 semantic_extraction = ">=0.1"
 entity = ">=0.1"
+subject_profile = ">=0.1"
 
 [surface]
 object_types = ["comm_thread", "comm_message", "comm_intent", "comm_response_candidate", "comm_participant", "conversation_thread", "conversation_message", "conversation_participant", "conversation_interpretation_run"]

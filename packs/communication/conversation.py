@@ -10,6 +10,8 @@ from typing import Any, Optional
 from activegraph import Event
 from activegraph.packs import behavior
 
+from packs.subject_profile.projection import owner_alias_set_fn
+
 from .hygiene import FILTER_VERSION, HygieneResult
 from .settings import CommunicationSettings
 
@@ -110,6 +112,19 @@ def materialize_conversation_message_fn(
         },
     )
     thread_data_by_id = state.setdefault("thread_data", {})
+    # Owner anchoring (ADR 0039): the connected account plus every address the
+    # owner has explicitly confirmed. Resolved once per interpretation run.
+    owner_addresses: set[str] = state.setdefault(
+        "owner_addresses",
+        set(
+            owner_alias_set_fn(reader, account_refs=[account_ref])["addresses"]
+        ),
+    )
+    sender_normalized = str(sender or "").strip().lower()
+    if sender_normalized and sender_normalized in owner_addresses:
+        # Mail from a confirmed owner alias is the owner speaking, whatever
+        # the service inferred from the primary account address alone.
+        direction = "outbound"
 
     thread_identity = stable_id(
         "conversation_thread", service, account_ref, provider_thread_id
@@ -191,6 +206,7 @@ def materialize_conversation_message_fn(
                     "address": address,
                     "display_name": str(participant.get("display_name") or ""),
                     "roles": roles,
+                    "is_owner": address in owner_addresses,
                     "entity_mention_id": mention.id,
                     "entity_id": None,
                     "refs": list(dict.fromkeys([evidence_id, *refs])),
@@ -212,6 +228,9 @@ def materialize_conversation_message_fn(
                     key: value for key, value in {
                         "roles": merged_roles,
                         "refs": merged_refs,
+                        # Re-interpretation back-fills owner marking after the
+                        # alias set grows or shrinks (replay-only, idempotent).
+                        "is_owner": address in owner_addresses,
                     }.items() if existing.data.get(key) != value
                 },
             )

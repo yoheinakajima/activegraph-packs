@@ -64,15 +64,16 @@ from .tools import TOOLS
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# requires=["core", "semantic_extraction", "entity"], composes_with=["identity_auth", "agent_profile", "memory_gateway"]
+# requires=["core", "semantic_extraction", "entity", "subject_profile"], composes_with=["identity_auth", "agent_profile", "memory_gateway"]
 pack = Pack(
     name="communication",
-    version="0.5.0",
+    version="0.6.0",
     description=(
         "Channel-neutral communication semantic layer. "
         "Provides the durable conversation-family contract with exact-span staged interpretation, "
         "plus the legacy CommThread/CommMessage action layer. Channel adapters own service mapping; "
-        "semantic extraction owns bounded model execution. Outbound replies "
+        "semantic extraction owns bounded model execution. Participants carry "
+        "owner anchoring from the confirmed alias set; outbound replies "
         "emit neutral attention signals for thread and counterpart salience."
     ),
     object_types=OBJECT_TYPES,

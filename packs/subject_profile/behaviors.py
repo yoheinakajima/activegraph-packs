@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
+from activegraph import Event
 from activegraph.packs import behavior
 
 from .settings import SubjectProfileSettings
@@ -10,6 +11,25 @@ from .settings import SubjectProfileSettings
 def _stable_id(prefix: str, *parts) -> str:
     raw = "\x1f".join(str(part) for part in parts).encode()
     return f"{prefix}_{hashlib.sha256(raw).hexdigest()[:24]}"
+
+
+def _attention_ref(prefix: str, *parts) -> str:
+    """Opaque attention subject ref, matching the conversation adapter's
+    derivation so a person confirmed by fact and seen in mail share one
+    importance vector."""
+    raw = "\x1f".join(str(part) for part in parts).encode("utf-8")
+    return f"{prefix}_{hashlib.sha256(raw).hexdigest()}"
+
+
+def _emit_event(graph, event_type: str, payload: dict, actor: str):
+    if not hasattr(graph, "ids"):
+        return graph.emit(event_type, payload)
+    event = Event(
+        id=graph.ids.event(), type=event_type, payload=payload, actor=actor,
+        timestamp=graph.clock.now(),
+    )
+    graph.emit(event)
+    return event
 
 
 @behavior(
@@ -85,5 +105,84 @@ def apply_subject_fact_verdict(event, graph, ctx, *, settings: SubjectProfileSet
         graph.add_relation(contradiction.id, fact.id, "contradiction_involves")
 
 
-BEHAVIORS = [apply_subject_fact_verdict]
+_SEED_SUBJECT_KINDS = {
+    "relationship": "person",
+    "person": "person",
+    "company": "org",
+    "organization": "org",
+    "affiliation": "org",
+    "project": "project",
+}
+
+
+@behavior(
+    name="seed_importance_from_confirmed_fact",
+    on=["object.created"],
+    where={"object.type": "subject_fact", "object.data.status": "promoted"},
+    view={"include_types": []},
+    creates=[],
+)
+def seed_importance_from_confirmed_fact(
+    event, graph, ctx, *, settings: SubjectProfileSettings
+):
+    """A confirmed relationship/company fact is an explicit owner act and may
+    seed an importance observation (ADR 0038 rule 3, ADR 0039).
+
+    Identity aliases (email/handle/url) never seed importance — they anchor
+    interpretation instead. Trust stays strictly outcome-only: this emits an
+    ``attention.signal_observed`` event, never an ``outcome.*`` event, so
+    knowing who someone is can never raise how much their content is
+    believed.
+    """
+    del ctx
+    wrapper = (event.payload or {}).get("object") or {}
+    data = wrapper.get("data") or {}
+    attribute = str(data.get("attribute") or "")
+    if attribute not in set(settings.importance_seed_attributes):
+        return
+    value = str(data.get("value") or "").strip()
+    if not value:
+        return
+    normalized = value.lower()
+    if "@" in normalized and "." in normalized.rsplit("@", 1)[-1]:
+        # Matches the conversation adapter's opaque counterpart identity so
+        # the confirmed person and the mailbox person share one vector.
+        subject_kind = "person"
+        subject_ref = _attention_ref("person_email", normalized)
+    else:
+        subject_kind = _SEED_SUBJECT_KINDS.get(attribute, "entity")
+        subject_ref = _attention_ref("subject_fact_value", subject_kind, normalized)
+    fact_identity = str(data.get("fact_identity") or wrapper.get("id") or "")
+    evidence_refs = [
+        ref for ref in (data.get("evidence_id"), wrapper.get("id")) if ref
+    ]
+    _emit_event(
+        graph,
+        "attention.signal_observed",
+        {
+            "producer": "subject_profile",
+            "observations": [{
+                "observation_id": _stable_id(
+                    "attention_observation", "confirmed_fact", fact_identity
+                ),
+                "subject_ref": subject_ref,
+                "subject_kind": subject_kind,
+                "signal_type": "explicit_important",
+                "strength_milli": settings.importance_seed_strength_milli,
+                "context_key": "global",
+                "source": "user",
+                "explicit": True,
+                "evidence_refs": evidence_refs,
+                "metadata": {
+                    "derivation": "confirmed_subject_fact",
+                    "fact_identity": fact_identity,
+                    "attribute": attribute,
+                },
+            }],
+        },
+        "subject_profile",
+    )
+
+
+BEHAVIORS = [apply_subject_fact_verdict, seed_importance_from_confirmed_fact]
 

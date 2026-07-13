@@ -43,6 +43,8 @@ from packs.gmail.tools import (
 )
 from packs.connector_control.maintenance import request_connector_refresh_fn
 from packs.semantic_extraction import pack as extraction_pack
+from packs.subject_profile import pack as subject_profile_pack
+from packs.subject_profile.tools import review_subject_fact_fn
 from packs.tool_gateway import pack as gateway_pack
 from packs.tool_gateway.integrations import correct_integration_claim_fn
 from packs.tool_gateway.tools import approve_capability_fn, clear_local_registry
@@ -50,7 +52,10 @@ from packs.usage import pack as usage_pack
 from packs.usage.tools import set_surface_status_fn
 
 
-def _message(mid: str, subject: str, body: str, history: str) -> dict:
+def _message(
+    mid: str, subject: str, body: str, history: str,
+    sender: str = "founder@example.com",
+) -> dict:
     return {
         "id": mid,
         "threadId": f"thread-{mid}",
@@ -59,7 +64,7 @@ def _message(mid: str, subject: str, body: str, history: str) -> dict:
         "payload": {
             "headers": [
                 {"name": "Subject", "value": subject},
-                {"name": "From", "value": "founder@example.com"},
+                {"name": "From", "value": sender},
                 {"name": "To", "value": "yohei@example.com"},
                 {"name": "Date", "value": "2026-07-10T10:00:00+00:00"},
                 {"name": "Message-ID", "value": f"<{mid}@example.com>"},
@@ -332,6 +337,7 @@ def _runtime(tmp_path, fake: FakeComposio):
     rt.load_pack(normalizer_pack, settings=ActivityNormalizerSettings(artifact_store_dir=str(tmp_path)))
     rt.load_pack(extraction_pack)
     rt.load_pack(entity_pack)
+    rt.load_pack(subject_profile_pack)
     rt.load_pack(communication_pack)
     rt.load_pack(usage_pack)
     rt.load_pack(connector_control_pack)
@@ -895,3 +901,126 @@ def test_owner_correction_supersedes_an_integration_claim(tmp_path):
     assert claim["classification_source"] == "operator"
     assert claim["value"] == "medium"
     assert claim["metadata"]["reason"] == "this account is mostly receipts"
+
+
+class AliasSenderComposio(FakeComposio):
+    """m1 arrives from the owner's unconfirmed legacy address."""
+
+    def execute(self, **kwargs):
+        slug = kwargs["tool_slug"]
+        args = kwargs["arguments"]
+        if (
+            slug == "GMAIL_FETCH_EMAILS"
+            and args.get("include_payload") is not False
+            and not args.get("page_token")
+        ):
+            data = {
+                "messages": [_message(
+                    "m1", "First", "hello", "899",
+                    sender="yohei@legacy-mail.com",
+                )],
+                "nextPageToken": "page-2",
+            }
+            return {"successful": True, "data": {"response_data": data}, "error": None}
+        return super().execute(**kwargs)
+
+
+def test_owner_anchoring_backfills_is_owner_replay_only(tmp_path):
+    """ADR 0039 acceptance: participants matching the account/alias set carry
+    is_owner, sent-vs-received is queryable, and re-interpretation is
+    idempotent and replay-only."""
+    fake = AliasSenderComposio()
+    rt = _runtime(tmp_path, fake)
+    request_gmail_exploration_fn(
+        rt.graph, user_id="agent:owner", connected_account_id="ca_1"
+    )
+    rt.run_until_idle()
+    [surface] = list(rt.graph.objects(type="connection_surface"))
+    surface_id = surface.data["surface_id"]
+    _approve_gmail_plan(rt.graph, surface_id, max_messages=2, max_pages=2, page_size=1)
+    request_gmail_backfill_fn(
+        rt.graph, source_surface_id=surface_id, account_ref="yohei@example.com",
+        user_id="agent:owner", connected_account_id="ca_1",
+    )
+    rt.run_until_idle()
+
+    def participants():
+        return {
+            obj.data["address"]: obj
+            for obj in rt.graph.objects(type="conversation_participant")
+        }
+
+    def directions():
+        return {
+            obj.data["provider_message_id"]: obj.data["direction"]
+            for obj in rt.graph.objects(type="conversation_message")
+        }
+
+    # The connected account is owner-marked with zero confirmed facts; the
+    # legacy alias is not yet known to be the owner.
+    assert participants()["yohei@example.com"].data["is_owner"] is True
+    assert participants()["yohei@legacy-mail.com"].data["is_owner"] is False
+    assert participants()["founder@example.com"].data["is_owner"] is False
+    assert directions() == {"m1": "inbound", "m2": "inbound"}
+
+    # The owner confirms the legacy address through the normal review path.
+    text = "My old address was yohei@legacy-mail.com."
+    digest = __import__("hashlib").sha256(text.encode()).hexdigest()
+    item = rt.graph.add_object("acquired_item", {
+        "source_surface_id": "bootstrap", "provider_item_id": "seed-1",
+        "dedup_key": "seed-1", "source_ref": "owner://identity-seed",
+        "source_hash": digest, "provider_time": None, "replay_mode": "inline",
+        "replay_payload_ref": text, "replay_payload_hash": digest,
+        "media_type": "text/plain", "importer_id": "test", "importer_version": "1",
+    })
+    rt.graph.add_object("acquired_content", {
+        "acquired_item_id": item.id, "normalized_content": text,
+        "normalized_metadata": {"subject_scope": "owner_profile"},
+        "source_category": "local_knowledge", "connection_path": "manual",
+        "is_fixture": True,
+    })
+    rt.run_until_idle()
+    seed_evidence = next(
+        obj for obj in rt.graph.objects(type="activity_evidence")
+        if obj.data.get("source_surface_id") == "bootstrap"
+    )
+    candidate = rt.graph.add_object("profile_candidate", {
+        "candidate_identity": "c-legacy-email",
+        "text": text, "confidence": 0.9,
+        "evidence_id": seed_evidence.id,
+        "evidence_identity": seed_evidence.data["evidence_identity"],
+        "revision_id": seed_evidence.data["revision_id"],
+        "extraction_record_id": "run", "extractor_id": "test",
+        "extractor_version": "1", "extraction_config_id": "cfg",
+        "status": "candidate", "invalidation_reason": None,
+        "metadata": {"annotation_id": "annotation-1"},
+        "attribute": "email", "value": "yohei@legacy-mail.com",
+    })
+    review_subject_fact_fn(rt.graph, candidate.id, "confirm")
+    rt.run_until_idle()
+
+    # Re-interpretation over recorded evidence back-fills the marking with
+    # zero provider contact.
+    calls_before = len(fake.calls)
+    replayed = reprocess_gmail_evidence_fn(rt.graph, source_surface_id=surface_id)
+    rt.run_until_idle()
+    assert replayed["provider_contacted"] is False
+    assert len(fake.calls) == calls_before
+    assert participants()["yohei@legacy-mail.com"].data["is_owner"] is True
+    assert participants()["founder@example.com"].data["is_owner"] is False
+    # Sent-vs-received is now first-class: the legacy-alias mail is the owner
+    # writing (a self-note to the connected account).
+    assert directions() == {"m1": "outbound", "m2": "inbound"}
+
+    # Idempotent: a second replay changes no participant and no direction.
+    participant_ids = {obj.id for obj in rt.graph.objects(type="conversation_participant")}
+    events_before = len(rt.graph.events)
+    reprocess_gmail_evidence_fn(rt.graph, source_surface_id=surface_id)
+    rt.run_until_idle()
+    assert {obj.id for obj in rt.graph.objects(type="conversation_participant")} == participant_ids
+    assert directions() == {"m1": "outbound", "m2": "inbound"}
+    assert not [
+        event for event in rt.graph.events[events_before:]
+        if event.type == "patch.applied"
+        and str((event.payload or {}).get("target") or "") in participant_ids
+    ]

@@ -295,6 +295,9 @@ class ConversationParticipant(_StrictModel):
     address: str = Field(min_length=1)
     display_name: str = ""
     roles: list[Literal["sender", "recipient", "cc", "bcc", "observer"]] = Field(default_factory=list)
+    # Resolved at interpretation time from the connected account_ref plus the
+    # owner alias set (ADR 0039); re-interpretation back-fills it.
+    is_owner: bool = False
     entity_mention_id: Optional[str] = None
     entity_id: Optional[str] = None
     refs: list[str] = Field(default_factory=list)

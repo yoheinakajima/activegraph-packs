@@ -1,5 +1,14 @@
 # Communication Pack Changelog
 
+## v0.6.0 — owner-anchored participants (2026-07-12)
+
+- `ConversationParticipant.is_owner`, resolved at interpretation time from the
+  connected `account_ref` plus the confirmed owner alias set (ADR 0039);
+  re-interpretation over recorded evidence back-fills the marking
+  idempotently, with no provider contact.
+- Mail sent from a confirmed owner alias is direction `outbound` even when
+  the service inferred otherwise from the primary account address alone.
+
 ## v0.5.0 — conversation attention adapter (2026-07-12)
 
 - Emit `attention.signal_observed` for outbound messages, covering the

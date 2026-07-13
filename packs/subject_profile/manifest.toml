@@ -3,8 +3,8 @@
 
 [pack]
 name = "subject_profile"
-version = "0.1.0"
-description = "Evidence-backed, explicitly reviewed subject facts with contradiction and supersession lifecycles."
+version = "0.2.0"
+description = "Evidence-backed, explicitly reviewed subject facts with contradiction and supersession lifecycles, the owner alias-set projection, and importance seeding from confirmed facts."
 license = "Apache-2.0"
 
 [pack.provenance]
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:0a3893cd5c04685c8197a84bd4fad1d34993a33b3afbd2361da18e65cf1f9f0d"
+content_hash = "sha256:b2818e778fff66019b036c9ce7d86461a9cfb4e3bdf243eb70cfd0cfab767af6"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -33,7 +33,7 @@ memory_gateway = ">=0.1"
 [surface]
 object_types = ["subject_fact_verdict", "subject_fact", "subject_contradiction"]
 relation_types = ["verdict_for_profile_candidate", "promoted_from_profile_candidate", "subject_fact_grounded_in", "subject_fact_supersedes", "contradiction_involves"]
-behaviors = ["apply_subject_fact_verdict"]
+behaviors = ["apply_subject_fact_verdict", "seed_importance_from_confirmed_fact"]
 tools = ["review_subject_fact", "forget_subject_fact"]
 settings_schema = "SubjectProfileSettings"
 

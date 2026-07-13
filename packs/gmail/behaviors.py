@@ -61,6 +61,8 @@ _CONTROL_VIEW = {
         "conversation_thread", "conversation_message", "conversation_participant",
         "conversation_interpretation_run", "selection_extraction_request",
         "entity_mention", "entity", "extraction_profile",
+        # Owner anchoring: interpretation resolves the confirmed alias set.
+        "subject_fact",
     ],
     "recent_events": 20_000,
 }

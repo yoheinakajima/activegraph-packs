@@ -1,15 +1,19 @@
 from activegraph import Graph, Runtime
 
 from packs.activity_normalizer import pack as normalizer_pack
+from packs.attention import pack as attention_pack
 from packs.subject_profile import pack as subject_profile_pack
+from packs.subject_profile.projection import owner_alias_set_fn
 from packs.subject_profile.tools import forget_subject_fact_fn, review_subject_fact_fn
 
 
-def _runtime():
+def _runtime(*, with_attention=False):
     graph = Graph()
     runtime = Runtime(graph)
     runtime.load_pack(normalizer_pack)
     runtime.load_pack(subject_profile_pack)
+    if with_attention:
+        runtime.load_pack(attention_pack)
     return graph, runtime
 
 
@@ -20,8 +24,8 @@ def _evidence(graph, *, scope="owner_profile"):
     graph.add_object("acquired_content", {"acquired_item_id": item.id, "normalized_content": text, "normalized_metadata": {"subject_scope": scope}, "source_category": "local_knowledge", "connection_path": "pack", "is_fixture": True})
 
 
-def _candidate(graph, evidence, value="ActiveGraph"):
-    return graph.add_object("profile_candidate", {"candidate_identity": f"c-{value}", "text": f"Yohei builds {value}.", "confidence": .8, "evidence_id": evidence.id, "evidence_identity": evidence.data["evidence_identity"], "revision_id": evidence.data["revision_id"], "extraction_record_id": "run", "extractor_id": "test", "extractor_version": "1", "extraction_config_id": "cfg", "status": "candidate", "invalidation_reason": None, "metadata": {"annotation_id": "annotation-1"}, "attribute": "project", "value": value})
+def _candidate(graph, evidence, value="ActiveGraph", attribute="project"):
+    return graph.add_object("profile_candidate", {"candidate_identity": f"c-{attribute}-{value}", "text": f"Yohei builds {value}.", "confidence": .8, "evidence_id": evidence.id, "evidence_identity": evidence.data["evidence_identity"], "revision_id": evidence.data["revision_id"], "extraction_record_id": "run", "extractor_id": "test", "extractor_version": "1", "extraction_config_id": "cfg", "status": "candidate", "invalidation_reason": None, "metadata": {"annotation_id": "annotation-1"}, "attribute": attribute, "value": value})
 
 
 def test_candidate_requires_explicit_verdict_and_preserves_evidence():
@@ -45,6 +49,74 @@ def test_connector_content_cannot_become_owner_fact_without_owner_scope():
     runtime.run_until_idle()
     assert graph.get_object(result["verdict_id"]).data["status"] == "failed"
     assert not graph.objects(type="subject_fact")
+
+
+def test_owner_alias_set_is_deterministic_and_follows_supersession():
+    graph, runtime = _runtime(); _evidence(graph); runtime.run_until_idle()
+    evidence = graph.objects(type="activity_evidence")[0]
+    for attribute, value in (
+        ("email", "Yohei@Legacy-Mail.com"),
+        ("handle", "@yoheinakajima"),
+        ("url", "https://www.untapped.vc/about"),
+        ("project", "ActiveGraph"),  # never an identity alias
+    ):
+        review_subject_fact_fn(
+            graph, _candidate(graph, evidence, value, attribute).id, "confirm"
+        )
+        runtime.run_until_idle()
+    aliases = owner_alias_set_fn(graph, account_refs=["Owner@Example.com"])
+    assert aliases["addresses"] == ["owner@example.com", "yohei@legacy-mail.com"]
+    assert aliases["handles"] == ["yoheinakajima"]
+    assert aliases["domains"] == ["untapped.vc"]
+    assert aliases["basis"] == "confirmed_subject_facts"
+    assert len(aliases["fact_refs"]) == 3
+    # Deterministic and horizon-stable: the same reader state projects the
+    # same value, byte for byte.
+    assert owner_alias_set_fn(graph, account_refs=["Owner@Example.com"]) == aliases
+
+    email_fact = next(
+        fact for fact in graph.objects(type="subject_fact")
+        if fact.data["attribute"] == "email" and fact.data["status"] == "promoted"
+    )
+    forget_subject_fact_fn(graph, email_fact.id); runtime.run_until_idle()
+    after = owner_alias_set_fn(graph)
+    assert after["addresses"] == []
+    assert after["handles"] == ["yoheinakajima"]
+
+
+def test_confirmed_relationship_fact_seeds_importance_and_provably_no_trust():
+    graph, runtime = _runtime(with_attention=True)
+    _evidence(graph); runtime.run_until_idle()
+    evidence = graph.objects(type="activity_evidence")[0]
+    review_subject_fact_fn(
+        graph,
+        _candidate(graph, evidence, "jane@founderco.com", "relationship").id,
+        "confirm",
+    )
+    runtime.run_until_idle()
+    [observation] = graph.objects(type="attention_observation")
+    assert observation.data["signal_type"] == "explicit_important"
+    assert observation.data["explicit"] is True
+    assert observation.data["source"] == "user"
+    assert observation.data["subject_kind"] == "person"
+    assert observation.data["metadata"]["derivation"] == "confirmed_subject_fact"
+    vectors = graph.objects(type="importance_vector")
+    assert any(
+        vector.data["subject_ref"] == observation.data["subject_ref"]
+        and vector.data.get("features", {}).get("explicit")
+        for vector in vectors
+    )
+    # Trust is strictly outcome-only: knowing who someone is never raises how
+    # much their content is believed. No trust vector may exist or change.
+    assert not graph.objects(type="source_trust_vector")
+
+    # Identity aliases anchor interpretation; they never seed importance.
+    review_subject_fact_fn(
+        graph, _candidate(graph, evidence, "yohei@old.com", "email").id, "confirm"
+    )
+    runtime.run_until_idle()
+    assert len(graph.objects(type="attention_observation")) == 1
+    assert not graph.objects(type="source_trust_vector")
 
 
 def test_conflict_and_forget_are_append_only_lifecycles():
