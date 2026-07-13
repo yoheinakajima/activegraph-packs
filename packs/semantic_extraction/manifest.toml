@@ -3,7 +3,7 @@
 
 [pack]
 name = "semantic_extraction"
-version = "0.3.0"
+version = "0.4.0"
 description = "Shared annotation layer: typed source-anchored annotations under one provenance envelope, cache-identified deterministic extraction, first-class coverage, exact-span requests, per-domain candidate projectors, and guarded dynamic-to-deterministic procedures."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:112a80256a6eab83d4ea29b5cee07e2bbd0c296104f12ed42b690dadb79cef8c"
+content_hash = "sha256:5bf4debc42aa8d27e54b15e0a73bf8adf28395c1e7274a2f64ad2bd844aa59d1"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

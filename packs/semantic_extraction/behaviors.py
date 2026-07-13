@@ -177,6 +177,11 @@ def annotate_evidence(event, graph, ctx, *, settings: SemanticExtractionSettings
 )
 def extract_selected_evidence(event, graph, ctx, *, settings: SemanticExtractionSettings):
     """Settle an exact-span request without giving the caller provider access."""
+    if settings.deferred_selection_execution:
+        # ADR 0041: a host pump owns execution; the request stays proposed
+        # and every failure/settlement path below is mirrored by the host
+        # through the same request/settled-event contract.
+        return
     wrapper = event.payload.get("object", {})
     request_id = str(wrapper.get("id") or "")
     data = dict(wrapper.get("data") or {})

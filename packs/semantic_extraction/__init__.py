@@ -26,7 +26,7 @@ from .tools import TOOLS
 # integrates_with=["core", "memory_gateway"]
 pack = Pack(
     name="semantic_extraction",
-    version="0.3.0",
+    version="0.4.0",
     description=(
         "Shared annotation layer: typed source-anchored annotations under "
         "one provenance envelope, cache-identified deterministic extraction, "

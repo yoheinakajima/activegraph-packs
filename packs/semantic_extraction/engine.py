@@ -10,7 +10,7 @@ the eager path and explicit re-extraction.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
 from .extractor import (
@@ -215,7 +215,65 @@ def run_annotation_extraction(
     runs of the same extractor identity execute; everything else lands in
     ``cached_facets`` and coverage says so.
     """
-    reader = reader or graph
+    prepared = prepare_annotation_extraction(
+        evidence_obj,
+        settings=settings,
+        requested_facets=requested_facets,
+        reader=reader or graph,
+        extractor_ref=extractor_ref,
+        selection_id=selection_id,
+        content_segments=content_segments,
+    )
+    if prepared.cached_run is not None:
+        return {"ok": True, "run": prepared.cached_run, "created": False, "annotations": []}
+    drafts = perform_prepared_extraction(prepared, settings=settings)
+    return commit_prepared_extraction(
+        graph, prepared, drafts, settings=settings, reader=reader or graph
+    )
+
+
+@dataclass
+class PreparedExtraction:
+    """Everything the provider call needs, staged outside the graph.
+
+    ``perform_prepared_extraction`` runs with zero graph access (ADR 0041),
+    so every graph-derived input is copied here by the prepare phase on
+    the engine thread.
+    """
+
+    evidence_obj: Any
+    extractor: Any
+    config_hash: str
+    run_identity: str
+    revision_id: str
+    requested: tuple[str, ...]
+    cached: tuple[str, ...]
+    missing: tuple[str, ...]
+    unimplemented: tuple[str, ...]
+    content: str
+    normalized_metadata: dict[str, Any]
+    attribution: str
+    author_role: Optional[str]
+    observation_time: Any
+    selection_id: Optional[str]
+    selection_count: int
+    selected_chars: int
+    verified_segments: Optional[list[tuple[int, str]]] = None
+    cached_run: Any = None
+    deoptimization_ids: list[str] = field(default_factory=list)
+
+
+def prepare_annotation_extraction(
+    evidence_obj,
+    *,
+    settings: SemanticExtractionSettings,
+    reader,
+    requested_facets: Optional[tuple[str, ...]] = None,
+    extractor_ref: Optional[str] = None,
+    selection_id: Optional[str] = None,
+    content_segments: Optional[list[dict[str, Any]]] = None,
+) -> PreparedExtraction:
+    """Phase 1 — reads only: resolve, cache-check, verify, stage inputs."""
     evidence = evidence_obj.data
     extractor = resolve_extractor(settings, extractor_ref)
     config_hash = config_hash_for(extractor.config())
@@ -246,8 +304,31 @@ def run_annotation_extraction(
         ),
         None,
     )
+    content = evidence.get("normalized_content", "")
+    normalized_metadata = evidence.get("normalized_metadata") or {}
+    attribution, author_role = _attribution(normalized_metadata)
+    prepared = PreparedExtraction(
+        evidence_obj=evidence_obj,
+        extractor=extractor,
+        config_hash=config_hash,
+        run_identity=run_identity,
+        revision_id=revision_id,
+        requested=requested,
+        cached=(),
+        missing=(),
+        unimplemented=(),
+        content=content,
+        normalized_metadata=normalized_metadata,
+        attribution=attribution,
+        author_role=author_role,
+        observation_time=evidence.get("provider_time"),
+        selection_id=selection_id,
+        selection_count=len(content_segments or []),
+        selected_chars=len(content),
+        cached_run=existing,
+    )
     if existing is not None:
-        return {"ok": True, "run": existing, "created": False, "annotations": []}
+        return prepared
 
     if extractor_disabled(reader, extractor.extractor_id, extractor.extractor_version):
         raise RuntimeError(
@@ -260,20 +341,14 @@ def run_annotation_extraction(
         extractor.extractor_version, config_hash, selection_id,
     )
     implemented = set(extractor.implemented_facets())
-    cached = tuple(facet for facet in requested if facet in covered)
-    missing = tuple(
+    prepared.cached = tuple(facet for facet in requested if facet in covered)
+    prepared.missing = tuple(
         facet for facet in requested if facet not in covered and facet in implemented
     )
-    unimplemented = tuple(
+    prepared.unimplemented = tuple(
         facet for facet in requested if facet not in covered and facet not in implemented
     )
 
-    content = evidence.get("normalized_content", "")
-    normalized_metadata = evidence.get("normalized_metadata") or {}
-    attribution, author_role = _attribution(normalized_metadata)
-    observation_time = evidence.get("provider_time")
-
-    selected_chars = len(content)
     if content_segments is not None:
         verified_segments: list[tuple[int, str]] = []
         selected_chars = 0
@@ -287,11 +362,23 @@ def run_annotation_extraction(
                 raise ValueError("selection hash does not match authoritative evidence")
             verified_segments.append((start, exact))
             selected_chars += len(exact)
-        drafts = []
+        prepared.verified_segments = verified_segments
+        prepared.selected_chars = selected_chars
+    return prepared
+
+
+def perform_prepared_extraction(
+    prepared: PreparedExtraction, *, settings: SemanticExtractionSettings
+) -> list[AnnotationDraft]:
+    """Phase 2 — provider only. No graph access; safe off the engine thread."""
+    if prepared.verified_segments is not None:
+        drafts: list[AnnotationDraft] = []
         per_facet: dict[str, int] = {}
-        if missing:
-            for offset, exact in verified_segments:
-                for draft in extractor.extract(exact, normalized_metadata, missing):
+        if prepared.missing:
+            for offset, exact in prepared.verified_segments:
+                for draft in prepared.extractor.extract(
+                    exact, prepared.normalized_metadata, prepared.missing
+                ):
                     count = per_facet.get(draft.facet, 0)
                     if count >= settings.max_annotations_per_facet:
                         continue
@@ -301,11 +388,44 @@ def run_annotation_extraction(
                             draft,
                             start=draft.start + offset,
                             end=draft.end + offset,
-                            metadata={**dict(draft.metadata), "selection_id": selection_id},
+                            metadata={**dict(draft.metadata), "selection_id": prepared.selection_id},
                         )
                     )
-    else:
-        drafts = extractor.extract(content, normalized_metadata, missing) if missing else []
+        return drafts
+    if not prepared.missing:
+        return []
+    return prepared.extractor.extract(
+        prepared.content, prepared.normalized_metadata, prepared.missing
+    )
+
+
+def commit_prepared_extraction(
+    graph,
+    prepared: PreparedExtraction,
+    drafts: list[AnnotationDraft],
+    *,
+    settings: SemanticExtractionSettings,
+    reader=None,
+) -> dict[str, Any]:
+    """Phase 3 — writes only: run record, annotations, coverage."""
+    reader = reader or graph
+    evidence_obj = prepared.evidence_obj
+    evidence = evidence_obj.data
+    extractor = prepared.extractor
+    config_hash = prepared.config_hash
+    run_identity = prepared.run_identity
+    revision_id = prepared.revision_id
+    requested = prepared.requested
+    cached = prepared.cached
+    missing = prepared.missing
+    unimplemented = prepared.unimplemented
+    content = prepared.content
+    normalized_metadata = prepared.normalized_metadata
+    attribution = prepared.attribution
+    author_role = prepared.author_role
+    observation_time = prepared.observation_time
+    selection_id = prepared.selection_id
+    selected_chars = prepared.selected_chars
 
     run = graph.add_object(
         "extraction_run",
@@ -326,7 +446,7 @@ def run_annotation_extraction(
             "error": None,
             "metadata": {
                 "acquired_at_event_id": evidence.get("acquired_at_event_id"),
-                "selection_count": len(content_segments or []),
+                "selection_count": prepared.selection_count,
             },
         },
     )
@@ -434,24 +554,18 @@ def run_annotation_extraction(
     }
 
 
-def run_profile_extraction(
+def extraction_groups(
     graph,
     evidence_obj,
     *,
     settings: SemanticExtractionSettings,
     requested_facets: Optional[tuple[str, ...]] = None,
     reader=None,
-    selection_id: Optional[str] = None,
-    content_segments: Optional[list[dict[str, Any]]] = None,
-) -> list[dict[str, Any]]:
-    """Extract per the active profile's facet AND extractor policy.
+) -> tuple[dict[Optional[str], list[str]], dict[str, list[str]]]:
+    """Partition requested facets by extractor ref per the active profile.
 
-    The profile's ``extractor_by_facet`` map partitions the requested
-    facets into extractor groups; each group is one cache-identified
-    ``run_annotation_extraction`` pass. With an empty map (no provider
-    configured / today's seeded profile) this is exactly one pass on the
-    settings default extractor — byte-identical to the previous
-    single-extractor path.
+    May write procedure deoptimization records (engine-thread work), which
+    is why deferred hosts run this inside their prepare phase (ADR 0041).
     """
     reader = reader or graph
     evidence = evidence_obj.data
@@ -485,7 +599,33 @@ def run_profile_extraction(
                         if deopt_id:
                             deoptimizations_by_ref.setdefault(ref, []).append(deopt_id)
         groups.setdefault(ref, []).append(facet)
+    return groups, deoptimizations_by_ref
 
+
+def run_profile_extraction(
+    graph,
+    evidence_obj,
+    *,
+    settings: SemanticExtractionSettings,
+    requested_facets: Optional[tuple[str, ...]] = None,
+    reader=None,
+    selection_id: Optional[str] = None,
+    content_segments: Optional[list[dict[str, Any]]] = None,
+) -> list[dict[str, Any]]:
+    """Extract per the active profile's facet AND extractor policy.
+
+    The profile's ``extractor_by_facet`` map partitions the requested
+    facets into extractor groups; each group is one cache-identified
+    ``run_annotation_extraction`` pass. With an empty map (no provider
+    configured / today's seeded profile) this is exactly one pass on the
+    settings default extractor — byte-identical to the previous
+    single-extractor path.
+    """
+    reader = reader or graph
+    groups, deoptimizations_by_ref = extraction_groups(
+        graph, evidence_obj,
+        settings=settings, requested_facets=requested_facets, reader=reader,
+    )
     results = []
     # The default group first, then explicit refs in sorted order —
     # deterministic run ordering regardless of dict insertion history.
@@ -521,11 +661,16 @@ def run_profile_extraction(
 
 
 __all__ = [
+    "PreparedExtraction",
     "active_profile_extractor_map",
     "active_profile_facets",
     "annotation_identity_for",
+    "commit_prepared_extraction",
+    "extraction_groups",
     "extractor_disabled",
     "parse_extractor_ref",
+    "perform_prepared_extraction",
+    "prepare_annotation_extraction",
     "resolve_extractor",
     "run_annotation_extraction",
     "run_profile_extraction",

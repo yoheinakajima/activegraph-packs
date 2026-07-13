@@ -14,6 +14,11 @@ from .facets import DEFAULT_EAGER_FLOOR
 
 class SemanticExtractionSettings(BaseModel):
     enabled: bool = Field(default=True)
+    # ADR 0041: hosts may opt in to executing selection requests off the
+    # engine thread; the minting behavior then leaves them ``proposed`` and
+    # the host pump runs prepare (engine) → perform (worker) → commit
+    # (engine). Default stays synchronous — unopinionated for embedders.
+    deferred_selection_execution: bool = Field(default=False)
     extractor_id: str = Field(default="semantic.deterministic")
     extractor_version: str = Field(default="0.1.0")
     max_content_chars: int = Field(default=32_000, ge=1_000, le=1_000_000)

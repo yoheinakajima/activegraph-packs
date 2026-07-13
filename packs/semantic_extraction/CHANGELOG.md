@@ -1,5 +1,15 @@
 # Changelog — semantic_extraction
 
+## 0.4.0 — three-phase execution seam (2026-07-13, ADR 0041)
+
+- Split annotation extraction into prepare (reads) → perform (provider
+  only, zero graph access) → commit (writes); the synchronous composition
+  stays byte-identical and remains the default.
+- `deferred_selection_execution` setting: hosts may leave selection
+  requests `proposed` and pump them off the engine thread through
+  `semantic_extraction.deferred`, which mirrors the behavior's
+  request/settlement contract exactly.
+
 ## v0.3.0 — guarded proceduralization pilot (2026-07-12)
 
 - Add the first concrete ADR 0029 lifecycle: reviewed LLM reference witnesses
