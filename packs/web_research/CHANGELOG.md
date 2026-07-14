@@ -1,5 +1,20 @@
 # Web Research Pack Changelog
 
+## 0.5.0 — the research understanding affordance (2026-07-14, ADR 0047)
+
+- Declare `web_research_understanding`: public research joins governed
+  campaigns through a typed affordance — R0 `model_search` within the
+  owner-confirmed identity scope, `public_queries` outward disclosure, no
+  raw drill-down (findings are the bounded reading surface), and a
+  source-owned `outward_gate` wrapping the deterministic scope classifier
+  over the CURRENT approved plan so a coordinator can never widen
+  disclosure past what the owner approved.
+- `record_coordinator_query_fn`: one coordinator-proposed query enters the
+  running campaign's frontier under identical pre-registration rules —
+  gated, recorded before execution, executed only by the next pump round.
+- Zero-key fixture suite (`fixtures/run_fixtures.py`) covering the scope
+  gates and the affordance declaration.
+
 ## 0.4.0 — bounded adaptive campaigns (2026-07-13, ADR 0045)
 
 - Provider-neutral search adapter: one neutral request/result contract with
