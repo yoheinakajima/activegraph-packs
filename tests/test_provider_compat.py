@@ -110,3 +110,24 @@ def test_terminal_errors_are_no_longer_network_flakes():
     assert classify_provider_exception(_FakeRateLimit("slow down")) == "llm.rate_limited"
     # Unknown shapes keep the transient code (pre-v1.3 retry behavior).
     assert classify_provider_exception(_FakeTimeout("timeout")) == "llm.network_error"
+
+
+def test_no_production_code_reads_response_text_directly():
+    """Static regression for the first live keyed run: production provider
+    seams must read through response_text(), never a bare .text that a
+    simplified fake happens to satisfy. llm_provider.py is the seam and
+    documents the hazard."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "packs"
+    offenders = []
+    for source in root.rglob("*.py"):
+        if source.name == "llm_provider.py" or "fixtures" in source.parts:
+            continue
+        text = source.read_text(encoding="utf-8")
+        if 'getattr(response, "text"' in text or re.search(
+            r"\bresponse\.text\b", text
+        ):
+            offenders.append(str(source.relative_to(root)))
+    assert offenders == [], f"raw response.text reads: {offenders}"
