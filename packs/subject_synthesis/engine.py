@@ -30,12 +30,17 @@ def _norm(name: str) -> str:
 
 
 def request_subject_synthesis_fn(
-    graph, *, reason: str = "", subject_ref: str = "owner"
+    graph, *, reason: str = "", subject_ref: str = "owner", reader=None
 ) -> dict[str, Any]:
-    """Idempotent while one request is open: repeated triggers coalesce."""
+    """Idempotent while one request is open: repeated triggers coalesce.
+
+    ``reader`` lets view-gated callers (behaviors) pass their read view
+    while writes go through their write handle.
+    """
+    view = reader or graph
     existing = next(
         (
-            obj for obj in graph.objects(type="subject_synthesis_request")
+            obj for obj in view.objects(type="subject_synthesis_request")
             if (obj.data or {}).get("status") == "proposed"
             and (obj.data or {}).get("subject_ref") == subject_ref
         ),
@@ -43,7 +48,7 @@ def request_subject_synthesis_fn(
     )
     if existing is not None:
         return {"ok": True, "request_id": existing.id, "created": False}
-    prior = len(list(graph.objects(type="subject_synthesis_request")))
+    prior = len(list(view.objects(type="subject_synthesis_request")))
     request = graph.add_object("subject_synthesis_request", {
         "request_identity": _stable("synthesis_request", subject_ref, prior),
         "subject_ref": subject_ref,
