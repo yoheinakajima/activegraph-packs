@@ -419,3 +419,97 @@ def test_zero_key_deterministic_draft_reaches_the_same_gate(runtime):
     resolution = defer_setup_draft_fn(fresh.graph, empty["draft_id"])
     assert resolution["resolution"] == "deferred"
     assert project_setup_draft_fn(fresh.graph)["resolved"] is True
+
+
+def test_perform_reads_the_real_llm_response_shape(runtime):
+    """Regression for the first live keyed run: the runtime provider returns
+    LLMResponse(raw_text=...), and reading .text silently blanked every
+    strong pass — draft v1 committed with zero proposals. perform must read
+    the real shape, and an empty strong pass must FAIL the request so the
+    deterministic floor composes instead of an empty gateway."""
+    import json
+    from decimal import Decimal
+
+    from activegraph.llm.types import LLMResponse
+
+    from packs.subject_synthesis.draft import perform_setup_draft
+
+    graph = runtime.graph
+    evidence = _owner_evidence(graph, runtime)
+    _fact(graph, evidence, "role", "General Partner")
+    request = request_setup_draft_fn(graph)
+    payload = prepare_setup_draft_fn(graph, request["request_id"])
+    fact_ref = payload["facts"][0]["ref"]
+
+    def _response(raw: str) -> LLMResponse:
+        return LLMResponse(
+            raw_text=raw, parsed=None, input_tokens=10, output_tokens=10,
+            cost_usd=Decimal("0"), latency_seconds=0.1, model="m",
+            finish_reason="end_turn",
+        )
+
+    class RealShapeProvider:
+        def __init__(self, raw: str):
+            self.raw = raw
+
+        def complete(self, **kwargs):
+            return _response(self.raw)
+
+    body = json.dumps({
+        "identity": [{"attribute": "role", "value": "Managing Partner",
+                      "refs": [fact_ref], "rationale": "sent mail"}],
+    })
+    outcome = perform_setup_draft(
+        payload, provider=RealShapeProvider(body), model="m"
+    )
+    assert outcome["ok"] is True
+    assert outcome["response_length"] == len(body)
+    assert outcome["sections"]["identity"], "raw_text must reach the parser"
+
+    # The live failure mode: a completed call whose text reads empty.
+    empty = perform_setup_draft(
+        payload, provider=RealShapeProvider(""), model="m"
+    )
+    assert empty["response_length"] == 0
+    result = commit_setup_draft_fn(graph, request["request_id"], payload, empty)
+    assert result["ok"] is False
+    assert "empty_synthesis_response" in str(result["error"])
+    assert graph.get_object(request["request_id"]).data["status"] == "failed"
+    assert current_setup_draft_fn(graph) is None, "no empty draft is minted"
+
+    # With the request failed, the deterministic floor still resolves the
+    # gate — never a dead end (ADR 0046 §5).
+    graph.add_object("project_candidate", {
+        "candidate_identity": "p-atlas", "name": "Atlas", "kind": "fact_seeded",
+        "score_milli": 900, "sources": [evidence.id],
+        "rationale": "confirmed fact names it", "status": "proposed",
+        "description": "", "project_id": None, "metadata": {},
+    })
+    composed = compose_deterministic_draft_fn(graph)
+    assert composed["ok"] is True
+    draft = current_setup_draft_fn(graph)
+    assert draft is not None
+    rows = project_setup_draft_fn(graph)["items"]
+    assert rows, "the deterministic draft proposes real items"
+
+
+def test_synthesis_citing_nothing_packed_fails_the_request(runtime):
+    """Proposals citing only refs we never packed are a failed pass, not an
+    all-dropped empty draft."""
+    graph = runtime.graph
+    evidence = _owner_evidence(graph, runtime)
+    _fact(graph, evidence, "role", "General Partner")
+    request = request_setup_draft_fn(graph)
+    payload = prepare_setup_draft_fn(graph, request["request_id"])
+    outcome = {
+        "ok": True, "model": "m", "response_length": 120,
+        "sections": {"identity": [
+            {"attribute": "role", "value": "CEO", "refs": ["not-a-ref"],
+             "rationale": "hallucinated"},
+        ]},
+        "error": None,
+    }
+    result = commit_setup_draft_fn(graph, request["request_id"], payload, outcome)
+    assert result["ok"] is False
+    assert "synthesis_cited_nothing_packed" in str(result["error"])
+    assert current_setup_draft_fn(graph) is None

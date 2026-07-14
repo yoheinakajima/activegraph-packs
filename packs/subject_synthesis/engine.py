@@ -213,6 +213,7 @@ def perform_subject_synthesis(
         default_model_for,
         get_llm_provider,
         parse_json_payload,
+        response_text,
     )
 
     resolved = configured_llm_provider()
@@ -239,7 +240,7 @@ def perform_subject_synthesis(
     except Exception as exc:
         return {"identity": [], "projects": [], "noise": [], "model": model,
                 "error": f"{type(exc).__name__}: {exc}"[:300]}
-    text = getattr(response, "text", "") or ""
+    text = response_text(response)
     parsed = parse_json_payload(text) or {}
     return {
         "identity": list(parsed.get("identity") or []),

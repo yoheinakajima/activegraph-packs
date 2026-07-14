@@ -62,8 +62,15 @@ def _fact(graph, attribute: str, value: str):
 
 
 class _FakeResponse:
+    """Mirror the runtime LLMResponse shape (raw_text, finish_reason).
+
+    The first live keyed run failed precisely because fakes carried .text
+    while the real provider carries .raw_text — fakes stay honest now.
+    """
+
     def __init__(self, text: str):
-        self.text = text
+        self.raw_text = text
+        self.finish_reason = "end_turn"
 
 
 class FakeProvider:

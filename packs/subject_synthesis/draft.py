@@ -347,7 +347,7 @@ def perform_setup_draft(
     """Phase 2 — the reasoning-model pass, zero graph access."""
     from packs.llm_provider import (
         configured_llm_provider, get_llm_provider, parse_json_payload,
-        resolve_model_for_role,
+        resolve_model_for_role, response_finish_reason, response_text,
     )
 
     resolved = configured_llm_provider()
@@ -374,7 +374,7 @@ def perform_setup_draft(
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300],
                 "model": model, "sections": {}}
-    text = getattr(response, "text", "") or ""
+    text = response_text(response)
     parsed = parse_json_payload(text) or {}
     return {
         "ok": True,
@@ -382,6 +382,7 @@ def perform_setup_draft(
         "sections": {key: list(parsed.get(key) or []) for key in DRAFT_SECTIONS},
         "response_sample": text[:400],
         "response_length": len(text),
+        "finish_reason": response_finish_reason(response),
         "error": None,
     }
 
@@ -474,11 +475,31 @@ def commit_setup_draft_fn(
     cap = int(payload.get("max_items_per_section") or 8)
     error = outcome.get("error")
 
-    if error and not any(sections.values()):
+    def _fail(reason: str) -> dict[str, Any]:
         graph.patch_object(request_id, {
-            "status": "failed", "error": str(error)[:300],
+            "status": "failed", "error": str(reason)[:300],
         }, rationale="setup draft pass failed")
-        return {"ok": False, "reason": "perform_failed", "error": error}
+        return {"ok": False, "reason": "perform_failed", "error": reason}
+
+    if error and not any(sections.values()):
+        return _fail(str(error))
+    # An empty strong pass is a FAILURE, not an empty draft: the live keyed
+    # run committed "draft v1 · 0 proposals" and the owner had nothing to
+    # review while the deterministic floor sat unused. Zero proposals — or
+    # proposals citing nothing we packed — fail the request so the
+    # deterministic composer resolves the gate instead (ADR 0046 §5).
+    if not any(sections.values()):
+        finish = str(outcome.get("finish_reason") or "")
+        detail = f" finish_reason={finish}" if finish else ""
+        length = int(outcome.get("response_length") or 0)
+        return _fail(f"empty_synthesis_response length={length}{detail}")
+    if not any(
+        str(ref) in valid_refs
+        for rows in sections.values()
+        for row in rows or []
+        for ref in ((row or {}).get("refs") or [])
+    ):
+        return _fail("synthesis_cited_nothing_packed")
 
     draft = _mint_draft(
         graph, subject_ref=subject_ref, source="synthesis", run_id=None,

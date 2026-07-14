@@ -249,6 +249,29 @@ def clear_llm_provider() -> None:
     _CONFIGURED_SETTINGS = None
 
 
+def response_text(response) -> str:
+    """The text of a provider completion, whatever the provider shape.
+
+    The runtime's LLMResponse carries ``raw_text``; hand-rolled and test
+    providers often carry ``text``. Reading the wrong one is silent — the
+    first live keyed run returned real model output that every consumer
+    read as "" (empty draft, no_results research) because call sites used
+    ``getattr(response, "text", "")`` against LLMResponse. One seam, both
+    shapes, never silently empty again.
+    """
+    for attr in ("raw_text", "text"):
+        value = getattr(response, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def response_finish_reason(response) -> str:
+    """The provider finish/stop reason when the shape carries one."""
+    value = getattr(response, "finish_reason", None)
+    return value if isinstance(value, str) else ""
+
+
 def parse_json_payload(text: str) -> Optional[dict]:
     """Best-effort extraction of one JSON object from a model response.
 
@@ -296,6 +319,8 @@ def parse_json_payload(text: str) -> Optional[dict]:
 
 __all__ = [
     "PROVIDER_KEY_ENVS",
+    "response_text",
+    "response_finish_reason",
     "LLMProviderSettings",
     "ResolvedLLMProvider",
     "build_llm_provider",

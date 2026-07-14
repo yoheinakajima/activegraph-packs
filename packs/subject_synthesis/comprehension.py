@@ -313,6 +313,7 @@ def _leaf_prompt(payload: dict[str, Any]) -> tuple[str, str]:
 def perform_comprehension_batch(payload: dict[str, Any]) -> dict[str, Any]:
     """Worker phase 2: one fast-model call per batch, zero graph access."""
     from packs.llm_provider import (
+        response_text,
         configured_llm_provider, get_llm_provider, parse_json_payload,
         resolve_model_for_role,
     )
@@ -340,7 +341,7 @@ def perform_comprehension_batch(payload: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         return {"ok": False, "rows": [], "model": model,
                 "error": f"{type(exc).__name__}: {exc}"[:300]}
-    text = getattr(response, "text", "") or ""
+    text = response_text(response)
     parsed = parse_json_payload(text) or {}
     usage = getattr(response, "usage", None)
     return {
@@ -618,7 +619,7 @@ def perform_comprehension_aggregation(payload: dict[str, Any]) -> dict[str, Any]
     bounded aggregate summary."""
     from packs.llm_provider import (
         configured_llm_provider, get_llm_provider, parse_json_payload,
-        resolve_model_for_role,
+        resolve_model_for_role, response_text,
     )
 
     resolved = configured_llm_provider()
@@ -659,7 +660,7 @@ def perform_comprehension_aggregation(payload: dict[str, Any]) -> dict[str, Any]
     except Exception as exc:
         return {"ok": False, "model": model,
                 "error": f"{type(exc).__name__}: {exc}"[:300]}
-    text = getattr(response, "text", "") or ""
+    text = response_text(response)
     parsed = parse_json_payload(text) or {}
     return {
         "ok": True, "model": model,

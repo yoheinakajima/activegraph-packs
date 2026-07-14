@@ -163,3 +163,55 @@ def test_oversized_or_secret_bearing_material_is_refused_not_truncated():
     stored = graph.get_object(ok["attempt_id"]).data["outcome_json"]
     assert "sk-abc123def456ghi789jkl012mno345pqr678" not in stored
     assert "[REDACTED:api_key]" in stored
+
+
+def test_committed_key_retries_are_bounded_by_the_attempt_policy():
+    """Released work legitimately re-begins its key after a committed
+    attempt (a failed plan returns to approved and retries). The contract:
+    the fall-through opens the NEXT attempt, and the explicit policy — not
+    a process-local set — exhausts the loop, so a caller that re-offers
+    committed work costs at most (max_attempts - 1) extra performs."""
+    from packs.connector_control.attempts import (
+        begin_external_attempt_fn,
+        mark_attempt_committed_fn,
+        mark_attempt_performing_fn,
+        store_attempt_outcome_fn,
+    )
+
+    graph, _runtime = _graph()
+
+    def _one_cycle(expected_number):
+        step = begin_external_attempt_fn(
+            graph, kind="extraction", idempotency_key="k-done",
+            work_ref="req#1", payload={"n": 1},
+        )
+        assert step["action"] == "perform"
+        assert step["attempt_number"] == expected_number
+        mark_attempt_performing_fn(graph, step["attempt_id"])
+        store_attempt_outcome_fn(graph, step["attempt_id"], {"ok": True})
+        mark_attempt_committed_fn(graph, step["attempt_id"])
+
+    _one_cycle(1)
+    _one_cycle(2)
+    exhausted = begin_external_attempt_fn(
+        graph, kind="extraction", idempotency_key="k-done",
+        work_ref="req#1", payload={"n": 1},
+    )
+    assert exhausted["action"] == "exhausted"
+    assert exhausted["attempts"] == 2
+
+
+def test_conversation_native_contract_accepts_attention_refs():
+    """Live-run regression: threads gained learned-salience attention_refs
+    (ADR 0038) and the strict native contract rejected all 100 of them,
+    failing gmail's learning-settled behavior."""
+    from packs.connector_control.contracts import validate_native_data
+
+    validated = validate_native_data("conversation", {
+        "threads": [{
+            "thread_ref": "t1", "title": "hello", "message_count": 2,
+            "attention_refs": ["person_email_abc123"],
+        }],
+        "total_count": 1,
+    })
+    assert validated["threads"][0]["attention_refs"] == ["person_email_abc123"]

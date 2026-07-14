@@ -38,6 +38,11 @@ class ConversationThreadSummary(_StrictModel):
     ] = "empty"
     status: Literal["open", "closed", "archived"] = "open"
     refs: list[str] = Field(default_factory=list)
+    # Learned-salience refs (ADR 0038): opaque ids into the attention vector
+    # space, attached once reply/person signals exist. The first live run
+    # failed 100-thread validation here because the projector emitted them
+    # before the contract carried the field.
+    attention_refs: list[str] = Field(default_factory=list)
 
 
 class ConversationNativeData(_StrictModel):

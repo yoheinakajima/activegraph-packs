@@ -101,6 +101,12 @@ def begin_external_attempt_fn(
     latest = rows[-1] if rows else None
     if latest is not None:
         phase = latest.data.get("phase")
+        # A committed or failed latest attempt deliberately falls through to
+        # open the NEXT attempt: released work (a failed plan returns to
+        # approved) retries under the same key, and the explicit attempt
+        # policy — not a process-local set — is what stops the loop. The
+        # worst a caller that re-offers already-committed work can cost is
+        # (max_attempts - 1) extra performs before "exhausted" surfaces it.
         if phase == "commit_pending":
             outcome_json = latest.data.get("outcome_json") or "null"
             payload_json = latest.data.get("payload_json") or "null"

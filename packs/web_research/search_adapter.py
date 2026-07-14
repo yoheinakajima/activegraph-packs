@@ -52,6 +52,7 @@ class SearchOutcome:
     error: Optional[str] = None
     response_sample: str = ""
     response_length: int = 0
+    finish_reason: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +66,7 @@ class SearchOutcome:
             "error": self.error,
             "response_sample": self.response_sample,
             "response_length": self.response_length,
+            "finish_reason": self.finish_reason,
         }
 
 
@@ -191,7 +193,10 @@ def perform_neutral_search(
             ok=False, provider_kind=kind, model=model,
             error=f"{type(exc).__name__}: {exc}"[:300],
         )
-    text = getattr(response, "text", "") or ""
+    from packs.llm_provider import response_finish_reason, response_text
+
+    text = response_text(response)
+    finish_reason = response_finish_reason(response)
     findings, suggested, recommend, flags = _parse_outcome(text, request)
     return SearchOutcome(
         ok=True,
@@ -203,6 +208,7 @@ def perform_neutral_search(
         injection_flags=flags,
         response_sample=text[:_MAX_SAMPLE_CHARS],
         response_length=len(text),
+        finish_reason=finish_reason,
     )
 
 

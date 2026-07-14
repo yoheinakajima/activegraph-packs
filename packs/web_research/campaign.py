@@ -534,6 +534,7 @@ def commit_research_round_fn(
             "length": int(result.get("response_length") or 0),
             "parsed_findings": len(rows),
             "sample": str(result.get("response_sample") or "")[:400],
+            "finish_reason": str(result.get("finish_reason") or ""),
             "error": result.get("error"),
         })
         if query_obj is not None:
