@@ -253,8 +253,12 @@ def _start_campaign_run(graph, plan):
     race the bind and strand the plan in "executing")."""
     data = plan.data or {}
     plan_identity = str(data.get("plan_identity") or "")
+    prior_runs = sum(
+        1 for obj in graph.objects(type="web_research_run")
+        if obj.data.get("plan_identity") == plan_identity
+    )
     run = graph.add_object("web_research_run", {
-        "run_identity": _stable("web_research", plan_identity),
+        "run_identity": _stable("web_research", plan_identity, prior_runs),
         "source_surface_id": RESEARCH_SURFACE_ID,
         "plan_identity": plan_identity,
         "queries": [],

@@ -19,7 +19,9 @@ Behaviors:
   milestone_tracker    — milestone.created → updates open milestone registry
   completion_verifier  — observation.created (done/completed) → CompletionEvidence
 
-Composes with: Core Pack (task), Identity Pack (principal_ref), Codebase Pack (issues→tasks)
+Composes with: Core Pack (task), Projects Pack (REQUIRED — owns the canonical
+  ``project`` type; team_ops adapts PM fields into metadata.ops), Identity
+  Pack (principal_ref), Codebase Pack (issues→tasks)
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], composes_with=["identity_auth", "codebase", "meeting"]
 pack = Pack(
     name="team_ops",
-    version="0.1.2",
+    version="0.2.0",
     description=(
         "Team project management: task triage, assignment, milestone tracking, "
         "workload estimation, and completion verification. "

@@ -15,15 +15,34 @@ def create_project_fn(
     start_date: str | None = None,
     target_date: str | None = None,
 ) -> object:
-    """Create a Project."""
+    """Create a Project through the canonical schema (owned by the
+    ``projects`` pack). PM fields live under ``metadata.ops``; the
+    lifecycle stage maps onto the canonical status (planning/active/
+    on_hold → active; completed/cancelled → archived)."""
+    import hashlib as _hashlib
+
+    key = " ".join(str(name).lower().split())
+    identity = "project_" + _hashlib.sha256(
+        ("project\x1f" + key).encode("utf-8")
+    ).hexdigest()
     return graph.add_object("project", {
+        "project_identity": identity,
         "name": name,
         "description": description,
-        "goal": goal,
-        "status": "planning",
-        "owner_ref": owner_ref,
-        "start_date": start_date,
-        "target_date": target_date,
+        "status": "active",
+        "seeded_from_candidate_id": None,
+        "confirmed_by": owner_ref or "team_ops",
+        "supersedes": None,
+        "superseded_by": None,
+        "metadata": {
+            "ops": {
+                "stage": "planning",
+                "goal": goal,
+                "owner_ref": owner_ref,
+                "start_date": start_date,
+                "target_date": target_date,
+            },
+        },
     })
 
 

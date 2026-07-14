@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from activegraph import Graph, Runtime
 from packs.core import pack as core_pack, CoreSettings
+from packs.projects import pack as projects_pack
 from packs.team_ops import pack as team_ops_pack, TeamOpsSettings
 from packs.team_ops.behaviors import clear_team_ops_registry
 from packs.team_ops.tools import (
@@ -45,6 +46,7 @@ def run_task_triage_and_assignment() -> bool:
     graph = Graph()
     rt = Runtime(graph)
     rt.load_pack(core_pack, settings=CoreSettings())
+    rt.load_pack(projects_pack)
     rt.load_pack(team_ops_pack, settings=TeamOpsSettings(
         auto_assign_tasks=True,
         default_capacity_hours_per_week=40.0,
@@ -160,6 +162,7 @@ def run_completion_workflow() -> bool:
     graph = Graph()
     rt = Runtime(graph)
     rt.load_pack(core_pack, settings=CoreSettings())
+    rt.load_pack(projects_pack)
     rt.load_pack(team_ops_pack, settings=TeamOpsSettings(
         auto_assign_tasks=False,
     ))

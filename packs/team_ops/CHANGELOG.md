@@ -41,3 +41,17 @@
 - Team/Ops wraps Core tasks via relations; does NOT replace the Core task primitive
 - `task_triager` uses `category == 'task_candidate'` OR `metadata.task_candidate == True` OR `category == 'action_item'`
 - `milestone_tracker` uses a module-level registry to avoid `graph.objects()` in behaviors
+
+## 0.2.0
+
+- One canonical `project` schema: the `projects` pack owns the global
+  ObjectType; team_ops no longer declares a conflicting `project` type
+  (co-loading previously raised `PackConflictError`). `create_project_fn`
+  adapts through the canonical shape — PM fields (stage, goal, owner_ref,
+  start/target dates) fold into `metadata.ops`, and the lifecycle stage
+  maps onto the canonical status (planning/active/on_hold → active,
+  completed/cancelled → archived).
+- `migrate_legacy_team_ops_projects` upgrades rows minted by team_ops ≤0.1
+  in place on pack load (identity from the name, PM fields into
+  metadata.ops); idempotent, canonical rows untouched.
+- team_ops now REQUIRES the projects pack; fixtures load both.

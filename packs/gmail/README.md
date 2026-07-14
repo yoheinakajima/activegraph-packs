@@ -83,3 +83,19 @@ tombstone, never counts the message as imported, and advances the watermark only
 after every listed id is either imported or tombstoned. This rule is independent
 of result arrival order. A history-list 404 remains a distinct invalid-cursor
 failure that requires re-anchoring.
+
+Sent-mail comprehension (ADR 0045) is a declared recipe, not a Gmail-grown
+reduction engine: Gmail owns the consent plan and the eligible-item selection;
+the staged reduction is `subject_synthesis.comprehension` machinery. The plan
+(`purpose=comprehension`, recipe `gmail_sent_v1`) reads the latest-N messages
+the owner sent — canonical Sent semantics via the `in:sent` search scope,
+never a UI label string, with the latest-N bound coming from the plan caps
+rather than a date term — and discloses the provider and fast model that will
+summarize. The count is an editable cap; decline, a smaller count, and later
+execution are first-class outcomes. Selection runs over the materialized
+conversation family, so deterministic hygiene has already stripped quoted
+history, forwarded bodies, and signatures: only owner-authored outbound text
+qualifies; drafts, automated outbound, injection-held, and
+empty-after-normalization items are excluded with recorded exclusion counts
+and coverage; recipients appear as identity/domain only; originals stay local
+as replay artifacts and every summary row cites its message evidence.

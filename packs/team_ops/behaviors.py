@@ -284,7 +284,58 @@ def completion_verifier(event, graph, ctx, *, settings: TeamOpsSettings):
         pass
 
 
+
+@behavior(
+    name="migrate_legacy_team_ops_projects",
+    on=["pack.loaded"],
+    where={"name": "team_ops"},
+    view={"include_types": ["project"]},
+    creates=[],
+)
+def migrate_legacy_team_ops_projects(event, graph, ctx, *, settings: TeamOpsSettings):
+    """One canonical ``project`` schema (owned by the projects pack).
+
+    Rows minted by team_ops ≤0.1 carry the old PM shape (no
+    project_identity, stage-valued status, top-level goal/dates). Upgrade
+    them in place: identity from the name, PM fields folded into
+    ``metadata.ops``, stage mapped onto the canonical status. Idempotent —
+    canonical rows are untouched.
+    """
+    del event, settings
+    import hashlib as _hashlib
+
+    stage_map = {
+        "planning": "active", "active": "active", "on_hold": "active",
+        "completed": "archived", "cancelled": "archived",
+    }
+    for obj in ctx.view.objects(type="project"):
+        data = obj.data or {}
+        if data.get("project_identity"):
+            continue  # already canonical
+        name = str(data.get("name") or "untitled")
+        key = " ".join(name.lower().split())
+        stage = str(data.get("status") or "planning")
+        graph.patch_object(obj.id, {
+            "project_identity": "project_" + _hashlib.sha256(
+                ("project\x1f" + key).encode("utf-8")
+            ).hexdigest(),
+            "status": stage_map.get(stage, "active"),
+            "confirmed_by": str(data.get("owner_ref") or "team_ops.migration"),
+            "metadata": {
+                **(data.get("metadata") or {}),
+                "ops": {
+                    "stage": stage,
+                    "goal": data.get("goal"),
+                    "owner_ref": data.get("owner_ref"),
+                    "start_date": data.get("start_date"),
+                    "target_date": data.get("target_date"),
+                },
+            },
+        }, rationale="team_ops legacy project migrated to the canonical schema")
+
+
 BEHAVIORS = [
+    migrate_legacy_team_ops_projects,
     task_triager,
     assignment_suggester,
     milestone_tracker,

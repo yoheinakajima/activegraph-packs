@@ -16,7 +16,7 @@ from .tools import TOOLS
 # requires=["subject_profile"], integrates_with=["entity", "communication", "attention", "tool_gateway"]
 pack = Pack(
     name="projects",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Evidence-derived project candidates with explainable sources and "
         "owner-verdict promotion; deterministic derivation, supersession "

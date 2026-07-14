@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 — sent-mail comprehension (2026-07-13)
+
+- Declare the `gmail_sent_v1` comprehension recipe (ADR 0045): Gmail owns
+  exactly what is service-specific — the consent plan and the eligible-item
+  selection — while the staged reduction itself is subject_synthesis
+  machinery.
+- The consent plan (`purpose=comprehension`) reads the latest-N messages the
+  owner SENT: canonical Sent semantics via the `in:sent` search scope, never
+  a UI label string, with the latest-N bound coming from the plan caps
+  rather than a date term. The plan disclosure names the provider and fast
+  model that will summarize, and the count is an editable cap — decline, a
+  smaller count, and later execution are first-class outcomes.
+- Selection runs over the materialized conversation family, so deterministic
+  hygiene has already stripped quoted history, forwarded bodies, and
+  signatures: only owner-authored outbound text qualifies, drafts /
+  automated outbound / injection-held / empty-after-normalization items are
+  excluded with recorded exclusion counts and coverage, recipients appear as
+  identity/domain only, and originals stay local as replay artifacts with
+  every summary row citing its message evidence.
+
 ## 0.4.0 — comprehension spent: plans and measured signal maps (2026-07-12)
 
 - Exploration ends with a service-derived ingestion-plan proposal — the first

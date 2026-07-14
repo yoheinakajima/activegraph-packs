@@ -746,10 +746,20 @@ def compose_deterministic_draft_fn(
         "identity": "identity", "narrative": "narrative",
         "instruction": "instructions",
     }
+    promoted_values = {
+        (str(f.data.get("attribute") or ""), str(f.data.get("value") or ""))
+        for f in view.objects(type="subject_fact")
+        if f.data.get("subject_ref") == subject_ref
+        and f.data.get("status") == "promoted"
+    }
     for candidate in view.objects(type="profile_candidate"):
         data = candidate.data or {}
         if data.get("status") != "candidate":
             continue
+        if (
+            str(data.get("attribute") or ""), str(data.get("value") or "")
+        ) in promoted_values:
+            continue  # already confirmed: nothing to review again
         attribute = str(data.get("attribute") or "profile_statement")
         section = class_to_section[classify_subject_attribute(attribute)]
         value = str(data.get("value") or data.get("text") or "").strip()

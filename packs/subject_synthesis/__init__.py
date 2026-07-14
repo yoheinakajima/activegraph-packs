@@ -33,7 +33,7 @@ from .settings import SubjectSynthesisSettings
 # integrates_with=["entity", "connector_control", "llm_provider"]
 pack = Pack(
     name="subject_synthesis",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Bounded, provider-gated comprehension synthesis: structured "
         "identity candidates lifted from confirmed prose and a curated, "

@@ -367,6 +367,19 @@ The module constructs the runtime's own `AnthropicProvider` /
 var *names* only: key material never appears in logs, events, errors,
 or doctor output (asserted in tests).
 
+**Model roles (ADR 0045):** comprehension work resolves its model
+through configuration, never a hardcoded call site.
+`LLMProviderSettings` adds two optional roles —
+`comprehension_fast_model` (batched leaf reductions: cheap, structured)
+and `comprehension_reasoning_model` (aggregate and cross-source
+synthesis passes) — resolved by `resolve_model_for_role`: the
+configured role setting wins, else the fast role falls back to a
+known-good fast tier per provider (`FAST_MODEL_DEFAULTS`: anthropic →
+`claude-haiku-4-5`), else the provider's default model. Zero-key
+resolves to `None`, and every caller records the resolved value on its
+run/receipt so which model actually served a role is always
+inspectable.
+
 **What a key unlocks today:** LLM-backed extraction
 (`semantic.llm@0.1.0`) at the shared annotation seam — richer
 `entity_mention` / `assertion` / `preference_expression` results plus

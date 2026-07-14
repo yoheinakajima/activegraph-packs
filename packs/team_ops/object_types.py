@@ -13,15 +13,11 @@ from pydantic import BaseModel, Field
 from activegraph.packs import ObjectType, RelationType
 
 
-class Project(BaseModel):
-    name: str
-    description: str = Field(default="")
-    status: Literal["planning", "active", "on_hold", "completed", "cancelled"] = Field(default="planning")
-    owner_ref: Optional[str] = Field(default=None)
-    goal: str = Field(default="")
-    start_date: Optional[str] = Field(default=None)
-    target_date: Optional[str] = Field(default=None)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+# The canonical ``project`` ObjectType is owned by the ``projects`` pack
+# (one global type name, one schema — never two). team_ops REQUIRES the
+# projects pack and adapts its PM fields (stage/goal/dates/owner) into
+# ``metadata.ops`` on the canonical object; a load-time migration behavior
+# upgrades rows minted by team_ops ≤0.1 to the canonical shape.
 
 
 class Assignment(BaseModel):
@@ -76,8 +72,6 @@ class ReviewRequest(BaseModel):
 
 
 OBJECT_TYPES = [
-    ObjectType(name="project", schema=Project,
-               description="A project grouping tasks and milestones."),
     ObjectType(name="assignment", schema=Assignment,
                description="Assignment of a task to a principal."),
     ObjectType(name="milestone", schema=Milestone,
