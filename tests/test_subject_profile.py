@@ -200,3 +200,62 @@ def test_verdict_metadata_lands_on_the_fact():
     assert fact.data["metadata"]["self_declared"] is True
     assert fact.data["metadata"]["decided_by"] == "owner:client"
     assert fact.data["metadata"]["decision"] == "confirm"
+
+
+def test_self_declaration_supersedes_same_scope_but_never_independent_facts():
+    """Editing a self-declared handle replaces the prior declaration for that
+    attribute/platform (ADR 0020 applied to identity), while an independently
+    sourced fact with the same attribute stays promoted untouched."""
+    graph, runtime = _runtime(); _evidence(graph); runtime.run_until_idle()
+    evidence = graph.objects(type="activity_evidence")[0]
+
+    # An independently sourced handle (no declaration scope) — must survive.
+    review_subject_fact_fn(
+        graph, _candidate(graph, evidence, "found-by-research", "handle").id,
+        "confirm",
+    )
+    runtime.run_until_idle()
+
+    # The owner's own declared github handle, then their correction of it.
+    review_subject_fact_fn(
+        graph, _candidate(graph, evidence, "old-handle", "handle").id,
+        "confirm", metadata={"declaration_scope": "self:handle:github"},
+    )
+    runtime.run_until_idle()
+    review_subject_fact_fn(
+        graph, _candidate(graph, evidence, "new-handle", "handle").id,
+        "confirm", metadata={"declaration_scope": "self:handle:github"},
+    )
+    runtime.run_until_idle()
+
+    facts = {f.data["value"]: f for f in graph.objects(type="subject_fact")}
+    assert facts["old-handle"].data["status"] == "superseded"
+    assert facts["new-handle"].data["status"] == "promoted"
+    assert facts["found-by-research"].data["status"] == "promoted"
+    # History and provenance preserved through the supersession link.
+    assert facts["new-handle"].data["supersedes_fact_id"] == facts["old-handle"].id
+    # No contradiction was opened: a correction is not a conflict.
+    assert not graph.objects(type="subject_contradiction")
+    # Consumers see only the current declaration.
+    aliases = owner_alias_set_fn(graph)
+    assert "old-handle" not in aliases["handles"]
+    assert set(aliases["handles"]) == {"found-by-research", "new-handle"}
+
+
+def test_self_declared_name_correction_supersedes_without_contradiction():
+    graph, runtime = _runtime(); _evidence(graph); runtime.run_until_idle()
+    evidence = graph.objects(type="activity_evidence")[0]
+    review_subject_fact_fn(
+        graph, _candidate(graph, evidence, "Yohei N.", "name").id,
+        "confirm", metadata={"declaration_scope": "self:name"},
+    )
+    runtime.run_until_idle()
+    review_subject_fact_fn(
+        graph, _candidate(graph, evidence, "Yohei Nakajima", "name").id,
+        "confirm", metadata={"declaration_scope": "self:name"},
+    )
+    runtime.run_until_idle()
+    facts = {f.data["value"]: f for f in graph.objects(type="subject_fact")}
+    assert facts["Yohei N."].data["status"] == "superseded"
+    assert facts["Yohei Nakajima"].data["status"] == "promoted"
+    assert not graph.objects(type="subject_contradiction")

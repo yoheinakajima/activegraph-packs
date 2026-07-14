@@ -1,19 +1,19 @@
 """Consented web research: queries-as-surfaces, gateway-governed ingestion.
 
-ADR 0040 / D060. The queries are the ingestion plan's surfaces — each one
-individually strikeable before approval — and they derive ONLY from
-owner-confirmed subject facts plus caller-attested confirmed terms. The
-model's search discovers candidate pages; ingestion happens exclusively
-through the governed public-presence gateway (budgeted, recorded,
-injection-scanned), and its findings join the existing verdict path.
-Nothing here runs without a bound approved plan.
+ADR 0040 / D060 / ADR 0045. The seed queries are the ingestion plan's
+surfaces — each one individually strikeable before approval — and they derive
+ONLY from owner-confirmed subject facts plus caller-attested confirmed terms.
+An approved plan runs as a bounded campaign (rounds, recorded follow-up
+frontier, deterministic stopping rules — ``campaign.py``); the model's search
+discovers candidate pages; ingestion happens exclusively through the governed
+public-presence gateway (budgeted, recorded, injection-scanned), and findings
+join the existing verdict path. Nothing here runs without a bound approved
+plan.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
-import re
 from typing import Any, Optional
 
 from packs.connector_control.plans import (
@@ -22,21 +22,21 @@ from packs.connector_control.plans import (
     register_deferred_plan_execution,
     register_ingestion_plan_executor,
 )
-from packs.connector_control.tools import (
-    record_connector_binding_fn,
-    record_connector_learning_delta_fn,
-    record_connector_native_view_fn,
-    record_connector_run_observation_fn,
-)
-from packs.importers.public_presence.tools import bootstrap_public_presence_fn
+from packs.connector_control.tools import record_connector_binding_fn
 from packs.subject_profile.projection import owner_alias_set_fn
+
+from .campaign import (
+    begin_research_round_fn,
+    commit_research_round_fn,
+    perform_research_round,
+    record_seed_queries_fn,
+)
+from .settings import WebResearchSettings
 
 
 RESEARCH_SURFACE_ID = "web_research:owner"
-RESEARCH_PROPOSER = "web_research.plan_proposer@0.2.0"
+RESEARCH_PROPOSER = "web_research.plan_proposer@0.3.0"
 _MAX_QUERIES = 4
-_MAX_FINDINGS_PER_QUERY = 5
-_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 # Display attributes that may join outward queries. Aliases (handle/url)
 # come through the alias set; emails NEVER qualify (D060).
 _QUERY_TERM_ATTRIBUTES = ("name", "company")
@@ -93,15 +93,50 @@ def derive_research_queries(
     return queries[:_MAX_QUERIES], sorted(set(provenance))
 
 
+def derive_scope_terms(
+    reader, *, confirmed_terms: tuple[str, ...] = ()
+) -> list[str]:
+    """The confirmed identity/entity scope a campaign may research: the same
+    owner-confirmed material queries derive from, as bare terms the scope
+    gate can anchor follow-ups against."""
+    aliases = owner_alias_set_fn(reader)
+    scope: list[str] = []
+
+    def _push(term: str) -> None:
+        cleaned = str(term).strip()
+        if cleaned and cleaned not in scope:
+            scope.append(cleaned)
+
+    for term in confirmed_terms:
+        _push(term)
+    for fact in reader.objects(type="subject_fact"):
+        data = fact.data or {}
+        if data.get("subject_ref") != "owner" or data.get("status") != "promoted":
+            continue
+        if str(data.get("attribute") or "") in _QUERY_TERM_ATTRIBUTES:
+            _push(str(data.get("value") or ""))
+    for handle in aliases.get("handles") or []:
+        _push(handle)
+        _push(f"@{handle}")
+    for domain in aliases.get("domains") or []:
+        _push(domain)
+    return scope
+
+
 def propose_web_research_plan_fn(
     graph,
     *,
     confirmed_terms: tuple[str, ...] = (),
     search_available: bool = True,
+    exclusions: tuple[str, ...] = (),
+    settings: Optional[WebResearchSettings] = None,
     reader=None,
 ) -> dict[str, Any]:
-    """Derive and record the research offer; the owner strikes or approves."""
+    """Derive and record the research campaign offer; the owner strikes
+    queries or approves. The campaign disclosure (rounds, budgets, follow-up
+    policy, provider) is part of the plan the owner approves (ADR 0045)."""
     view = reader or graph
+    settings = settings or WebResearchSettings()
     queries, provenance = derive_research_queries(
         view, confirmed_terms=tuple(confirmed_terms)
     )
@@ -116,31 +151,74 @@ def propose_web_research_plan_fn(
     )
     if policy is None:
         raise ValueError("no active connector_operational_policy")
-    max_pages_to_ingest = min(10, int(policy.data.get("max_acquisition_items") or 10))
+    max_pages = min(
+        int(settings.max_pages), int(policy.data.get("max_acquisition_items") or 10)
+    )
+    max_total_queries = min(
+        int(settings.max_total_queries),
+        int(policy.data.get("max_provider_calls") or settings.max_total_queries),
+    )
+    from packs.llm_provider import configured_llm_provider, default_model_for
+
+    resolved = configured_llm_provider()
+    provider_disclosure = {
+        "provider": resolved.provider,
+        "model": default_model_for(resolved),
+    }
     availability = (
-        "search runs through your configured model"
-        if search_available
+        f"search runs through your configured model ({resolved.provider})"
+        if search_available and resolved.provider
         else "no search-capable model key is configured — approving records the intent; research runs once one is added"
     )
-    summary = (
-        f"i'd run {len(queries)} searches drawn from what you've confirmed — "
-        f"each one listed verbatim below, strikeable before approval; up to "
-        f"{max_pages_to_ingest} discovered pages ingest through the recorded "
-        f"gateway. {availability}. nothing leaves this machine until you approve."
+    follow_up_line = (
+        f"it may add up to {settings.max_follow_ups_per_round} follow-up "
+        "searches per round from what it finds — every one recorded before it "
+        "runs, only about you and what you've confirmed; anything wider pauses "
+        "for your approval"
+        if settings.auto_follow_up and settings.max_follow_ups_per_round
+        else "follow-up searches wait for your approval"
     )
+    summary = (
+        f"i'd run up to {settings.max_rounds} rounds starting from "
+        f"{len(queries)} searches drawn from what you've confirmed — each one "
+        f"listed verbatim below, strikeable before approval. {follow_up_line}. "
+        f"hard bounds: {max_total_queries} searches, {max_pages} pages read, "
+        f"then it stops and reports why. {availability}. nothing leaves this "
+        "machine until you approve."
+    )
+    campaign = {
+        "max_rounds": int(settings.max_rounds),
+        "max_total_queries": max_total_queries,
+        "max_pages": max_pages,
+        "max_follow_ups_per_round": int(settings.max_follow_ups_per_round),
+        "auto_follow_up": bool(settings.auto_follow_up),
+        "max_findings_per_query": int(settings.max_findings_per_query),
+        "timeout_seconds_per_call": float(settings.timeout_seconds_per_call),
+        "max_tokens_per_call": int(settings.max_tokens_per_call),
+        "min_new_urls_per_round": int(settings.min_new_urls_per_round),
+        "scope_terms": derive_scope_terms(view, confirmed_terms=tuple(confirmed_terms)),
+        "exclusions": [*settings.exclusions, *[str(t) for t in exclusions if str(t).strip()]],
+        "sensitive_topic_terms": list(settings.sensitive_topic_terms),
+        "provider_disclosure": provider_disclosure,
+        # A deterministic token ceiling by construction: every call is
+        # bounded, and the call count is bounded.
+        "token_ceiling": max_total_queries * int(settings.max_tokens_per_call),
+    }
     return propose_ingestion_plan_fn(
         graph,
         source_surface_id=RESEARCH_SURFACE_ID,
         service="web_research",
         account_ref="owner",
         family="documents",
-        window={"kind": "recent_items", "estimated_items": max_pages_to_ingest},
+        window={"kind": "recent_items", "estimated_items": max_pages},
         derivation={
             "basis": "measured_topology",
             "summary": summary,
             "measurements": {
                 "confirmed_sources": len(provenance) + len(confirmed_terms),
                 "queries": len(queries),
+                "max_rounds": int(settings.max_rounds),
+                "max_total_queries": max_total_queries,
             },
             "provenance": provenance,
         },
@@ -153,143 +231,41 @@ def propose_web_research_plan_fn(
             }
             for query in queries
         ],
-        caps={"max_items": max_pages_to_ingest, "max_pages": len(queries)},
+        caps={"max_items": max_pages, "max_pages": len(queries)},
         interpretation_stages=[
+            "web_research.campaign@rounds",
             "public_presence.gateway@r0",
             "semantic_extraction.profile@candidates",
             "subject_profile.verdicts@owner",
         ],
         proposed_by=RESEARCH_PROPOSER,
-        metadata={"search_available": bool(search_available)},
+        metadata={
+            "search_available": bool(search_available),
+            "campaign": campaign,
+        },
         reader=reader,
     )
 
 
-def _research_prompt(query: str, limit: int) -> tuple[str, str]:
-    system = (
-        "You research a person's public professional presence. Use web search. "
-        "Only report claims directly supported by a page you actually found. "
-        "Respond with STRICT JSON only, no prose."
-    )
-    user = (
-        f"Search the web for: {query}\n"
-        f"Return at most {limit} findings as JSON: "
-        '{"findings": [{"claim": "<one factual sentence>", "url": "<exact source url>"}]}'
-    )
-    return system, user
-
-
-def _parse_findings(text: str) -> list[dict[str, str]]:
-    from packs.llm_provider import parse_json_payload
-
-    payload = parse_json_payload(text) or {}
-    findings = []
-    for row in payload.get("findings") or []:
-        claim = str((row or {}).get("claim") or "").strip()
-        url = str((row or {}).get("url") or "").strip()
-        if claim and _URL_RE.match(url):
-            findings.append({"claim": claim[:500], "url": url})
-    return findings
-
-
-def perform_research_queries(
-    queries: list[str],
-    *,
-    provider=None,
-    model: Optional[str] = None,
-    max_findings_per_query: int = _MAX_FINDINGS_PER_QUERY,
-    timeout_seconds: float = 90.0,
-) -> dict[str, Any]:
-    """Provider-only phase (ADR 0041 shape): zero graph access.
-
-    Uses the configured model's server-side web search where the provider
-    supports it. Failure of one query never poisons the rest.
-    """
-    from packs.llm_provider import configured_llm_provider, default_model_for, get_llm_provider
-
-    resolved = configured_llm_provider()
-    if provider is None:
-        if not resolved.configured:
-            return {"findings": [], "calls": 0, "model": None,
-                    "error": "research_provider_unavailable"}
-        provider = get_llm_provider()
-    model = model or default_model_for(resolved) or ""
-    from activegraph.llm import LLMMessage
-
-    findings: list[dict[str, str]] = []
-    errors: list[str] = []
-    responses: list[dict[str, Any]] = []
-    calls = 0
-    for query in queries:
-        system, user = _research_prompt(query, max_findings_per_query)
-        try:
-            response = provider.complete(
-                system=system,
-                messages=[LLMMessage(role="user", content=user)],
-                model=model,
-                max_tokens=1_500,
-                temperature=0.0,
-                top_p=1.0,
-                output_schema=None,
-                timeout_seconds=timeout_seconds,
-                tools=[{
-                    "type": "web_search_20250305",
-                    "name": "web_search",
-                    "max_uses": 3,
-                }],
-            )
-            calls += 1
-            text = getattr(response, "text", "") or ""
-            parsed = _parse_findings(text)
-            # A bounded breadcrumb per query: "found nothing" must always be
-            # diagnosable from the run record alone (ADR 0043).
-            responses.append({
-                "query": query,
-                "length": len(text),
-                "parsed_findings": len(parsed),
-                "sample": text[:400],
-            })
-            for finding in parsed:
-                finding["query"] = query
-                findings.append(finding)
-        except Exception as exc:  # one query's failure stays one query's failure
-            errors.append(f"{query}: {type(exc).__name__}: {exc}"[:300])
-    return {
-        "findings": findings,
-        "calls": calls,
-        "model": model,
-        "responses": responses,
-        "error": "; ".join(errors)[:500] if errors else None,
-    }
-
-
-def execute_web_research_plan_fn(
-    graph, plan, *, research: Optional[dict[str, Any]] = None
-) -> dict[str, Any]:
-    """Executor for the approved plan (registered with connector_control).
-
-    ``research`` lets a host inject the perform-phase result it ran off the
-    engine thread; when absent the call runs inline (bounded: ≤3 queries).
-    """
+def _start_campaign_run(graph, plan):
+    """Mint the run, bind the connector plane, and bind the plan BEFORE any
+    terminal observation exists (the settlement behavior would otherwise
+    race the bind and strand the plan in "executing")."""
     data = plan.data or {}
-    queries = [
-        str(surface.get("label") or "")
-        for surface in data.get("surfaces") or []
-        if surface.get("included") and str(surface.get("label") or "").strip()
-    ]
-    caps = dict(data.get("caps") or {})
     plan_identity = str(data.get("plan_identity") or "")
     run = graph.add_object("web_research_run", {
         "run_identity": _stable("web_research", plan_identity),
         "source_surface_id": RESEARCH_SURFACE_ID,
         "plan_identity": plan_identity,
-        "queries": queries,
+        "queries": [],
         "status": "running",
         "findings": [],
         "urls_planned": [],
         "urls_ingested": 0,
         "model": None,
         "calls": 0,
+        "rounds_executed": 0,
+        "stop_reason": None,
         "error": None,
         "metadata": {"plan_version": int(data.get("version") or 0)},
     })
@@ -301,129 +277,149 @@ def execute_web_research_plan_fn(
         family="documents",
         active_route="model_search",
         domain_run_type="web_research_run",
-        metadata={"adapter": "web_research.plan@0.1.0"},
+        metadata={"adapter": "web_research.campaign@0.1.0"},
     )
-    # Bind before any terminal observation exists: this executor settles its
-    # run synchronously, so a post-hoc bind would race the neutral
-    # plan-settlement behavior and strand the plan in "executing".
     bind_plan_execution_fn(
         graph,
         plan_ref=plan_identity,
         domain_run_id=run.id,
         source_surface_id=RESEARCH_SURFACE_ID,
     )
+    record_seed_queries_fn(graph, plan, run.id)
+    return run
 
-    outcome = research if research is not None else perform_research_queries(queries)
+
+def _coerce_round_outcome(
+    outcome: dict[str, Any], graph, run
+) -> dict[str, Any]:
+    """Accept the legacy single-shot perform shape ({findings, calls, model,
+    error}) beside the round shape ({results, ...}); hosts and old fixtures
+    injected the former."""
+    if "results" in outcome:
+        return outcome
+    pending = [
+        obj for obj in graph.objects(type="research_query")
+        if obj.data.get("plan_identity") == run.data.get("plan_identity")
+        and obj.data.get("status") == "approved_auto"
+    ]
+    pending.sort(key=lambda obj: (int(obj.data.get("round") or 0), obj.data.get("text") or ""))
+    error = outcome.get("error")
     findings = list(outcome.get("findings") or [])
-    urls = list(dict.fromkeys(
-        finding["url"] for finding in findings if _URL_RE.match(finding.get("url") or "")
-    ))[: int(caps.get("max_items") or 10)]
-
-    ingested = 0
-    if urls:
-        presence = bootstrap_public_presence_fn(
-            graph,
-            {"urls": urls},
-            source_surface_id=RESEARCH_SURFACE_ID,
-            budget=int(caps.get("max_items") or 10),
-            requested_by="web_research.executor",
-        )
-        ingested = int(presence.get("proposed_calls") or 0)
-
-    hard_failed = bool(outcome.get("error")) and not findings and not urls
-    status = "failed" if hard_failed else ("completed" if findings else "partial")
-    graph.patch_object(run.id, {
-        "status": status,
-        "findings": findings,
-        "urls_planned": urls,
-        "urls_ingested": ingested,
+    texts = [str(query.data.get("text") or "") for query in pending]
+    by_query: dict[str, list[dict[str, Any]]] = {text: [] for text in texts}
+    for row in findings:
+        tag = str(row.get("query") or "")
+        target = tag if tag in by_query else (texts[0] if texts else "")
+        if target:
+            by_query[target].append({"claim": row.get("claim"), "url": row.get("url")})
+    results = []
+    for query, text in zip(pending, texts):
+        results.append({
+            "query_id": query.id,
+            "query": text,
+            "ok": error is None,
+            "findings": by_query.get(text, []),
+            "suggested_queries": list(outcome.get("suggested_queries") or []),
+            "recommend_continue": None,
+            "injection_flags": [],
+            "error": error,
+            "response_sample": "",
+            "response_length": 0,
+        })
+    return {
+        "results": results,
+        "provider_kind": outcome.get("provider_kind"),
         "model": outcome.get("model"),
-        "calls": int(outcome.get("calls") or 0),
-        "error": outcome.get("error"),
-        "metadata": {
-            "plan_version": int(data.get("version") or 0),
-            # Bounded per-query breadcrumbs (ADR 0043): zero findings must
-            # be diagnosable from the run record alone.
-            "responses": list(outcome.get("responses") or [])[:8],
-        },
-    }, rationale="web research settled")
+    }
 
-    state = {"completed": "succeeded", "partial": "partial", "failed": "failed"}[status]
-    record_connector_run_observation_fn(
-        graph,
-        domain_run_id=run.id,
-        source_surface_id=RESEARCH_SURFACE_ID,
-        service="web_research",
-        account_ref="owner",
-        family="documents",
-        route="model_search",
-        state=state,
-        phase="served" if state == "succeeded" else state,
-        mode="backfill",
-        attempt=True,
-        bounds={"max_items": int(caps.get("max_items") or 0), "max_pages": len(queries)},
-        counts={"findings": len(findings), "pages": ingested, "calls": int(outcome.get("calls") or 0)},
-        metadata={"plan_identity": plan_identity, "plan_version": int(data.get("version") or 0)},
-    )
-    record_connector_learning_delta_fn(
-        graph,
-        domain_run_id=run.id,
-        source_surface_id=RESEARCH_SURFACE_ID,
-        service="web_research",
-        family="documents",
-        status={"succeeded": "complete", "partial": "partial", "failed": "failed"}[state],
-        evidence={"created": ingested, "updated": 0, "deleted": 0},
-        refs=[run.id],
-        plan={
-            "plan_identity": plan_identity,
-            "plan_version": int(data.get("version") or 0),
-            "planned": {"max_items": int(caps.get("max_items") or 0), "max_pages": len(queries)},
-            "actual": {"imported": ingested, "pages": int(outcome.get("calls") or 0)},
-            "within_bounds": ingested <= int(caps.get("max_items") or 0),
-        },
-    )
-    record_connector_native_view_fn(
-        graph,
-        source_surface_id=RESEARCH_SURFACE_ID,
-        service="web_research",
-        family="documents",
-        state="ready" if urls else ("failed" if state == "failed" else "empty"),
-        data={
-            "items": [
-                {"item_ref": url, "title": url, "kind": "page"} for url in urls
-            ],
-            "total_count": len(urls),
-        },
-        refs=[run.id],
-    )
-    return {"ok": state != "failed", "run_id": run.id, "findings": len(findings), "urls": urls}
+
+def execute_web_research_plan_fn(
+    graph, plan, *, research: Optional[Any] = None
+) -> dict[str, Any]:
+    """Synchronous campaign executor (registered with connector_control).
+
+    ``research`` injects the perform phase: a dict is the first round's
+    outcome (legacy single-shot shape accepted); a callable is invoked per
+    round with the round payload. Absent, rounds perform inline.
+    """
+    run = _start_campaign_run(graph, plan)
+    result: dict[str, Any] = {"ok": False}
+    first_round = True
+    while True:
+        begun = begin_research_round_fn(graph, run.id)
+        if not begun.get("ok"):
+            if begun.get("reason") == "no_pending_queries":
+                # Nothing approved to run — settle through the committer so
+                # the stop reason lands on the receipt.
+                result = commit_research_round_fn(
+                    graph, run.id, {"queries": []},
+                    {"results": [], "provider_kind": None, "model": None},
+                )
+            break
+        payload = begun["payload"]
+        if callable(research):
+            outcome = research(payload)
+        elif research is not None and first_round:
+            outcome = _coerce_round_outcome(research, graph, run)
+        else:
+            outcome = perform_research_round(payload)
+        first_round = False
+        result = commit_research_round_fn(graph, run.id, payload, outcome)
+        if result.get("stopped") or not result.get("ok"):
+            break
+    current = graph.get_object(run.id)
+    urls = list(current.data.get("urls_planned") or [])
+    return {
+        "ok": bool(result.get("ok")),
+        "run_id": run.id,
+        "findings": len(current.data.get("findings") or []),
+        "urls": urls,
+        "rounds": int(current.data.get("rounds_executed") or 0),
+        "stop_reason": current.data.get("stop_reason"),
+    }
 
 
 def prepare_web_research_execution(graph, plan) -> dict[str, Any]:
-    """Deferred phase 1 (graph reads only): the included queries."""
+    """Deferred phase 1 (graph reads only): the included seed queries."""
     del graph
     data = plan.data or {}
+    campaign = dict((data.get("metadata") or {}).get("campaign") or {})
     return {
         "queries": [
             str(surface.get("label") or "")
             for surface in data.get("surfaces") or []
             if surface.get("included") and str(surface.get("label") or "").strip()
         ],
+        "max_findings_per_query": int(campaign.get("max_findings_per_query") or 5),
+        "max_follow_ups": int(campaign.get("max_follow_ups_per_round") or 0),
+        "timeout_seconds": float(campaign.get("timeout_seconds_per_call") or 90.0),
+        "max_tokens": int(campaign.get("max_tokens_per_call") or 1_500),
     }
 
 
 def perform_prepared_web_research(payload: dict[str, Any]) -> dict[str, Any]:
     """Deferred phase 2: network only, zero graph access."""
-    return perform_research_queries(list(payload.get("queries") or []))
+    return perform_research_round(payload)
 
 
 def commit_web_research_execution(
     graph, plan, payload: dict[str, Any], outcome: dict[str, Any]
 ) -> dict[str, Any]:
-    """Deferred phase 3: the synchronous executor with the perform result
-    injected — settlement semantics stay byte-identical (D061)."""
+    """Deferred phase 3: start the campaign run and commit round 1 —
+    settlement semantics stay identical to the synchronous executor (D061).
+    Rounds ≥ 2 continue through ``pending_research_rounds_fn`` on the host
+    pump; the plan settles when the campaign records its stop reason."""
     del payload
-    return execute_web_research_plan_fn(graph, plan, research=outcome)
+    run = _start_campaign_run(graph, plan)
+    if "results" not in outcome:
+        outcome = _coerce_round_outcome(outcome, graph, run)
+    committed = commit_research_round_fn(graph, run.id, {}, outcome)
+    return {
+        "ok": bool(committed.get("ok")),
+        "run_id": run.id,
+        "stopped": bool(committed.get("stopped")),
+        "stop_reason": committed.get("stop_reason"),
+    }
 
 
 def register_web_research() -> None:
@@ -440,9 +436,9 @@ __all__ = [
     "RESEARCH_SURFACE_ID",
     "commit_web_research_execution",
     "derive_research_queries",
+    "derive_scope_terms",
     "execute_web_research_plan_fn",
     "perform_prepared_web_research",
-    "perform_research_queries",
     "prepare_web_research_execution",
     "propose_web_research_plan_fn",
     "register_web_research",

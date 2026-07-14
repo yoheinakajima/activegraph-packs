@@ -64,6 +64,18 @@ class LLMProviderSettings(BaseModel):
             "The key value itself never passes through packs code."
         ),
     )
+    # Comprehension model roles (ADR 0045 §5): configuration, never hardcoded
+    # call sites. The fast role serves batched leaf reductions; the reasoning
+    # role serves aggregate/synthesis passes. None falls back per
+    # ``resolve_model_for_role``.
+    comprehension_fast_model: Optional[str] = Field(
+        default=None,
+        description="Model for batched leaf reductions (cheap, structured).",
+    )
+    comprehension_reasoning_model: Optional[str] = Field(
+        default=None,
+        description="Model for aggregate and cross-source synthesis passes.",
+    )
 
 
 @dataclass(frozen=True)
@@ -145,6 +157,45 @@ def default_model_for(resolved: ResolvedLLMProvider) -> Optional[str]:
     return getattr(provider, "default_model", None)
 
 
+#: Known-good fast-tier defaults per provider for the comprehension fast
+#: role. Only providers with a well-known small model are listed; anything
+#: else falls back to the provider's default model (honest, if not cheap).
+FAST_MODEL_DEFAULTS: dict[str, str] = {
+    "anthropic": "claude-haiku-4-5",
+}
+
+MODEL_ROLES = ("comprehension_fast", "comprehension_reasoning")
+
+
+def resolve_model_for_role(
+    role: str,
+    resolved: Optional[ResolvedLLMProvider] = None,
+    settings: Optional[LLMProviderSettings] = None,
+) -> Optional[str]:
+    """Resolve a model role to a concrete model id (ADR 0045 §5).
+
+    Order: the configured role setting → the provider's fast-tier default
+    (fast role only) → the provider's default model. Returns None zero-key.
+    Every caller records the resolved value on its run/receipt so which
+    model actually served a role is always inspectable.
+    """
+    if role not in MODEL_ROLES:
+        raise ValueError(f"unknown model role {role!r}; expected one of {MODEL_ROLES}")
+    if resolved is None:
+        resolved = configured_llm_provider()
+    if resolved is None or resolved.provider is None:
+        return None
+    settings = settings or _CONFIGURED_SETTINGS or LLMProviderSettings()
+    configured = getattr(settings, f"{role}_model", None)
+    if configured:
+        return str(configured)
+    if role == "comprehension_fast":
+        fast = FAST_MODEL_DEFAULTS.get(resolved.provider)
+        if fast:
+            return fast
+    return default_model_for(resolved)
+
+
 # ------------------------------------------------------- process registry
 #
 # The configured provider for this process, mirroring the local-capability
@@ -152,6 +203,7 @@ def default_model_for(resolved: ResolvedLLMProvider) -> Optional[str]:
 
 _CONFIGURED: Optional[ResolvedLLMProvider] = None
 _PROVIDER_INSTANCE = None
+_CONFIGURED_SETTINGS: Optional[LLMProviderSettings] = None
 
 
 def configure_llm_provider(
@@ -159,9 +211,10 @@ def configure_llm_provider(
     env: Optional[Mapping[str, str]] = None,
 ) -> ResolvedLLMProvider:
     """Resolve and store this process's LLM provider configuration."""
-    global _CONFIGURED, _PROVIDER_INSTANCE
+    global _CONFIGURED, _PROVIDER_INSTANCE, _CONFIGURED_SETTINGS
     _CONFIGURED = resolve_llm_provider(settings, env)
     _PROVIDER_INSTANCE = build_llm_provider(_CONFIGURED)
+    _CONFIGURED_SETTINGS = settings
     return _CONFIGURED
 
 
@@ -190,9 +243,10 @@ def set_llm_provider(provider, resolved: ResolvedLLMProvider) -> None:
 
 def clear_llm_provider() -> None:
     """Reset the registry — call between test fixtures."""
-    global _CONFIGURED, _PROVIDER_INSTANCE
+    global _CONFIGURED, _PROVIDER_INSTANCE, _CONFIGURED_SETTINGS
     _CONFIGURED = None
     _PROVIDER_INSTANCE = None
+    _CONFIGURED_SETTINGS = None
 
 
 def parse_json_payload(text: str) -> Optional[dict]:

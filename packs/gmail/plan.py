@@ -177,6 +177,11 @@ def _plan_surfaces(
 def plan_backfill_query(plan_data: dict[str, Any]) -> str:
     """Render the approved plan's window and exclusions as a Gmail query."""
     window = dict(plan_data.get("window") or {})
+    if plan_data.get("purpose") == "comprehension":
+        # Sent-mail comprehension (ADR 0045): canonical Sent semantics via
+        # the service's search scope — the latest-N bound comes from the
+        # plan caps, so no date term joins the query.
+        return "in:sent"
     days = int(window.get("days") or 30)
     terms = [f"newer_than:{days}d"]
     for surface in plan_data.get("surfaces") or []:

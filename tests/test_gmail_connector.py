@@ -265,7 +265,7 @@ def test_fresh_connect_derives_the_plan_from_discovered_topology(tmp_path):
     assert "30 days" in derivation["summary"]
     assert derivation["provenance"]
     assert plan.data["caps"]["max_items"] == 250
-    assert plan.data["caps"]["policy_id"] == "connector-operational@0.2.0"
+    assert plan.data["caps"]["policy_id"] == "connector-operational@0.3.0"
     assert plan.data["predicted_verdict"] == "approved_as_proposed"
     assert plan.data["verdict"] is None
     surfaces = {row["surface_ref"]: row for row in plan.data["surfaces"]}

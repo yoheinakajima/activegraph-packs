@@ -9,9 +9,11 @@ from .settings import GmailSettings
 from .tools import TOOLS
 from .maintenance import register_gmail_maintenance
 from .plan import register_gmail_ingestion_plans
+from .comprehension import register_gmail_comprehension
 
 register_gmail_maintenance()
 register_gmail_ingestion_plans()
+register_gmail_comprehension()
 
 # requires=["activity_normalizer", "semantic_extraction", "communication", "usage", "tool_gateway", "connector_control"]
 pack = Pack(

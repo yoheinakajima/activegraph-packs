@@ -87,13 +87,32 @@ def apply_subject_fact_verdict(event, graph, ctx, *, settings: SubjectProfileSet
         graph.patch_object(verdict_id, {"status": "applied", "result_fact_id": existing.id})
         return
 
+    # An owner re-declaration supersedes the owner's own prior declaration for
+    # the same attribute/platform scope (ADR 0020 applied to self-declared
+    # identity): editing "my github handle" replaces the old handle instead of
+    # accumulating beside it. Scope travels in verdict metadata as
+    # ``declaration_scope`` (e.g. "self:handle:github"); facts without a scope
+    # — independently sourced facts above all — are never superseded by it.
+    declaration_scope = str((data.get("metadata") or {}).get("declaration_scope") or "")
+    superseded_priors = [
+        fact for fact in ctx.view.objects(type="subject_fact")
+        if fact.data.get("subject_ref") == subject_ref
+        and fact.data.get("status") == "promoted"
+        and fact.data.get("value") != value
+        and str((fact.data.get("metadata") or {}).get("declaration_scope") or "")
+        == declaration_scope
+    ] if declaration_scope else []
+    superseded_ids = {fact.id for fact in superseded_priors}
+
     # Only single-valued attributes contradict; everything else accumulates.
+    # A prior this declaration supersedes is a correction, not a conflict.
     active = [
         fact for fact in ctx.view.objects(type="subject_fact")
         if fact.data.get("subject_ref") == subject_ref
         and fact.data.get("attribute") == attribute
         and fact.data.get("status") == "promoted"
         and fact.data.get("value") != value
+        and fact.id not in superseded_ids
     ] if attribute in set(settings.single_valued_attributes) else []
     fact = graph.add_object("subject_fact", {
         "fact_identity": _stable_id("subject_fact", subject_ref, attribute, value, candidate.id),
@@ -114,6 +133,13 @@ def apply_subject_fact_verdict(event, graph, ctx, *, settings: SubjectProfileSet
     graph.add_relation(fact.id, candidate.id, "promoted_from_profile_candidate")
     graph.add_relation(fact.id, evidence_id, "subject_fact_grounded_in")
     graph.patch_object(verdict_id, {"status": "applied", "result_fact_id": fact.id})
+    for prior in superseded_priors:
+        graph.patch_object(prior.id, {"status": "superseded"})
+        graph.add_relation(fact.id, prior.id, "subject_fact_supersedes")
+    if superseded_priors:
+        graph.patch_object(
+            fact.id, {"supersedes_fact_id": superseded_priors[-1].id}
+        )
     for prior in active:
         graph.patch_object(prior.id, {"status": "contradicted"})
         contradiction = graph.add_object("subject_contradiction", {

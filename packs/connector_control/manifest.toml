@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:062a744e22cb1fdc7acbb59fc44373d440caa4e0e20f9fcc119f1b3cb4181b3b"
+content_hash = "sha256:4f09c0809b05a22b13a880e45a08109a6a7e1f51b551b6f7f256e8eb850fb2d7"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -23,7 +23,7 @@ python = ">=3.11"
 python-deps = []
 
 [surface]
-object_types = ["connector_surface_binding", "connector_run_observation", "connector_learning_delta", "connector_native_view", "connector_operational_policy", "connector_maintenance_request", "connector_ingestion_plan"]
+object_types = ["connector_surface_binding", "connector_run_observation", "connector_learning_delta", "connector_native_view", "connector_operational_policy", "connector_maintenance_request", "connector_ingestion_plan", "external_work_attempt"]
 relation_types = []
 behaviors = ["seed_connector_operational_policy", "project_source_lifecycle_to_connector_binding", "settle_ingestion_plan_on_terminal_run"]
 tools = ["record_connector_binding", "record_connector_run_observation", "record_connector_learning_delta", "record_connector_native_view", "project_connector_control_plane", "project_connector_learning_deltas", "request_connector_refresh", "propose_ingestion_plan", "edit_ingestion_plan", "approve_ingestion_plan", "abandon_ingestion_plan", "execute_ingestion_plan", "project_ingestion_plans"]

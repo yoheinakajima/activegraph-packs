@@ -126,7 +126,7 @@ def test_lowering_is_free_and_raising_past_the_ceiling_names_the_escalation(runt
         )
     message = str(excinfo.value)
     assert "exceeds the operational policy ceiling" in message
-    assert "connector-operational@0.2.0" in message
+    assert "connector-operational@0.3.0" in message
     assert "escalation" in message
     # The rejected edit left no new version behind.
     head = current_plan_for_surface_fn(graph, SURFACE)

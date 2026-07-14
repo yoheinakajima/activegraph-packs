@@ -29,6 +29,7 @@ class ProjectCandidate(_StrictModel):
         default="proposed",
         pattern="^(proposed|confirmed|dismissed|superseded)$",
     )
+    description: str = ""
     project_id: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -38,6 +39,7 @@ class Project(_StrictModel):
 
     project_identity: str = Field(min_length=1)
     name: str = Field(min_length=1)
+    description: str = ""
     status: str = Field(default="active", pattern="^(active|archived|superseded)$")
     seeded_from_candidate_id: Optional[str] = None
     confirmed_by: str = Field(min_length=1)

@@ -206,8 +206,9 @@ def review_project_candidate_fn(
     *,
     actor: str = "owner",
     name_override: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Owner verdict: confirm (optionally renaming) or dismiss."""
+    """Owner verdict: confirm (optionally renaming/describing) or dismiss."""
     if verdict not in {"confirm", "dismiss"}:
         raise ValueError("verdict must be confirm | dismiss")
     candidate = graph.get_object(candidate_id)
@@ -226,6 +227,11 @@ def review_project_candidate_fn(
     project = graph.add_object("project", {
         "project_identity": _stable("project", _norm(name)),
         "name": name,
+        "description": str(
+            description
+            if description is not None
+            else (data.get("description") or "")
+        )[:1_000],
         "status": "active",
         "seeded_from_candidate_id": candidate_id,
         "confirmed_by": actor,
@@ -255,6 +261,7 @@ def rename_project_fn(graph, project_id: str, name: str, *, actor: str = "owner"
     replacement = graph.add_object("project", {
         "project_identity": _stable("project", _norm(name), project.id),
         "name": name,
+        "description": str(project.data.get("description") or ""),
         "status": "active",
         "seeded_from_candidate_id": project.data.get("seeded_from_candidate_id"),
         "confirmed_by": actor,
@@ -265,6 +272,25 @@ def rename_project_fn(graph, project_id: str, name: str, *, actor: str = "owner"
     graph.patch_object(project_id, {"status": "superseded", "superseded_by": replacement.id},
                        rationale=f"renamed by {actor}")
     return {"ok": True, "project_id": replacement.id, "superseded": project_id}
+
+
+def describe_project_fn(
+    graph, project_id: str, description: str, *, actor: str = "owner"
+) -> dict[str, Any]:
+    """Owner edit of a project's evidence-backed description. A description
+    is working context, not identity — a patch with rationale, not a
+    supersession."""
+    project = graph.get_object(project_id)
+    if project is None or project.type != "project":
+        raise ValueError(f"unknown project {project_id!r}")
+    if project.data.get("status") != "active":
+        raise ValueError("only an active project can be described")
+    graph.patch_object(
+        project_id,
+        {"description": str(description)[:1_000]},
+        rationale=f"description edited by {actor}",
+    )
+    return {"ok": True, "project_id": project_id}
 
 
 def project_projects_fn(graph) -> dict[str, Any]:

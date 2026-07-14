@@ -189,7 +189,7 @@ class ConnectorIngestionPlan(_StrictModel):
     service: str = Field(min_length=1)
     account_ref: str = Field(min_length=1)
     family: ConnectorFamily
-    purpose: Literal["initial_backfill", "extension"] = "initial_backfill"
+    purpose: Literal["initial_backfill", "extension", "comprehension"] = "initial_backfill"
     window: PlanWindow
     derivation: PlanDerivation
     surfaces: list[PlanSurface] = Field(default_factory=list)
@@ -205,6 +205,33 @@ class ConnectorIngestionPlan(_StrictModel):
     proposed_by: str = Field(min_length=1)
     approved_by: Optional[str] = None
     domain_run_id: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExternalWorkAttempt(_StrictModel):
+    """One durable attempt at externally-performing work (ADR 0041/0045).
+
+    The ledger distinguishes prepared, performing, commit-pending, and
+    terminal attempts so a crash between perform and commit can neither
+    duplicate the external call nor lose its result. Payload/outcome are
+    bounded, secret-scanned JSON — oversized material blocks loudly instead
+    of truncating silently.
+    """
+
+    attempt_identity: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    work_ref: str = Field(min_length=1)
+    phase: Literal[
+        "prepared", "performing", "commit_pending", "committed", "failed", "blocked"
+    ] = "prepared"
+    attempt_number: int = Field(default=1, ge=1)
+    max_attempts: int = Field(default=2, ge=1)
+    payload_json: Optional[str] = None
+    outcome_json: Optional[str] = None
+    error: Optional[str] = None
+    blocked_reason: Optional[str] = None
+    note: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -229,6 +256,7 @@ OBJECT_TYPES = [
     ObjectType("connector_operational_policy", ConnectorOperationalPolicy, "Versioned release budgets for connector work."),
     ObjectType("connector_maintenance_request", ConnectorMaintenanceRequest, "A provider-neutral owner request for bounded connector maintenance."),
     ObjectType("connector_ingestion_plan", ConnectorIngestionPlan, "A versioned, receipted acquisition proposal bound to its run."),
+    ObjectType("external_work_attempt", ExternalWorkAttempt, "A durable attempt at externally-performing work with crash-safe phases."),
 ]
 
 RELATION_TYPES = []
@@ -240,6 +268,7 @@ __all__ = [
     "ConnectorNativeView",
     "ConnectorOperationalPolicy",
     "ConnectorIngestionPlan",
+    "ExternalWorkAttempt",
     "PlanWindow",
     "PlanDerivation",
     "PlanSurface",
