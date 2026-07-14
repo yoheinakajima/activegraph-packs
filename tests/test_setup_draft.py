@@ -537,8 +537,10 @@ def test_draft_provenance_distinguishes_fallback_from_normal_zero_key(runtime):
     assert "fallback_from" not in draft.data["coverage"]
     sources = draft.data["coverage"]["sources"]
     assert sources["identity_seed"]["status"] == "contributed"
-    assert sources["research"]["status"] == "skipped"
-    assert sources["sent_mail"]["status"] == "skipped"
+    # Un-run sources are durable OPPORTUNITIES, not dead "skipped" ends:
+    # research is always offerable; sent mail needs acquired mail first.
+    assert sources["research"]["status"] == "available"
+    assert sources["sent_mail"]["status"] == "unavailable"
 
     # A failed keyed pass first: the SAME composer marks the degraded path
     # and carries the original provider failure.
@@ -553,3 +555,71 @@ def test_draft_provenance_distinguishes_fallback_from_normal_zero_key(runtime):
     assert coverage["provenance"] == "deterministic_fallback"
     assert "empty_synthesis_response" in coverage["fallback_from"]["error"]
     assert coverage["fallback_from"]["request_ref"] == request["request_id"]
+
+
+def test_source_coverage_tracks_the_full_opportunity_lifecycle(runtime):
+    """Hardening round: research and the sent study are durable
+    opportunities with explicit states — available → proposed → running →
+    contributed — derived from the same plan/request objects the pump
+    drives, so they survive navigation, hatch, and restart by construction."""
+    from packs.subject_synthesis.draft import draft_source_coverage_fn
+
+    graph = runtime.graph
+    evidence = _owner_evidence(graph, runtime)
+    _fact(graph, evidence, "role", "General Partner")
+
+    baseline = draft_source_coverage_fn(graph)
+    assert baseline["research"]["status"] == "available"
+    assert baseline["sent_mail"]["status"] == "unavailable"
+
+    from packs.connector_control.plans import (
+        approve_ingestion_plan_fn, propose_ingestion_plan_fn,
+    )
+
+    research = propose_ingestion_plan_fn(
+        graph, source_surface_id="web_research:owner", service="web_research",
+        account_ref="owner", family="documents",
+        window={"kind": "recent_items", "days": None},
+        derivation={"basis": "service_default", "summary": "seed queries"},
+        caps={"max_items": 20, "max_pages": 3},
+    )["plan"]
+    assert draft_source_coverage_fn(graph)["research"]["status"] == "proposed"
+    assert draft_source_coverage_fn(graph)["research"]["plan_ref"]
+
+    approve_ingestion_plan_fn(
+        graph, plan_ref=research.data["plan_identity"], approved_by="owner",
+    )
+    assert draft_source_coverage_fn(graph)["research"]["status"] == "running"
+
+    # A fulfilled gmail backfill opens the sent-study opportunity even
+    # though the owner never saw (or left) the connection panel.
+    backfill = propose_ingestion_plan_fn(
+        graph, source_surface_id="surface-g", service="gmail",
+        account_ref="o@x.com", family="conversation",
+        window={"kind": "recent_days", "days": 30},
+        derivation={"basis": "volume_only", "summary": "recent mail"},
+        caps={"max_items": 250, "max_pages": 10, "page_size": 25},
+    )["plan"]
+    approve_ingestion_plan_fn(
+        graph, plan_ref=backfill.data["plan_identity"], approved_by="owner",
+    )
+    graph.patch_object(backfill.id, {"status": "fulfilled"})
+    assert draft_source_coverage_fn(graph)["sent_mail"]["status"] == "available"
+
+    sent = propose_ingestion_plan_fn(
+        graph, source_surface_id="surface-g", service="gmail",
+        account_ref="o@x.com", family="conversation", purpose="comprehension",
+        window={"kind": "recent_items", "days": None},
+        derivation={"basis": "service_default", "summary": "latest sent"},
+        caps={"max_items": 100, "max_pages": 4, "page_size": 25},
+    )["plan"]
+    assert draft_source_coverage_fn(graph)["sent_mail"]["status"] == "proposed"
+    # Re-proposing the identical body is idempotent: no duplicate plan.
+    again = propose_ingestion_plan_fn(
+        graph, source_surface_id="surface-g", service="gmail",
+        account_ref="o@x.com", family="conversation", purpose="comprehension",
+        window={"kind": "recent_items", "days": None},
+        derivation={"basis": "service_default", "summary": "latest sent"},
+        caps={"max_items": 100, "max_pages": 4, "page_size": 25},
+    )["plan"]
+    assert again.data["plan_identity"] == sent.data["plan_identity"]

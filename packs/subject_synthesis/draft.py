@@ -780,36 +780,69 @@ def draft_source_coverage_fn(reader, *, subject_ref: str = "owner") -> dict[str,
         obj for obj in reader.objects(type="web_research_run")
     ]
     findings = sum(len(run.data.get("findings") or []) for run in research_runs)
+    latest_plan = research_plans[-1] if research_plans else None
+    plan_ref = str(latest_plan.data.get("plan_identity")) if latest_plan else ""
     if not research_plans:
-        coverage["research"] = _row("skipped")
+        # A durable OPPORTUNITY, not a dead end: nothing was declined, the
+        # source simply has not run (hardening round — the offer must
+        # survive navigation, hatch, and restart).
+        coverage["research"] = _row("available")
     elif any(p.data.get("status") in ("approved", "executing") for p in research_plans):
-        coverage["research"] = _row("running")
+        coverage["research"] = {**_row("running"), "plan_ref": plan_ref}
     elif research_runs and all(
         run.data.get("status") == "failed" for run in research_runs
     ):
-        coverage["research"] = _row(
+        coverage["research"] = {**_row(
             "failed", detail=str(research_runs[-1].data.get("error") or
                                  research_runs[-1].data.get("stop_reason") or ""),
-        )
+        ), "plan_ref": plan_ref}
     elif any(p.data.get("status") == "fulfilled" for p in research_plans):
         coverage["research"] = _row("contributed" if findings else "empty",
                                     count=findings)
+    elif latest_plan is not None and latest_plan.data.get("status") == "proposed":
+        coverage["research"] = {**_row("proposed"), "plan_ref": plan_ref}
     else:
-        coverage["research"] = _row("skipped")
+        coverage["research"] = _row("available")
 
+    gmail_backfills = [
+        obj for obj in reader.objects(type="connector_ingestion_plan")
+        if obj.data.get("service") == "gmail"
+        and obj.data.get("purpose") == "initial_backfill"
+        and obj.data.get("status") == "fulfilled"
+    ]
+    sent_plans = [
+        obj for obj in reader.objects(type="connector_ingestion_plan")
+        if obj.data.get("service") == "gmail"
+        and obj.data.get("purpose") == "comprehension"
+        and obj.data.get("status") not in ("abandoned", "superseded")
+    ]
+    sent_plan = sent_plans[-1] if sent_plans else None
+    sent_ref = str(sent_plan.data.get("plan_identity")) if sent_plan else ""
     comp_requests = list(reader.objects(type="comprehension_request"))
     leaves = len(list(reader.objects(type="source_item_summary")))
-    if not comp_requests:
-        coverage["sent_mail"] = _row("skipped")
-    elif any(r.data.get("status") in ("proposed", "reducing", "aggregating")
-             for r in comp_requests):
+    if comp_requests and any(
+        r.data.get("status") in ("proposed", "reducing", "aggregating")
+        for r in comp_requests
+    ):
         coverage["sent_mail"] = _row("running", count=leaves)
-    elif any(r.data.get("status") == "completed" for r in comp_requests):
+    elif comp_requests and any(
+        r.data.get("status") == "completed" for r in comp_requests
+    ):
         coverage["sent_mail"] = _row("contributed", count=leaves)
-    else:
+    elif comp_requests:
         coverage["sent_mail"] = _row(
             "failed", detail=str(comp_requests[-1].data.get("error") or ""),
         )
+    elif sent_plan is not None and sent_plan.data.get("status") == "proposed":
+        coverage["sent_mail"] = {**_row("proposed"), "plan_ref": sent_ref}
+    elif sent_plan is not None:
+        coverage["sent_mail"] = {**_row("running"), "plan_ref": sent_ref}
+    elif gmail_backfills:
+        # Mail is acquired and studyable — the opportunity stays open even
+        # if the owner left the connection panel long ago.
+        coverage["sent_mail"] = _row("available")
+    else:
+        coverage["sent_mail"] = _row("unavailable")
     return coverage
 
 
