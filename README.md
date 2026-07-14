@@ -3,7 +3,8 @@
 An open-source collection of [ActiveGraph](https://pypi.org/project/activegraph/) packs, bundles, a Python demo server, and a React Inspector UI.
 
 **What this repo is for.** This is the **official pack library for
-ActiveGraph**: the general-purpose capability layer (memory, tools,
+ActiveGraph** — a reusable capability library with thin connector recipes,
+not a product: the general-purpose capability layer (memory, tools,
 identity, communication, channels, scheduling, MCP) that assistants built
 on the runtime compose from, plus the conventions that keep a multi-pack
 assistant coherent — the layering model, the coordination style, the
@@ -16,7 +17,7 @@ products built on this library ship their own. [CONTRIBUTING.md](CONTRIBUTING.md
 is the canonical pack-author guide — the same bar every pack in this
 library meets, human-authored or otherwise.
 
-ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 19 packs plus a bridge pack (20 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
+ActiveGraph is a reactive object-graph runtime for Python. You define objects (typed nodes), relations (typed edges), behaviors (reactive handlers that fire on mutation), and tools (callable capabilities). This repo shows how to compose 37 packs plus a bridge pack (38 entry points) into a coherent, auditable assistant architecture — no central orchestrator, no monolithic pipeline. Coordination is *emergent*: one pack writes an object, that write is an event, and the event triggers a behavior in another pack.
 
 > **New here? Read [docs/concepts.md](docs/concepts.md) first** — it explains the
 > event-sourced graph model and the central idea of this repo: the split between the
@@ -35,11 +36,11 @@ For embedding packs in your own code, running fixtures, or the standalone demo
 server. No Node required.
 
 ```bash
-pip install -e ".[dev]"          # activegraph + all packs (editable install)
+pip install -e ".[dev]"          # activegraph (from PyPI) + all packs (editable install)
 
-# Until activegraph v1.9 is on PyPI, install the runtime from source.
-# Clone it as activegraph-src — a directory named activegraph in your
-# working directory would shadow the installed package:
+# Only if you need an unreleased runtime: install it from source. Clone it
+# as activegraph-src — a directory named activegraph in your working
+# directory would shadow the installed package:
 #   git clone https://github.com/yoheinakajima/activegraph activegraph-src
 #   pip install -e "./activegraph-src[llm]"
 
@@ -247,7 +248,7 @@ Demo Server (Python, port 7788)
        |
        v
 ActiveGraph Runtime
-  ├─ 16 packs loaded (15 + diligence_core_bridge)
+  ├─ 12 packs loaded (messaging-assistant bundle + MCP; evolution opt-in)
   ├─ SQLite event log     →  data/activegraph_demo.sqlite
   └─ SQLite memory store  →  data/activegraph_memory.sqlite
 ```
