@@ -508,6 +508,8 @@ def commit_setup_draft_fn(
             "packing": payload.get("packing") or {},
             "research": payload.get("research_coverage") or [],
             "comprehension": payload.get("comprehension_coverage") or [],
+            "provenance": "model_assisted",
+            "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
         },
     )
 
@@ -748,6 +750,86 @@ def commit_setup_draft_fn(
 
 # ---- the zero-key floor -----------------------------------------------------
 
+def draft_source_coverage_fn(reader, *, subject_ref: str = "owner") -> dict[str, Any]:
+    """What fed (or failed to feed) this draft — per source: contributed,
+    running, failed, or skipped, with the failure preserved. The owner sees
+    honest coverage, never a pretend-complete draft (hardening Gate 3)."""
+    def _row(status: str, detail: str = "", count: int = 0) -> dict[str, Any]:
+        row: dict[str, Any] = {"status": status}
+        if detail:
+            row["detail"] = detail[:200]
+        if count:
+            row["count"] = count
+        return row
+
+    facts = [
+        obj for obj in reader.objects(type="subject_fact")
+        if obj.data.get("subject_ref") == subject_ref
+        and obj.data.get("status") == "promoted"
+    ]
+    coverage: dict[str, Any] = {
+        "identity_seed": _row("contributed" if facts else "skipped",
+                              count=len(facts)),
+    }
+
+    research_plans = [
+        obj for obj in reader.objects(type="connector_ingestion_plan")
+        if obj.data.get("service") == "web_research"
+    ]
+    research_runs = [
+        obj for obj in reader.objects(type="web_research_run")
+    ]
+    findings = sum(len(run.data.get("findings") or []) for run in research_runs)
+    if not research_plans:
+        coverage["research"] = _row("skipped")
+    elif any(p.data.get("status") in ("approved", "executing") for p in research_plans):
+        coverage["research"] = _row("running")
+    elif research_runs and all(
+        run.data.get("status") == "failed" for run in research_runs
+    ):
+        coverage["research"] = _row(
+            "failed", detail=str(research_runs[-1].data.get("error") or
+                                 research_runs[-1].data.get("stop_reason") or ""),
+        )
+    elif any(p.data.get("status") == "fulfilled" for p in research_plans):
+        coverage["research"] = _row("contributed" if findings else "empty",
+                                    count=findings)
+    else:
+        coverage["research"] = _row("skipped")
+
+    comp_requests = list(reader.objects(type="comprehension_request"))
+    leaves = len(list(reader.objects(type="source_item_summary")))
+    if not comp_requests:
+        coverage["sent_mail"] = _row("skipped")
+    elif any(r.data.get("status") in ("proposed", "reducing", "aggregating")
+             for r in comp_requests):
+        coverage["sent_mail"] = _row("running", count=leaves)
+    elif any(r.data.get("status") == "completed" for r in comp_requests):
+        coverage["sent_mail"] = _row("contributed", count=leaves)
+    else:
+        coverage["sent_mail"] = _row(
+            "failed", detail=str(comp_requests[-1].data.get("error") or ""),
+        )
+    return coverage
+
+
+def _failed_draft_pass(reader) -> Optional[dict[str, Any]]:
+    """The most recent failed keyed strong pass, if one preceded this
+    composition — the fallback keeps the original failure inspectable."""
+    failed = [
+        obj for obj in reader.objects(type="subject_synthesis_request")
+        if (obj.data.get("metadata") or {}).get("kind") == "setup_draft"
+        and obj.data.get("status") == "failed"
+    ]
+    if not failed:
+        return None
+    last = failed[-1]
+    return {
+        "error": str(last.data.get("error") or "")[:200],
+        "request_ref": last.id,
+    }
+
+
 def compose_deterministic_draft_fn(
     graph, *, subject_ref: str = "owner", reader=None
 ) -> dict[str, Any]:
@@ -757,9 +839,16 @@ def compose_deterministic_draft_fn(
     from packs.subject_profile.projection import classify_subject_attribute
 
     view = reader or graph
+    failed_pass = _failed_draft_pass(view)
+    provenance = "deterministic_fallback" if failed_pass else "deterministic"
     draft = _mint_draft(
         graph, subject_ref=subject_ref, source="deterministic", run_id=None,
-        included_refs=[], coverage={"composer": "deterministic_floor"},
+        included_refs=[], coverage={
+            "composer": "deterministic_floor",
+            "provenance": provenance,
+            "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
+            **({"fallback_from": failed_pass} if failed_pass else {}),
+        },
     )
     counts = {section: 0 for section in DRAFT_SECTIONS}
 

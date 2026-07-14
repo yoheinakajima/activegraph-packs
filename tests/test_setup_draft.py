@@ -513,3 +513,43 @@ def test_synthesis_citing_nothing_packed_fails_the_request(runtime):
     assert result["ok"] is False
     assert "synthesis_cited_nothing_packed" in str(result["error"])
     assert current_setup_draft_fn(graph) is None
+
+
+def test_draft_provenance_distinguishes_fallback_from_normal_zero_key(runtime):
+    """Gate 3 honesty: normal zero-key success, model-assisted success, and
+    keyed-failure-then-deterministic-fallback are three DIFFERENT states —
+    the fallback keeps the original failure inspectable."""
+    graph = runtime.graph
+    evidence = _owner_evidence(graph, runtime)
+    _fact(graph, evidence, "role", "General Partner")
+    graph.add_object("project_candidate", {
+        "candidate_identity": "p-atlas", "name": "Atlas", "kind": "fact_seeded",
+        "score_milli": 900, "sources": [evidence.id],
+        "rationale": "confirmed fact names it", "status": "proposed",
+        "description": "", "project_id": None, "metadata": {},
+    })
+
+    # Normal zero-key composition: plain deterministic provenance.
+    composed = compose_deterministic_draft_fn(graph)
+    assert composed["ok"] is True
+    draft = current_setup_draft_fn(graph)
+    assert draft.data["coverage"]["provenance"] == "deterministic"
+    assert "fallback_from" not in draft.data["coverage"]
+    sources = draft.data["coverage"]["sources"]
+    assert sources["identity_seed"]["status"] == "contributed"
+    assert sources["research"]["status"] == "skipped"
+    assert sources["sent_mail"]["status"] == "skipped"
+
+    # A failed keyed pass first: the SAME composer marks the degraded path
+    # and carries the original provider failure.
+    request = request_setup_draft_fn(graph)
+    graph.patch_object(request["request_id"], {
+        "status": "failed", "error": "empty_synthesis_response length=0",
+    })
+    composed = compose_deterministic_draft_fn(graph)
+    assert composed["ok"] is True
+    fallback_draft = current_setup_draft_fn(graph)
+    coverage = fallback_draft.data["coverage"]
+    assert coverage["provenance"] == "deterministic_fallback"
+    assert "empty_synthesis_response" in coverage["fallback_from"]["error"]
+    assert coverage["fallback_from"]["request_ref"] == request["request_id"]
