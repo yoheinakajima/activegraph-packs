@@ -2,16 +2,18 @@
 
 from activegraph.packs import Pack
 
+from .affordance import register_web_research_affordance
 from .object_types import OBJECT_TYPES, RELATION_TYPES
 from .plan import register_web_research
 from .settings import WebResearchSettings
 
 register_web_research()
+register_web_research_affordance()
 
 # requires=["tool_gateway", "connector_control", "subject_profile", "activity_normalizer"]
 pack = Pack(
     name="web_research",
-    version="0.4.0",
+    version="0.5.0",
     description=(
         "Owner-consented adaptive research campaigns: seed queries derive "
         "only from confirmed subject facts and run as strikeable surfaces of "

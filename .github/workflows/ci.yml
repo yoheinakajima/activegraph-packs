@@ -120,6 +120,15 @@ jobs:
       - name: evolution fixtures
         run: python packs/evolution/fixtures/run_fixtures.py
 
+      - name: subject_synthesis fixtures
+        run: python packs/subject_synthesis/fixtures/run_fixtures.py
+
+      - name: web_research fixtures
+        run: python packs/web_research/fixtures/run_fixtures.py
+
+      - name: projects fixtures
+        run: python packs/projects/fixtures/run_fixtures.py
+
       # ── Cross-pack integration suites ───────────────────────────────────────
 
       - name: Cross-pack integration (Tool Gateway → Core → Memory Gateway)

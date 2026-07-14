@@ -268,6 +268,48 @@ def record_follow_up_queries_fn(
     return {"recorded": recorded, "paused": paused, "rejected": rejected}
 
 
+def record_coordinator_query_fn(
+    graph, *, text: str, expected_gain: str = "", reader=None,
+) -> dict[str, Any]:
+    """Record ONE coordinator-proposed query into the running campaign's
+    frontier (ADR 0047 §2). Pre-registration rules are identical to model
+    follow-ups: the scope gate classifies it, an amendment pauses it, and
+    only an approved row ever executes — on the next pump round, never here.
+    """
+    view = reader or graph
+    run = next(
+        (obj for obj in view.objects(type="web_research_run")
+         if obj.data.get("status") == "running"),
+        None,
+    )
+    if run is None:
+        return {"ok": False, "reason": "no_running_campaign"}
+    data = run.data or {}
+    plan = _plan_for_run(view, data)
+    if plan is None:
+        return {"ok": False, "reason": "plan_not_found"}
+    config = campaign_config(plan.data or {})
+    executed = sum(
+        1 for obj in _frontier_rows(view, str(data.get("plan_identity") or ""))
+        if obj.data.get("status") in ("executed", "no_results", "failed")
+    )
+    counts = record_follow_up_queries_fn(
+        graph, plan, run.id,
+        suggestions=[{
+            "text": text,
+            "expected_gain": expected_gain or "coordinator-proposed deepening",
+        }],
+        next_round=int(data.get("rounds_executed") or 0) + 1,
+        config={**config, "max_follow_ups_per_round": 1, "auto_follow_up": True},
+        remaining_query_budget=max(0, config["max_total_queries"] - executed),
+    )
+    if counts["rejected"]:
+        return {"ok": False, "reason": "scope_rejected", **counts}
+    if counts["paused"]:
+        return {"ok": True, "paused_as_amendment": True, **counts}
+    return {"ok": counts["recorded"] > 0, **counts}
+
+
 def review_scope_amendment_fn(
     graph, amendment_ref: str, verdict: str, *, actor: str = "owner", reader=None
 ) -> dict[str, Any]:
@@ -773,6 +815,7 @@ def _settle_campaign(
 __all__ = [
     "STOP_REASONS",
     "begin_research_round_fn",
+    "record_coordinator_query_fn",
     "campaign_config",
     "commit_research_round_fn",
     "pending_research_rounds_fn",

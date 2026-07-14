@@ -315,15 +315,16 @@ def perform_comprehension_batch(payload: dict[str, Any]) -> dict[str, Any]:
     from packs.llm_provider import (
         response_text,
         configured_llm_provider, get_llm_provider, parse_json_payload,
-        resolve_model_for_role,
+        resolve_role,
     )
 
     resolved = configured_llm_provider()
     if not resolved.configured:
-        return {"ok": False, "rows": [], "model": None,
+        return {"ok": False, "rows": [], "model": None, "model_role": "fast",
                 "error": "comprehension_provider_unavailable"}
     provider = get_llm_provider()
-    model = resolve_model_for_role("comprehension_fast", resolved)
+    role = resolve_role("fast", resolved)
+    model = role["model"]
     from activegraph.llm import LLMMessage
 
     system, user = _leaf_prompt(payload)
@@ -339,7 +340,7 @@ def perform_comprehension_batch(payload: dict[str, Any]) -> dict[str, Any]:
             timeout_seconds=float(payload.get("timeout_seconds") or 120.0),
         )
     except Exception as exc:
-        return {"ok": False, "rows": [], "model": model,
+        return {"ok": False, "rows": [], "model": model, "model_role": "fast",
                 "error": f"{type(exc).__name__}: {exc}"[:300]}
     text = response_text(response)
     parsed = parse_json_payload(text) or {}
@@ -348,6 +349,7 @@ def perform_comprehension_batch(payload: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "rows": list(parsed.get("rows") or []),
         "model": model,
+        "model_role": "fast",
         "provider_kind": resolved.provider,
         "response_sample": text[:400],
         "response_length": len(text),
@@ -450,6 +452,7 @@ def commit_comprehension_batch_fn(
                 "batch_index": batch_index,
                 "fields": fields,
                 "model": outcome.get("model"),
+                "model_role": str(outcome.get("model_role") or "fast"),
                 "injection_flags": flags,
                 "metadata": {"subject": source_row.get("subject")},
             })
@@ -619,15 +622,17 @@ def perform_comprehension_aggregation(payload: dict[str, Any]) -> dict[str, Any]
     bounded aggregate summary."""
     from packs.llm_provider import (
         configured_llm_provider, get_llm_provider, parse_json_payload,
-        resolve_model_for_role, response_text,
+        resolve_role, response_text,
     )
 
     resolved = configured_llm_provider()
     if not resolved.configured:
-        return {"ok": False, "model": None,
+        return {"ok": False, "model": None, "model_role": "balanced",
                 "error": "comprehension_provider_unavailable"}
     provider = get_llm_provider()
-    model = resolve_model_for_role("comprehension_fast", resolved)
+    # Aggregation is alignment-shaped work: the balanced role (ADR 0047 §6).
+    role = resolve_role("balanced", resolved)
+    model = role["model"]
     from activegraph.llm import LLMMessage
 
     system = (
@@ -658,12 +663,13 @@ def perform_comprehension_aggregation(payload: dict[str, Any]) -> dict[str, Any]
             timeout_seconds=float(payload.get("timeout_seconds") or 120.0),
         )
     except Exception as exc:
-        return {"ok": False, "model": model,
+        return {"ok": False, "model": model, "model_role": "balanced",
                 "error": f"{type(exc).__name__}: {exc}"[:300]}
     text = response_text(response)
     parsed = parse_json_payload(text) or {}
     return {
-        "ok": True, "model": model,
+        "ok": True, "model": model, "model_role": "balanced",
+        "aliased_to": role.get("aliased_to"),
         "summary": str(parsed.get("summary") or "")[:2_000],
         "key_people": [str(p)[:120] for p in (parsed.get("key_people") or [])[:8]],
         "key_decisions": [str(d)[:200] for d in (parsed.get("key_decisions") or [])[:8]],
@@ -717,6 +723,7 @@ def commit_comprehension_aggregation_fn(
             "leaf_refs": leaf_refs,
             "evidence_refs": evidence_refs,
             "model": outcome.get("model"),
+            "model_role": str(outcome.get("model_role") or "balanced"),
             "injection_flags": sorted(set(flags)),
             "metadata": {},
         })

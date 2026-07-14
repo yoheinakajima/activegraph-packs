@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
 from pydantic import BaseModel, Field
 
@@ -64,17 +64,33 @@ class LLMProviderSettings(BaseModel):
             "The key value itself never passes through packs code."
         ),
     )
-    # Comprehension model roles (ADR 0045 §5): configuration, never hardcoded
-    # call sites. The fast role serves batched leaf reductions; the reasoning
-    # role serves aggregate/synthesis passes. None falls back per
+    # Logical model roles (ADR 0045 §5 as amended by ADR 0047 §6):
+    # configuration, never hardcoded call sites. reasoning/coordinator serves
+    # strategy, tool choice, ambiguity, and cross-source synthesis; balanced
+    # serves aggregation, alignment, and contradiction/gap detection; fast
+    # serves high-volume leaf reduction and distillation. None falls back per
     # ``resolve_model_for_role``.
+    reasoning_model: Optional[str] = Field(
+        default=None,
+        description="Model for the reasoning/coordinator role.",
+    )
+    balanced_model: Optional[str] = Field(
+        default=None,
+        description="Model for the balanced aggregation/alignment role.",
+    )
+    fast_model: Optional[str] = Field(
+        default=None,
+        description="Model for the fast high-volume reduction role.",
+    )
+    # Pre-0047 role fields: still honored when the canonical field is unset,
+    # so existing hosts and stores keep their configuration.
     comprehension_fast_model: Optional[str] = Field(
         default=None,
-        description="Model for batched leaf reductions (cheap, structured).",
+        description="Legacy alias for fast_model (batched leaf reductions).",
     )
     comprehension_reasoning_model: Optional[str] = Field(
         default=None,
-        description="Model for aggregate and cross-source synthesis passes.",
+        description="Legacy alias for reasoning_model (synthesis passes).",
     )
 
 
@@ -157,14 +173,98 @@ def default_model_for(resolved: ResolvedLLMProvider) -> Optional[str]:
     return getattr(provider, "default_model", None)
 
 
-#: Known-good fast-tier defaults per provider for the comprehension fast
-#: role. Only providers with a well-known small model are listed; anything
-#: else falls back to the provider's default model (honest, if not cheap).
+#: Known-good tier defaults per provider. Model names here are configuration
+#: defaults, never doctrine (ADR 0047 §6): an explicit role setting always
+#: wins, and providers without a listed tier fall back honestly.
 FAST_MODEL_DEFAULTS: dict[str, str] = {
     "anthropic": "claude-haiku-4-5",
 }
+BALANCED_MODEL_DEFAULTS: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-5",
+}
 
-MODEL_ROLES = ("comprehension_fast", "comprehension_reasoning")
+#: The three logical roles (ADR 0047 §6). Legacy names keep resolving so
+#: pre-0047 call sites and persisted stores stay valid.
+MODEL_ROLES = ("reasoning", "balanced", "fast")
+LEGACY_MODEL_ROLES = {
+    "comprehension_fast": "fast",
+    "comprehension_reasoning": "reasoning",
+}
+
+#: Settings-field fallback order per canonical role: the first configured
+#: field wins (canonical field first, then its legacy alias).
+_ROLE_SETTING_FIELDS = {
+    "reasoning": ("reasoning_model", "comprehension_reasoning_model"),
+    "balanced": ("balanced_model",),
+    "fast": ("fast_model", "comprehension_fast_model"),
+}
+
+
+def canonical_model_role(role: str) -> str:
+    """Map a role name (canonical or legacy) to its canonical role."""
+    canonical = LEGACY_MODEL_ROLES.get(role, role)
+    if canonical not in MODEL_ROLES:
+        raise ValueError(
+            f"unknown model role {role!r}; expected one of {MODEL_ROLES} "
+            f"(legacy: {tuple(LEGACY_MODEL_ROLES)})"
+        )
+    return canonical
+
+
+def resolve_role(
+    role: str,
+    resolved: Optional[ResolvedLLMProvider] = None,
+    settings: Optional[LLMProviderSettings] = None,
+) -> dict[str, Any]:
+    """Resolve a logical role to its provider/model verdict (ADR 0047 §6).
+
+    Returns ``{"role", "provider", "model", "source", "aliased_to"}`` —
+    the record every call site should attach to its run/receipt so which
+    model actually served a role stays inspectable. ``aliased_to`` names the
+    tier a balanced role borrowed when the provider has no middle default.
+    Zero-key resolves to ``model=None`` (the deterministic floor).
+    """
+    canonical = canonical_model_role(role)
+    if resolved is None:
+        resolved = configured_llm_provider()
+    verdict: dict[str, Any] = {
+        "role": canonical,
+        "provider": None,
+        "model": None,
+        "source": "none",
+        "aliased_to": None,
+    }
+    if resolved is None or resolved.provider is None:
+        return verdict
+    verdict["provider"] = resolved.provider
+    settings = settings or _CONFIGURED_SETTINGS or LLMProviderSettings()
+    for field in _ROLE_SETTING_FIELDS[canonical]:
+        configured = getattr(settings, field, None)
+        if configured:
+            verdict["model"] = str(configured)
+            verdict["source"] = f"setting:{field}"
+            return verdict
+    tier_defaults = {
+        "fast": FAST_MODEL_DEFAULTS,
+        "balanced": BALANCED_MODEL_DEFAULTS,
+        "reasoning": {},
+    }[canonical]
+    tier_model = tier_defaults.get(resolved.provider)
+    if tier_model:
+        verdict["model"] = tier_model
+        verdict["source"] = "tier_default"
+        return verdict
+    if canonical == "balanced":
+        # No configured or known middle tier: balanced may alias the
+        # reasoning tier, recorded explicitly (ADR 0047 §6).
+        reasoning = resolve_role("reasoning", resolved, settings)
+        verdict["model"] = reasoning["model"]
+        verdict["source"] = reasoning["source"]
+        verdict["aliased_to"] = "reasoning"
+        return verdict
+    verdict["model"] = default_model_for(resolved)
+    verdict["source"] = "provider_default"
+    return verdict
 
 
 def resolve_model_for_role(
@@ -172,28 +272,8 @@ def resolve_model_for_role(
     resolved: Optional[ResolvedLLMProvider] = None,
     settings: Optional[LLMProviderSettings] = None,
 ) -> Optional[str]:
-    """Resolve a model role to a concrete model id (ADR 0045 §5).
-
-    Order: the configured role setting → the provider's fast-tier default
-    (fast role only) → the provider's default model. Returns None zero-key.
-    Every caller records the resolved value on its run/receipt so which
-    model actually served a role is always inspectable.
-    """
-    if role not in MODEL_ROLES:
-        raise ValueError(f"unknown model role {role!r}; expected one of {MODEL_ROLES}")
-    if resolved is None:
-        resolved = configured_llm_provider()
-    if resolved is None or resolved.provider is None:
-        return None
-    settings = settings or _CONFIGURED_SETTINGS or LLMProviderSettings()
-    configured = getattr(settings, f"{role}_model", None)
-    if configured:
-        return str(configured)
-    if role == "comprehension_fast":
-        fast = FAST_MODEL_DEFAULTS.get(resolved.provider)
-        if fast:
-            return fast
-    return default_model_for(resolved)
+    """The model id for a logical role — thin accessor over ``resolve_role``."""
+    return resolve_role(role, resolved, settings)["model"]
 
 
 # ------------------------------------------------------- process registry
@@ -318,7 +398,14 @@ def parse_json_payload(text: str) -> Optional[dict]:
 
 
 __all__ = [
+    "BALANCED_MODEL_DEFAULTS",
+    "FAST_MODEL_DEFAULTS",
+    "LEGACY_MODEL_ROLES",
+    "MODEL_ROLES",
     "PROVIDER_KEY_ENVS",
+    "canonical_model_role",
+    "resolve_model_for_role",
+    "resolve_role",
     "response_text",
     "response_finish_reason",
     "LLMProviderSettings",

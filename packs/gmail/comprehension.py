@@ -259,15 +259,113 @@ GMAIL_SENT_RECIPE: dict[str, Any] = {
 }
 
 
+def select_sent_drill_down_excerpts(reader, bounded: dict[str, Any]) -> dict[str, Any]:
+    """The drill-down selector (ADR 0047 §2): a small recorded set of
+    owner-authored sent-message excerpts. Runs over the same hygiene-clean
+    conversation view as the recipe — the reasoning model never receives a
+    raw mailbox, only these bounded, enumerated excerpts."""
+    selection = select_sent_comprehension_items(reader, {
+        "source_surface_id": bounded.get("source_surface_id") or "",
+        "max_items": DEFAULT_SENT_COUNT,
+    })
+    wanted = {str(r) for r in bounded.get("item_refs") or []}
+    rows = []
+    excluded = dict(selection.get("excluded") or {})
+    for item in selection.get("items") or []:
+        if wanted and str(item.get("item_ref")) not in wanted:
+            continue
+        rows.append({
+            "item_ref": item.get("item_ref"),
+            "evidence_refs": list(item.get("evidence_refs") or []),
+            "excerpt": str(item.get("text") or "")[
+                : int(bounded.get("max_excerpt_chars") or 500)
+            ],
+        })
+        if len(rows) >= int(bounded.get("max_items") or 1):
+            break
+    remaining = len(selection.get("items") or []) - len(rows)
+    if remaining > 0:
+        excluded["beyond_drill_bounds"] = remaining
+    return {"rows": rows, "excluded": excluded}
+
+
+def _gmail_understanding_available(reader) -> dict[str, Any]:
+    """The affordance is available once sent mail is acquired and studyable."""
+    backfills = [
+        obj for obj in reader.objects(type="connector_ingestion_plan")
+        if obj.data.get("service") == "gmail"
+        and obj.data.get("status") == "fulfilled"
+    ]
+    if backfills:
+        return {"available": True, "reason": ""}
+    return {"available": False, "reason": "no fulfilled gmail acquisition yet"}
+
+
+GMAIL_UNDERSTANDING_AFFORDANCE_ID = "gmail_sent_understanding"
+
+#: Gmail's understanding affordance (ADR 0047 §2): the reusable declaration
+#: by which sent mail joins a governed campaign. Acquisition and selection
+#: semantics stay in this pack; reduction machinery stays in
+#: subject_synthesis; the coordinator discovers the source through this.
+GMAIL_UNDERSTANDING_AFFORDANCE: dict[str, Any] = {
+    "affordance_id": GMAIL_UNDERSTANDING_AFFORDANCE_ID,
+    "version": "0.1.0",
+    "service": "gmail",
+    "family": "conversation",
+    "teaches": list(GMAIL_SENT_RECIPE["teaches"]),
+    "capabilities": [
+        {
+            "capability": "messages.fetch",
+            "action_class": "R1",
+            "scopes": ["in:sent"],
+        },
+    ],
+    "schemas": {
+        "input": {"source_surface_id": "str", "max_items": "int"},
+        "output": {"leaf_schema": list(GMAIL_SENT_RECIPE["leaf_schema"])},
+        "evidence_ref": "conversation_message evidence id",
+    },
+    "privacy": {
+        **GMAIL_SENT_RECIPE["privacy"],
+        # Sent-mail text may reach the configured model provider under an
+        # approved comprehension plan; it never seeds outward queries.
+        "outward_disclosure": "provider_only",
+    },
+    "reductions": {"recipe_id": SENT_COMPREHENSION_RECIPE_ID},
+    "drill_down": {
+        "allowed": True,
+        "max_items": 6,
+        "max_excerpt_chars": 2_000,
+        "max_context_tokens": 6_000,
+        "select": select_sent_drill_down_excerpts,
+    },
+    "bounds": {
+        "max_items": DEFAULT_SENT_COUNT,
+        "max_seconds": 1_800,
+        "max_tokens": 120_000,
+        "max_cost_milli": 2_000,
+    },
+    "moves": ["inspect_source", "reduce_fast", "drill_down"],
+    "destinations": list(GMAIL_SENT_RECIPE["destinations"]),
+    "coverage_required": True,
+    "available": _gmail_understanding_available,
+}
+
+
 def register_gmail_comprehension() -> None:
+    from packs.subject_synthesis.affordance import register_understanding_affordance
+
     register_comprehension_recipe(GMAIL_SENT_RECIPE)
+    register_understanding_affordance(GMAIL_UNDERSTANDING_AFFORDANCE)
 
 
 __all__ = [
     "DEFAULT_SENT_COUNT",
     "GMAIL_SENT_RECIPE",
-    "SENT_COMPREHENSION_RECIPE_ID",
+    "GMAIL_UNDERSTANDING_AFFORDANCE",
+    "GMAIL_UNDERSTANDING_AFFORDANCE_ID",
     "propose_gmail_sent_comprehension_plan_fn",
     "register_gmail_comprehension",
     "select_sent_comprehension_items",
+    "select_sent_drill_down_excerpts",
 ]

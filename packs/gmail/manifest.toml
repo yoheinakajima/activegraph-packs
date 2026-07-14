@@ -3,7 +3,7 @@
 
 [pack]
 name = "gmail"
-version = "0.5.0"
+version = "0.6.0"
 description = "Canonical Gmail service connector: budgeted exploration into a service/account profile, bounded replayable backfill, history-watermark polling, provider-neutral evidence, local conversation-family mapping with deterministic hygiene, local draft candidates, reversible draft writes, and R3-forever sends through an injected route adapter (Composio first)."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:bddb4d8de43692d595eb1404bae829748662195061722c1fce33d648bbb95551"
+content_hash = "sha256:767d0d3cae59237cf9eaecf8025aab52c2b2e66eb3dadffce9f64e90a1074cda"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

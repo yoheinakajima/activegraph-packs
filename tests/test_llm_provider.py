@@ -241,3 +241,135 @@ def test_key_material_never_appears_in_logs_errors_or_doctor_output(
     for surface in surfaces:
         assert FAKE_ANTHROPIC_KEY not in surface
     assert "ANTHROPIC_API_KEY" in str(excinfo.value)
+
+
+# ---- three logical model roles (ADR 0047 §6) --------------------------------
+#
+# reasoning/coordinator, balanced, and fast are provider-neutral logical
+# roles. Resolution is configuration; every call site records the logical
+# role plus the resolved provider/model. Legacy comprehension_* role names
+# keep resolving so pre-0047 callers and stores stay valid.
+
+def _roles():
+    from packs.llm_provider import resolve_model_for_role, resolve_role
+
+    return resolve_model_for_role, resolve_role
+
+
+def test_three_roles_resolve_with_anthropic_defaults(monkeypatch):
+    resolve_model_for_role, resolve_role = _roles()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_ANTHROPIC_KEY)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    clear_llm_provider()
+    try:
+        resolved = configure_llm_provider()
+        fast = resolve_role("fast", resolved)
+        balanced = resolve_role("balanced", resolved)
+        reasoning = resolve_role("reasoning", resolved)
+        # The fast tier is genuinely cheaper than the reasoning tier by
+        # default, and each verdict names its logical role for receipts.
+        assert fast["role"] == "fast" and fast["model"]
+        assert reasoning["role"] == "reasoning" and reasoning["model"]
+        assert balanced["role"] == "balanced" and balanced["model"]
+        assert fast["model"] != reasoning["model"]
+        assert fast["provider"] == "anthropic"
+        # resolve_model_for_role stays the thin accessor over the same verdict.
+        assert resolve_model_for_role("fast", resolved) == fast["model"]
+    finally:
+        clear_llm_provider()
+
+
+def test_role_settings_override_defaults(monkeypatch):
+    _, resolve_role = _roles()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_ANTHROPIC_KEY)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    clear_llm_provider()
+    try:
+        settings = LLMProviderSettings(
+            reasoning_model="configured-reasoning",
+            balanced_model="configured-balanced",
+            fast_model="configured-fast",
+        )
+        resolved = configure_llm_provider(settings)
+        assert resolve_role("reasoning", resolved)["model"] == "configured-reasoning"
+        assert resolve_role("balanced", resolved)["model"] == "configured-balanced"
+        assert resolve_role("fast", resolved)["model"] == "configured-fast"
+    finally:
+        clear_llm_provider()
+
+
+def test_balanced_may_alias_another_tier_but_records_it(monkeypatch):
+    """A provider without a configured middle tier may resolve balanced to
+    another tier's model, but the verdict still names the balanced role and
+    the aliasing is explicit (ADR 0047 §6)."""
+    _, resolve_role = _roles()
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", FAKE_OPENAI_KEY)
+    clear_llm_provider()
+    try:
+        resolved = configure_llm_provider()
+        balanced = resolve_role("balanced", resolved)
+        assert balanced["role"] == "balanced"
+        assert balanced["model"]  # resolves even with no explicit middle tier
+        assert balanced.get("aliased_to") in (None, "reasoning", "fast")
+    finally:
+        clear_llm_provider()
+
+
+def test_legacy_comprehension_role_names_still_resolve(monkeypatch):
+    resolve_model_for_role, resolve_role = _roles()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_ANTHROPIC_KEY)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    clear_llm_provider()
+    try:
+        resolved = configure_llm_provider()
+        assert (
+            resolve_model_for_role("comprehension_fast", resolved)
+            == resolve_model_for_role("fast", resolved)
+        )
+        assert (
+            resolve_model_for_role("comprehension_reasoning", resolved)
+            == resolve_model_for_role("reasoning", resolved)
+        )
+        # The verdict records the canonical role, not the legacy alias.
+        assert resolve_role("comprehension_fast", resolved)["role"] == "fast"
+    finally:
+        clear_llm_provider()
+
+
+def test_legacy_settings_fields_still_configure_their_roles(monkeypatch):
+    _, resolve_role = _roles()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_ANTHROPIC_KEY)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    clear_llm_provider()
+    try:
+        settings = LLMProviderSettings(
+            comprehension_fast_model="legacy-fast",
+            comprehension_reasoning_model="legacy-reasoning",
+        )
+        resolved = configure_llm_provider(settings)
+        assert resolve_role("fast", resolved)["model"] == "legacy-fast"
+        assert resolve_role("reasoning", resolved)["model"] == "legacy-reasoning"
+    finally:
+        clear_llm_provider()
+
+
+def test_roles_resolve_to_none_zero_key(monkeypatch):
+    resolve_model_for_role, resolve_role = _roles()
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    clear_llm_provider()
+    try:
+        resolved = configure_llm_provider()
+        for role in ("reasoning", "balanced", "fast"):
+            assert resolve_model_for_role(role, resolved) is None
+            verdict = resolve_role(role, resolved)
+            assert verdict["model"] is None and verdict["provider"] is None
+    finally:
+        clear_llm_provider()
+
+
+def test_unknown_role_is_rejected():
+    resolve_model_for_role, _ = _roles()
+    with pytest.raises(ValueError, match="unknown model role"):
+        resolve_model_for_role("clever")

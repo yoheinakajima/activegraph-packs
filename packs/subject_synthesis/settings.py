@@ -22,3 +22,14 @@ class SubjectSynthesisSettings(BaseModel):
             "person", "role", "location", "handle", "url",
         ]
     )
+    # Campaign coordination defaults (ADR 0047 §1). Authoritative budgets a
+    # campaign opens with unless the host passes explicit ones; a move that
+    # would exceed them pauses as an amendment or is rejected.
+    campaign_max_moves: int = Field(default=24, ge=1, le=200)
+    campaign_max_tokens: int = Field(default=200_000, ge=1_000)
+    campaign_max_cost_milli: int = Field(default=5_000, ge=0)
+    campaign_max_seconds: float = Field(default=3_600.0, gt=0)
+    coordinator_timeout_seconds: float = Field(default=120.0, gt=0)
+    drill_down_max_items: int = Field(default=6, ge=1, le=24)
+    drill_down_max_excerpt_chars: int = Field(default=2_000, ge=100)
+    drill_down_max_context_tokens: int = Field(default=6_000, ge=500)

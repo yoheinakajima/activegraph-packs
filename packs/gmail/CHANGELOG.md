@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0 — the sent-mail understanding affordance (2026-07-14)
+
+- Declare `gmail_sent_understanding` (ADR 0047 §2): the typed affordance by
+  which sent mail joins a governed comprehension campaign — teachable
+  signals, `messages.fetch` capability with the `in:sent` scope, privacy and
+  provider-only disclosure rules, the `gmail_sent_v1` recipe as its
+  reduction, and a bounded drill-down selector
+  (`select_sent_drill_down_excerpts`) over the hygiene-clean authored view.
+  Acquisition semantics stay in this pack; the coordinator discovers the
+  source through the declaration, never through a bespoke wizard branch.
+
 ## 0.5.0 — sent-mail comprehension (2026-07-13)
 
 - Declare the `gmail_sent_v1` comprehension recipe (ADR 0045): Gmail owns

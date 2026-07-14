@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 — the governed agentic loop (2026-07-14)
+
+- Understanding affordances (ADR 0047 §2): the typed registry by which any
+  source joins a comprehension campaign — teaches, capabilities/scopes,
+  schemas, privacy/outward-disclosure, reductions, drill-down permission
+  with bounds and a source-owned selector, budgets, destinations, and
+  coverage requirements. Validation runs at registration.
+- Source lenses and one versioned working understanding (ADR 0047 §3–4):
+  every contribution separates `support_refs` from `context_refs`; borrowed
+  context never corroborates; entries carry authority classes
+  (owner_confirmed / hypothesis / unresolved / denied); material changes
+  schedule targeted, version-pinned reinterpretation — never a global rerun.
+- The dynamic coordinator (ADR 0047 §1, §5): typed move grammar
+  (inspect_source / outward_query / reduce_fast / drill_down /
+  align_entities / ask_owner / propose_amendment / synthesize / stop), a
+  deterministic host validator over consent, plan versions, scope, action
+  class, privacy authority, provider support, budgets, and owner-decision
+  boundaries; a zero-key deterministic proposer preserving today's
+  lifecycle; the reasoning-role model proposer on the prepare/perform/commit
+  seam; owner questions that pause and resume the campaign; and bounded,
+  fully-recorded evidence drill-downs whose uncited findings are dropped.
+- Three logical model roles (ADR 0047 §6) recorded on every call:
+  reasoning/coordinator, balanced (aggregation moved here from fast), fast.
+
 ## 0.2.0 — staged comprehension and the setup draft (2026-07-13)
 
 - Connector comprehension recipes (ADR 0045 §3–4): a connector participates
