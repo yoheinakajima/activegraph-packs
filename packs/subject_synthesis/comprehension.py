@@ -417,6 +417,10 @@ def commit_comprehension_batch_fn(
     schema = list(recipe.get("leaf_schema") or LEAF_FIELDS)
     batch_index = int(payload.get("batch_index") or 0)
     counts = dict(data.get("counts") or {})
+    # Crash-recovery idempotency: batches commit in order, so a batch below
+    # the done watermark already landed (ADR 0045 §6).
+    if batch_index < int(counts.get("batches_done") or 0):
+        return {"ok": True, "already_committed": True, "batch_index": batch_index}
     coverage = dict(data.get("coverage") or {})
     metadata = dict(data.get("metadata") or {})
     payload_rows = {
@@ -682,6 +686,12 @@ def commit_comprehension_aggregation_fn(
     recipe = get_comprehension_recipe(str(data.get("recipe_id") or ""))
     group_key = str(payload.get("group_key") or "")
     counts = dict(data.get("counts") or {})
+    if any(
+        obj.data.get("request_id") == request.id
+        and obj.data.get("group_key") == group_key
+        for obj in graph.objects(type="comprehension_aggregate")
+    ):
+        return {"ok": True, "already_committed": True, "group_key": group_key}
     if outcome.get("ok"):
         from packs.tool_gateway.sanitizer import sanitize_output
         from packs.tool_gateway.untrusted import scan_for_injection

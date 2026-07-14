@@ -387,6 +387,7 @@ def begin_research_round_fn(graph, run_ref: str, *, reader=None) -> dict[str, An
         "ok": True,
         "run_ref": run.id,
         "payload": {
+            "round": int(data.get("rounds_executed") or 0) + 1,
             "queries": queries,
             "max_findings_per_query": config["max_findings_per_query"],
             "max_follow_ups": config["max_follow_ups_per_round"],
@@ -459,6 +460,15 @@ def commit_research_round_fn(
     plan_identity = str(plan_data.get("plan_identity") or "")
     config = campaign_config(plan_data)
     round_number = int(data.get("rounds_executed") or 0) + 1
+    # Crash-recovery idempotency: a re-run commit for a round that already
+    # landed must not double-append findings (ADR 0045 §6).
+    committed_rounds = {
+        int(row.get("round") or 0)
+        for row in (data.get("metadata") or {}).get("rounds") or []
+    }
+    payload_round = payload.get("round")
+    if payload_round is not None and int(payload_round) in committed_rounds:
+        return {"ok": True, "already_committed": True, "round": int(payload_round)}
 
     # Owner abandonment or supersession mid-campaign fails closed.
     plan_open = plan_data.get("status") in ("approved", "executing")
