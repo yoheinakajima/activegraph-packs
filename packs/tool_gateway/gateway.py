@@ -178,19 +178,35 @@ def decide_policy_detail(
 # pending instead of executing inline. Only env-credentialed, graph-free
 # capabilities qualify (the gateway injects neither credential nor graph on
 # the deferred path).
-_DEFERRED_CAPABILITIES: set[tuple[str, str]] = set()
+# Reference-counted: each pump-owning host registers on start and
+# unregisters ITS OWN registrations on stop, so one front stopping never
+# strips deferral from another live front in the same process.
+_DEFERRED_CAPABILITIES: dict[tuple[str, str], int] = {}
 
 
 def register_deferred_capability(provider_name: str, capability_name: str) -> None:
-    _DEFERRED_CAPABILITIES.add((str(provider_name), str(capability_name)))
+    key = (str(provider_name), str(capability_name))
+    _DEFERRED_CAPABILITIES[key] = _DEFERRED_CAPABILITIES.get(key, 0) + 1
+
+
+def unregister_deferred_capability(provider_name: str, capability_name: str) -> None:
+    key = (str(provider_name), str(capability_name))
+    count = _DEFERRED_CAPABILITIES.get(key, 0) - 1
+    if count > 0:
+        _DEFERRED_CAPABILITIES[key] = count
+    else:
+        _DEFERRED_CAPABILITIES.pop(key, None)
 
 
 def clear_deferred_capabilities() -> None:
+    """Test hygiene only — production hosts unregister what they registered."""
     _DEFERRED_CAPABILITIES.clear()
 
 
 def capability_execution_deferred(provider_name: str, capability_name: str) -> bool:
-    return (str(provider_name), str(capability_name)) in _DEFERRED_CAPABILITIES
+    return _DEFERRED_CAPABILITIES.get(
+        (str(provider_name), str(capability_name)), 0
+    ) > 0
 
 
 def pending_deferred_capability_calls_fn(reader) -> list[dict[str, str]]:

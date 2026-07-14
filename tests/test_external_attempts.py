@@ -293,3 +293,30 @@ def test_deferred_capability_stays_pending_and_delivers_identically():
         assert pending_deferred_capability_calls_fn(graph) == []
     finally:
         clear_deferred_capabilities()
+
+
+def test_deferred_registry_is_reference_counted_per_host():
+    """Two hosts in one process: one stopping must not strip deferral from
+    the other; the final unregister restores inline execution."""
+    from packs.tool_gateway.gateway import (
+        capability_execution_deferred,
+        clear_deferred_capabilities,
+        register_deferred_capability,
+        unregister_deferred_capability,
+    )
+
+    clear_deferred_capabilities()
+    try:
+        register_deferred_capability("gmail", "messages.fetch")   # host A
+        register_deferred_capability("gmail", "messages.fetch")   # host B
+        unregister_deferred_capability("gmail", "messages.fetch")  # A stops
+        assert capability_execution_deferred("gmail", "messages.fetch"), (
+            "host B's deferral survives host A's shutdown"
+        )
+        unregister_deferred_capability("gmail", "messages.fetch")  # B stops
+        assert not capability_execution_deferred("gmail", "messages.fetch")
+        # Extra unregisters are harmless (idempotent shutdown paths).
+        unregister_deferred_capability("gmail", "messages.fetch")
+        assert not capability_execution_deferred("gmail", "messages.fetch")
+    finally:
+        clear_deferred_capabilities()
