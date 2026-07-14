@@ -215,3 +215,81 @@ def test_conversation_native_contract_accepts_attention_refs():
         "total_count": 1,
     })
     assert validated["threads"][0]["attention_refs"] == ["person_email_abc123"]
+
+
+def test_deferred_capability_stays_pending_and_delivers_identically():
+    """Hardening round: a capability the host deferred is NEVER executed in
+    the engine drain — the approved call stays visible for the pump, and
+    deliver_capability_outcome commits the same result shape the inline
+    path produces."""
+    from packs.tool_gateway.gateway import (
+        capability_execution_deferred,
+        clear_deferred_capabilities,
+        deliver_capability_outcome,
+        pending_deferred_capability_calls_fn,
+        perform_capability_execution,
+        register_deferred_capability,
+    )
+    from packs.tool_gateway.settings import ToolGatewaySettings
+    from packs.tool_gateway.tools import register_local_capability
+
+    graph, runtime = _graph()
+    from packs.tool_gateway import pack as gateway_pack
+
+    runtime.load_pack(gateway_pack)
+    runtime.run_until_idle()
+
+    calls = []
+
+    def _fetch(page_token: str = "", execution_context=None, **kwargs):
+        calls.append(page_token)
+        return {"messages": ["m1"], "next": None}
+
+    from pydantic import BaseModel
+
+    class _In(BaseModel):
+        page_token: str = ""
+
+    register_local_capability(
+        "gmailish", "messages.fetch", _fetch, input_schema=_In,
+        description="test fetch", risk_class="low", action_class="R0",
+    )
+    clear_deferred_capabilities()
+    try:
+        register_deferred_capability("gmailish", "messages.fetch")
+        assert capability_execution_deferred("gmailish", "messages.fetch")
+        call = graph.add_object("capability_call", {
+            "provider_id": "", "provider_name": "gmailish",
+            "capability_name": "messages.fetch",
+            "input_data": {"page_token": ""},
+            "credential_ref_name": None, "credential_ref_id": None,
+            "risk_class": "low", "action_class": "R0",
+            "status": "proposed", "proposed_by": "test",
+            "frame_id": None, "proposed_at": None, "metadata": {},
+        })
+        runtime.run_until_idle()
+        call = graph.get_object(call.id)
+        assert call.data["status"] == "approved", "R0 auto-approves"
+        assert calls == [], "the engine drain never executed the network fn"
+        pending = pending_deferred_capability_calls_fn(graph)
+        assert [row["call_id"] for row in pending] == [call.id]
+
+        # The pump's cycle: perform off-thread, deliver on the engine.
+        settings = ToolGatewaySettings()
+        outcome = perform_capability_execution(
+            {"provider_name": "gmailish", "capability_name": "messages.fetch",
+             "input_data": {"page_token": ""}, "call_id": call.id},
+            settings,
+        )
+        assert calls == [""], "perform ran the network half exactly once"
+        delivered = deliver_capability_outcome(
+            graph, call.id,
+            {"provider_name": "gmailish", "capability_name": "messages.fetch"},
+            settings, outcome,
+        )
+        runtime.run_until_idle()
+        assert delivered.get("result_id")
+        assert graph.get_object(call.id).data["status"] == "done"
+        assert pending_deferred_capability_calls_fn(graph) == []
+    finally:
+        clear_deferred_capabilities()

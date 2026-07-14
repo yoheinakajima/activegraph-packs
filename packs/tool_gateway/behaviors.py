@@ -352,6 +352,17 @@ def call_executor(event, graph, ctx, *, settings: ToolGatewaySettings):
     if call is None or call.data.get("status") != "approved":
         return
 
+    from .gateway import capability_execution_deferred
+
+    if capability_execution_deferred(
+        call.data.get("provider_name", ""), capability_name
+    ):
+        # The host runs a pump that performs this off the engine thread
+        # (hardening round): the call stays approved and visible; the pump's
+        # durable attempt drives perform → deliver. Never execute network
+        # work inside the engine drain for a deferred capability.
+        return
+
     execute_approved_call(
         graph,
         call_id,

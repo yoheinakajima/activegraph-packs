@@ -171,6 +171,89 @@ def decide_policy_detail(
     }
 
 
+# ---- deferred capability execution (ADR 0041 seam, hardening round) --------
+# Capabilities whose network work must never run on the engine thread. The
+# HOST opts a (provider, capability) pair in at boot when it runs a pump that
+# will perform them off-thread; call_executor then leaves approved calls
+# pending instead of executing inline. Only env-credentialed, graph-free
+# capabilities qualify (the gateway injects neither credential nor graph on
+# the deferred path).
+_DEFERRED_CAPABILITIES: set[tuple[str, str]] = set()
+
+
+def register_deferred_capability(provider_name: str, capability_name: str) -> None:
+    _DEFERRED_CAPABILITIES.add((str(provider_name), str(capability_name)))
+
+
+def clear_deferred_capabilities() -> None:
+    _DEFERRED_CAPABILITIES.clear()
+
+
+def capability_execution_deferred(provider_name: str, capability_name: str) -> bool:
+    return (str(provider_name), str(capability_name)) in _DEFERRED_CAPABILITIES
+
+
+def pending_deferred_capability_calls_fn(reader) -> list[dict[str, str]]:
+    """Approved calls whose execution the host deferred — pump work items."""
+    rows: list[dict[str, str]] = []
+    for obj in reader.objects(type="capability_call"):
+        data = obj.data or {}
+        if data.get("status") != "approved":
+            continue
+        provider = str(data.get("provider_name") or "")
+        capability = str(data.get("capability_name") or "")
+        if not capability_execution_deferred(provider, capability):
+            continue
+        rows.append({
+            "call_id": obj.id,
+            "provider_name": provider,
+            "capability_name": capability,
+        })
+    rows.sort(key=lambda row: row["call_id"])
+    return rows
+
+
+def perform_capability_execution(
+    call_data: dict[str, Any],
+    settings: ToolGatewaySettings,
+    *,
+    execution_context: Optional[dict] = None,
+) -> dict[str, Any]:
+    """The network-only half of one capability call — zero graph access, so
+    the deferred pump can run it off the engine thread."""
+    from .tools import execute_capability_fn
+
+    del settings  # symmetry with the sync path; nothing configurable yet
+    return execute_capability_fn(
+        provider_name=call_data.get("provider_name", ""),
+        capability_name=call_data.get("capability_name", ""),
+        input_data=call_data.get("input_data", {}),
+        call_id=str(call_data.get("call_id") or ""),
+        frame_id=call_data.get("frame_id"),
+        execution_context=execution_context or {},
+    )
+
+
+def deliver_capability_outcome(
+    graph,
+    call_id: str,
+    call_data: dict[str, Any],
+    settings: ToolGatewaySettings,
+    result_data: dict[str, Any],
+    *,
+    executed_by: str = "call_executor",
+) -> dict[str, Any]:
+    """The graph half: sanitize, mint the CapabilityResult, flag injection,
+    settle the call. Identical for inline and deferred execution."""
+    del executed_by
+    provider_name = call_data.get("provider_name", "")
+    capability_name = call_data.get("capability_name", "")
+    frame_id = call_data.get("frame_id")
+    return _deliver_tail(
+        graph, call_id, provider_name, capability_name, frame_id,
+        settings, result_data,
+    )
+
 def execute_approved_call(
     graph,
     call_id: str,
@@ -240,6 +323,16 @@ def execute_approved_call(
         execution_context=execution_context,
     )
 
+    return deliver_capability_outcome(
+        graph, call_id,
+        {"provider_name": provider_name, "capability_name": capability_name,
+         "frame_id": frame_id},
+        settings, result_data, executed_by=executed_by,
+    )
+
+
+def _deliver_tail(graph, call_id, provider_name, capability_name, frame_id,
+                  settings, result_data):
     raw_output = result_data.get("output_data", "")[: settings.max_output_chars]
 
     # ------------------------------------------------------------------ output sanitization
