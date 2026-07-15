@@ -49,7 +49,44 @@ def run_fixture() -> dict:
     # Idempotence: re-derivation never duplicates or resurrects.
     again = derive_project_candidates_fn(graph)
     assert again["created"] == 0
-    return {"projects": 1, "candidates": 1}
+
+    # The work graph (ADR 0049): containment rejects cycles explainably,
+    # associations keep entities entities, and the context packet follows
+    # reachability with explicit bounds.
+    from packs.projects.graph import (
+        associate_workstream_fn,
+        descendants_fn,
+        link_workstreams_fn,
+        project_context_packet_fn,
+        propose_organizational_view_fn,
+        review_organizational_view_fn,
+    )
+
+    project = graph.get_object(confirmed["project_id"])
+    child = graph.add_object("project", {
+        "project_identity": "project:child", "name": "Fixture Child",
+        "description": "sub-workstream", "status": "active",
+        "seeded_from_candidate_id": None, "confirmed_by": "owner",
+        "supersedes": None, "superseded_by": None, "metadata": {},
+    })
+    assert link_workstreams_fn(graph, project.id, child.id)["ok"]
+    cycle = link_workstreams_fn(graph, child.id, project.id)
+    assert cycle["reason"] == "cycle_rejected" and cycle["cycle_path"]
+    tree = descendants_fn(graph, project.id, max_depth=3)
+    assert [row["name"] for row in tree["descendants"]] == ["Fixture Child"]
+
+    view = propose_organizational_view_fn(
+        graph, name="By company", perspective="by_company",
+        proposed_by="fixture",
+    )
+    assert review_organizational_view_fn(
+        graph, view["view_id"], "promote",
+    )["status"] == "promoted"
+
+    packet = project_context_packet_fn(graph, project.id)
+    assert packet["exists"] and packet["coverage"]["descendants"] == 1
+    return {"projects": 1, "candidates": 1, "descendants": 1,
+            "views_promoted": 1}
 
 
 if __name__ == "__main__":
