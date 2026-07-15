@@ -2,6 +2,16 @@
 
 ## 0.3.0 — the governed agentic loop (2026-07-14)
 
+- Live-run hardening (2026-07-14 evening): a pausing `ask_owner` move now
+  mints its owner question in the same commit (`record_coordinator_move_fn`),
+  so a paused campaign always presents something answerable; the validator
+  rejects `ask_owner` without question text (`ask_owner_needs_question`)
+  instead of stranding the campaign; the proposal packet carries
+  `verdict_reasons` on prior moves plus `available_move_kinds` /
+  `unavailable_move_kinds`, and the prompt forbids re-proposing rejected
+  moves unchanged — a live keyed run burned its whole window re-proposing
+  one rejected `inspect_source` and then deadlocked onboarding on a
+  questionless pause.
 - Understanding affordances (ADR 0047 §2): the typed registry by which any
   source joins a comprehension campaign — teaches, capabilities/scopes,
   schemas, privacy/outward-disclosure, reductions, drill-down permission

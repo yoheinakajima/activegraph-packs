@@ -319,6 +319,16 @@ def validate_coordinator_move_fn(
         if not configured_llm_provider().configured:
             return {"verdict": "reject", "reasons": ["provider_unavailable"]}
 
+    if kind == "ask_owner":
+        # A pause is only resolvable if the owner has something to answer:
+        # an ask without question text would strand the campaign, so it is
+        # a shape rejection the proposer can learn from, never a pause.
+        question = str(
+            params.get("question") or params.get("prompt") or ""
+        ).strip()
+        if not question:
+            return {"verdict": "reject", "reasons": ["ask_owner_needs_question"]}
+
     # Budgets are authoritative for every executing kind; stop and
     # owner-boundary moves stay legal so a campaign can always end honestly.
     if kind not in ("stop", "ask_owner", "propose_amendment"):
@@ -426,6 +436,19 @@ def record_coordinator_move_fn(
     if verdict["verdict"] == "pause_owner":
         patch["status"] = "paused_owner"
     graph.patch_object(campaign.id, patch, rationale="coordinator move recorded")
+    if verdict["verdict"] == "pause_owner" and record.data.get("kind") == "ask_owner":
+        # The question mints in the same commit as the pausing move — a
+        # paused campaign must always present something the owner can
+        # answer (the validator guaranteed non-empty question text above).
+        move_params = dict(record.data.get("params") or {})
+        ask_owner_question_fn(
+            graph, campaign.id,
+            kind=str(move_params.get("question_kind") or "differentiating"),
+            prompt=str(move_params.get("question")
+                       or move_params.get("prompt") or ""),
+            options=list(move_params.get("options") or []),
+            move_ref=record.id,
+        )
     return {
         "ok": True, "move_id": record.id, "verdict": verdict["verdict"],
         "reasons": verdict["reasons"], "sequence": sequence,
@@ -736,6 +759,12 @@ def prepare_coordinator_proposal_fn(
             "sequence": int(obj.data.get("sequence") or 0),
             "kind": obj.data.get("kind"),
             "status": obj.data.get("status"),
+            # Rejections must be learnable: a proposer that never sees WHY
+            # a move bounced will propose it again verbatim.
+            "verdict_reasons": [
+                str(reason) for reason in
+                ((obj.data.get("validation") or {}).get("reasons") or [])
+            ][:4],
             "rationale": obj.data.get("rationale"),
             "result_summary": str(
                 (obj.data.get("result") or {}).get("summary") or ""
@@ -747,6 +776,29 @@ def prepare_coordinator_proposal_fn(
     moves.sort(key=lambda row: row["sequence"])
     budgets = dict(data.get("budgets") or {})
     spent = dict(data.get("spent") or {})
+    selected_catalog = [
+        row for row in affordance_catalog_fn(view)
+        if row["affordance_id"] in (data.get("selected_affordances") or [])
+    ]
+    # Host-authoritative move availability: the validator would bounce these
+    # anyway, but telling the proposer up front spends zero moves learning it.
+    unavailable: dict[str, str] = {}
+    for kind in SOURCE_MOVE_KINDS:
+        if not any(kind in (row.get("moves") or []) for row in selected_catalog):
+            unavailable[kind] = (
+                "no_selected_affordance" if not selected_catalog
+                else "no_selected_affordance_serves_it"
+            )
+    if "outward_query" not in unavailable and not any(
+        str(row.get("outward_disclosure") or "none") != "none"
+        for row in selected_catalog
+    ):
+        unavailable["outward_query"] = "no_affordance_discloses_outward"
+    if "drill_down" not in unavailable and not any(
+        (row.get("drill_down") or {}).get("allowed")
+        for row in selected_catalog
+    ):
+        unavailable["drill_down"] = "no_affordance_allows_drill_down"
     return {
         "ok": True,
         "payload": {
@@ -759,10 +811,7 @@ def prepare_coordinator_proposal_fn(
                 "unresolved": working["unresolved"][:20],
                 "source_coverage": working["source_coverage"],
             },
-            "affordances": [
-                row for row in affordance_catalog_fn(view)
-                if row["affordance_id"] in (data.get("selected_affordances") or [])
-            ],
+            "affordances": selected_catalog,
             "budgets": budgets,
             "remaining": {
                 "moves": max(0, int(budgets.get("max_moves") or 0)
@@ -774,6 +823,10 @@ def prepare_coordinator_proposal_fn(
             },
             "prior_moves": moves[-12:],
             "move_kinds": list(MOVE_KINDS),
+            "available_move_kinds": [
+                kind for kind in MOVE_KINDS if kind not in unavailable
+            ],
+            "unavailable_move_kinds": unavailable,
             "timeout_seconds": settings.coordinator_timeout_seconds,
         },
     }
@@ -785,12 +838,21 @@ def _proposal_prompt(payload: dict[str, Any]) -> tuple[str, str]:
         "Propose exactly ONE next move with the highest information gain "
         "toward a reviewable understanding. You have no authority: a "
         "deterministic host validates consent, scope, privacy, and budgets, "
-        "and may reject your proposal. Never propose reading beyond approved "
-        "scopes; ask the owner when identities are ambiguous; stop when "
-        "review questions are covered. Respond with STRICT JSON only."
+        "and may reject your proposal. Only propose kinds listed in "
+        "available_move_kinds — the others are unavailable for the stated "
+        "reason, whatever their apparent value. Prior moves carry "
+        "verdict_reasons: never re-propose a rejected move unchanged. "
+        "The working_understanding entries are already yours to build on; "
+        "no move is needed to read them. An ask_owner move MUST carry "
+        "params.question (one owner-readable question, under 400 chars) and "
+        "may carry params.options as [{id, label}]; reserve it for genuine "
+        "ambiguity or conflicts, not for planning preferences. If nothing "
+        "unavailable-or-rejected remains worth doing, propose synthesize. "
+        "Never propose reading beyond approved scopes; stop when review "
+        "questions are covered. Respond with STRICT JSON only."
     )
     shape = {
-        "kind": f"one of {list(payload.get('move_kinds') or [])}",
+        "kind": f"one of {list(payload.get('available_move_kinds') or payload.get('move_kinds') or [])}",
         "affordance_id": "required for source moves, else empty",
         "capability": "declared capability id or empty",
         "params": {"…": "bounded move parameters"},
@@ -805,6 +867,8 @@ def _proposal_prompt(payload: dict[str, Any]) -> tuple[str, str]:
     user = json.dumps({
         "working_understanding": payload.get("working"),
         "affordances": payload.get("affordances"),
+        "available_move_kinds": payload.get("available_move_kinds"),
+        "unavailable_move_kinds": payload.get("unavailable_move_kinds"),
         "budgets": payload.get("budgets"),
         "remaining": payload.get("remaining"),
         "prior_moves": payload.get("prior_moves"),

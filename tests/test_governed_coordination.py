@@ -597,12 +597,43 @@ def test_recorded_move_carries_validation_and_pauses_campaign(runtime):
     assert move.data["validation"]["verdict"] == "pause_owner"
     assert move.data["proposer"]["kind"] == "deterministic"
 
+    # The pause is answerable in the same commit: recording a pausing
+    # ask_owner mints its owner question (a paused campaign with nothing
+    # to answer is a deadlock, not a state).
+    question = next(
+        (obj for obj in graph.objects(type="owner_question")
+         if obj.data.get("status") == "open"),
+        None,
+    )
+    assert question is not None, "the pausing ask_owner minted its question"
+    assert question.data["prompt"] == "which is you?"
+    assert question.data["move_ref"] == move.id
+
     # While paused, nothing else validates as executable.
     verdict = validate_coordinator_move_fn(graph, campaign, {
         "kind": "align_entities", "params": {},
     })
     assert verdict["verdict"] == "reject"
     assert "campaign_paused_for_owner" in verdict["reasons"]
+
+
+def test_ask_owner_without_question_is_rejected_not_stranded(runtime):
+    """A model ask_owner with no question text must NOT pause the campaign:
+    there would be nothing for the owner to answer (the deadlock a live run
+    hit on 2026-07-14). It rejects with a reason the proposer sees on its
+    next window move."""
+    graph = runtime.graph
+    campaign = _open_campaign(graph)
+    result = record_coordinator_move_fn(graph, campaign.id, {
+        "kind": "ask_owner",
+        "rationale": "must establish review scope and priorities",
+        "params": {},
+        "requires_owner": True,
+    }, proposer={"kind": "model"})
+    assert result["verdict"] == "reject"
+    assert "ask_owner_needs_question" in result["reasons"]
+    assert current_campaign_fn(graph).data["status"] == "open"
+    assert not list(graph.objects(type="owner_question"))
 
 
 def test_owner_question_answer_resumes_within_confirmed_scope(runtime):
@@ -681,6 +712,7 @@ def test_model_proposal_rides_prepare_perform_commit(runtime):
     assert staged["ok"]
     payload = staged["payload"]
     assert payload["move_kinds"] == list(MOVE_KINDS)
+    assert "synthesize" in payload["available_move_kinds"]
     assert payload["working"]["entries"], "the packet carries the working entries"
     assert "remaining" in payload
 
@@ -731,6 +763,41 @@ def test_model_proposing_forbidden_move_is_recorded_rejected(runtime):
     move = next(obj for obj in graph.objects(type="coordinator_move"))
     assert move.data["status"] == "rejected"
     assert move.data["validation"]["reasons"], "the audit record names why"
+
+
+def test_proposal_packet_teaches_rejections_and_availability(runtime):
+    """The packet must make rejections learnable (verdict_reasons on prior
+    moves) and unavailability explicit (source moves without a selected
+    affordance) — a proposer that can't see WHY a move bounced re-proposes
+    it verbatim, burning the whole window (live run, 2026-07-14)."""
+    from packs.subject_synthesis.coordinator import SOURCE_MOVE_KINDS
+
+    graph = runtime.graph
+    campaign = _open_campaign(graph, ())  # nothing selected
+    rejected = record_coordinator_move_fn(graph, campaign.id, {
+        "kind": "inspect_source",
+        "rationale": "read owner-provided facts to establish baseline",
+        "params": {},
+    }, proposer={"kind": "model"})
+    assert rejected["verdict"] == "reject"
+
+    staged = prepare_coordinator_proposal_fn(graph, campaign.id)
+    assert staged["ok"]
+    payload = staged["payload"]
+    last = payload["prior_moves"][-1]
+    assert last["status"] == "rejected"
+    assert "source_move_needs_affordance" in last["verdict_reasons"]
+    for kind in SOURCE_MOVE_KINDS:
+        assert payload["unavailable_move_kinds"][kind] == "no_selected_affordance"
+        assert kind not in payload["available_move_kinds"]
+    for kind in ("ask_owner", "synthesize", "stop", "align_entities"):
+        assert kind in payload["available_move_kinds"]
+    # The prompt steers by availability, not the full grammar.
+    from packs.subject_synthesis.coordinator import _proposal_prompt
+
+    system, user = _proposal_prompt(payload)
+    assert "available_move_kinds" in user
+    assert "never re-propose a rejected move unchanged" in system.lower()
 
 
 def test_unparseable_proposal_is_a_recorded_non_event(runtime):
