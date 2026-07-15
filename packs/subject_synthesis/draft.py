@@ -847,8 +847,10 @@ def commit_setup_draft_fn(
                 merged_sources != list(existing.data.get("sources") or [])
                 or (description and not existing.data.get("description"))
             ):
+                # Birth kind is stable identity: a source-derived candidate
+                # the draft echoes stays source-derived (and stays in the
+                # synthesis input fingerprint).
                 graph.patch_object(existing.id, {
-                    "kind": "synthesized",
                     "description": description or existing.data.get("description"),
                     "score_milli": max(800, int(existing.data.get("score_milli") or 0)),
                     "sources": merged_sources,

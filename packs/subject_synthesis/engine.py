@@ -371,8 +371,11 @@ def commit_subject_synthesis_fn(
                 (existing.data or {}).get("rationale")
             )
             if adds_sources or adds_rationale:
+                # A candidate keeps its BIRTH kind: a fact/label-seeded
+                # candidate the model merely echoes stays source-derived
+                # (and stays in the synthesis input fingerprint); only
+                # genuinely model-born candidates are "synthesized".
                 graph.patch_object(existing.id, {
-                    "kind": "synthesized",
                     "score_milli": max(800, int((existing.data or {}).get("score_milli") or 0)),
                     "sources": merged_sources,
                     "rationale": rationale or (existing.data or {}).get("rationale"),
