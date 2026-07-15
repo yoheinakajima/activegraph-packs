@@ -235,11 +235,71 @@ def _predict_item_verdict(reader, destination: str) -> dict[str, Any]:
 
 # ---- the strong pass --------------------------------------------------------
 
+def synthesis_input_fingerprint_fn(reader, *, subject_ref: str = "owner") -> str:
+    """A stable digest of every EXTERNAL input a draft synthesis may consume:
+    source-lens contributions, promoted owner facts, answered owner
+    questions, and source-derived (never synthesis-authored) candidates.
+
+    This is the convergence rule's anchor (the 2026-07-14 live run ran 28
+    recompositions of one draft): a synthesis records the fingerprint it
+    consumed, and no new synthesis is owed until the fingerprint moves —
+    which only genuinely new source/owner material can do. Synthesis outputs
+    (synthesized candidates, drafts, deltas, working versions) are
+    deliberately absent from this digest."""
+    parts: list[str] = []
+    for lens in reader.objects(type="source_lens"):
+        data = lens.data or {}
+        keys = sorted(
+            str(row.get("entry_key") or row.get("statement") or "")
+            for row in data.get("contributions") or []
+        )
+        parts.append(f"lens:{data.get('affordance_id')}:{data.get('status')}:"
+                     + "|".join(keys))
+    for fact in reader.objects(type="subject_fact"):
+        data = fact.data or {}
+        if data.get("subject_ref") == subject_ref and data.get("status") == "promoted":
+            parts.append(f"fact:{data.get('attribute')}:{data.get('value')}")
+    for question in reader.objects(type="owner_question"):
+        data = question.data or {}
+        if data.get("status") == "answered":
+            answer = dict(data.get("answer") or {})
+            parts.append(f"answer:{question.id}:{answer.get('option_id')}:"
+                         f"{answer.get('text')}")
+    for candidate in reader.objects(type="project_candidate"):
+        data = candidate.data or {}
+        if data.get("kind") != "synthesized":
+            parts.append(f"pc:{candidate.id}:{data.get('status')}")
+    for candidate in reader.objects(type="profile_candidate"):
+        data = candidate.data or {}
+        authored_by_synthesis = (
+            str((data.get("metadata") or {}).get("projector") or "")
+            .startswith("subject_synthesis")
+            or str(data.get("extractor_id") or "").startswith("subject_synthesis")
+        )
+        if not authored_by_synthesis:
+            parts.append(f"fc:{candidate.id}:{data.get('status')}")
+    digest = hashlib.sha256(
+        "\n".join(sorted(parts)).encode("utf-8")
+    ).hexdigest()
+    return digest
+
+
+def consumed_input_fingerprint_fn(reader, *, subject_ref: str = "owner") -> str:
+    """The fingerprint the current head draft last consumed (stamped at
+    compose/delta time). Empty for pre-fingerprint stores."""
+    head = current_setup_draft_fn(reader, subject_ref=subject_ref)
+    if head is None:
+        return ""
+    return str((head.data.get("coverage") or {}).get("input_fingerprint") or "")
+
+
 def request_setup_draft_fn(
     graph, *, subject_ref: str = "owner", reason: str = "", reader=None
 ) -> dict[str, Any]:
     """Request the cross-source draft pass; hosts settle it on their pump.
-    Idempotent while one draft request is open for the subject."""
+    Idempotent while one draft request is open for the subject, and REFUSED
+    when nothing external changed since the head draft consumed its inputs —
+    one pending synthesis per input horizon, never a self-feeding chain."""
     view = reader or graph
     for obj in view.objects(type="subject_synthesis_request"):
         data = obj.data or {}
@@ -249,12 +309,18 @@ def request_setup_draft_fn(
             and (data.get("metadata") or {}).get("kind") == "setup_draft"
         ):
             return {"ok": True, "request_id": obj.id, "already_open": True}
+    fingerprint = synthesis_input_fingerprint_fn(view, subject_ref=subject_ref)
+    consumed = consumed_input_fingerprint_fn(view, subject_ref=subject_ref)
+    if consumed and consumed == fingerprint:
+        return {"ok": True, "request_id": None,
+                "skipped": "no_new_source_material",
+                "input_fingerprint": fingerprint}
     request = graph.add_object("subject_synthesis_request", {
         "request_identity": _stable("setup_draft_request", subject_ref, reason),
         "subject_ref": subject_ref,
         "reason": reason or "compose the setup draft",
         "status": "proposed",
-        "metadata": {"kind": "setup_draft"},
+        "metadata": {"kind": "setup_draft", "input_fingerprint": fingerprint},
     })
     return {"ok": True, "request_id": request.id, "created": True}
 
@@ -276,6 +342,11 @@ def prepare_setup_draft_fn(
     if base.get("status") != "prepared":
         return base
     view = reader or graph
+    # The fingerprint of what this pass actually consumes, stamped onto the
+    # draft at commit — the convergence rule's receipt.
+    base["input_fingerprint"] = synthesis_input_fingerprint_fn(
+        view, subject_ref=str(base.get("subject_ref") or "owner"),
+    )
 
     research: list[dict[str, Any]] = []
     research_coverage: list[dict[str, Any]] = []
@@ -413,10 +484,10 @@ def _draft_prompt(payload: dict[str, Any]) -> tuple[str, str]:
                       "rationale": "…"}],
         "people": [{"name": "…", "relationship": "evidence-based context",
                     "refs": ["…"], "rationale": "…", "uncertainty": ""}],
-        "access": [{"question_class": "what future questions this serves",
+        "access": [{"question_class": "the information class this serves, e.g. 'current LP conversations'",
                     "source": "which connected source/surface",
-                    "strategy": "label/folder/query pattern or capability",
-                    "refs": ["…"], "rationale": "…"}],
+                    "strategy": "one bounded retrieval action (a search/label/thread strategy), NEVER a bare label inventory",
+                    "refs": ["…"], "rationale": "why this strategy is useful (required)"}],
     }
     user = (
         f"Return at most {cap} items per section as JSON with this exact "
@@ -478,6 +549,14 @@ def perform_setup_draft(
         "response_sample": text[:400],
         "response_length": len(text),
         "finish_reason": response_finish_reason(response),
+        # Host-measured spend: budgets charge from THIS, never from a
+        # model-proposed cost field.
+        "usage": {
+            "tokens": int(getattr(response, "input_tokens", 0) or 0)
+            + int(getattr(response, "output_tokens", 0) or 0),
+            "cost_milli": float(getattr(response, "cost_usd", 0) or 0) * 1000.0,
+            "seconds": float(getattr(response, "latency_seconds", 0) or 0),
+        },
         "error": None,
     }
 
@@ -614,10 +693,20 @@ def commit_setup_draft_fn(
                 "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
             },
         )
+        # The frozen head has now CONSUMED this input horizon: without the
+        # stamp, every progression tick re-runs the same synthesis into an
+        # endless delta chain (the live-run loop).
+        graph.patch_object(head.id, {
+            "coverage": {
+                **dict(head.data.get("coverage") or {}),
+                "input_fingerprint": str(payload.get("input_fingerprint") or ""),
+            },
+        }, rationale="frozen head consumed this synthesis input horizon")
         graph.patch_object(request_id, {
             "status": "completed",
             "metadata": {"kind": "setup_draft", "delta_id": delta.get("delta_id")},
         }, rationale="late synthesis landed as an understanding delta")
+        _charge_campaign_for_synthesis(graph, view, outcome)
         return {**delta, "draft_id": None, "frozen_head": head.id}
 
     draft = _mint_draft(
@@ -629,6 +718,7 @@ def commit_setup_draft_fn(
             "comprehension": payload.get("comprehension_coverage") or [],
             "provenance": "model_assisted",
             "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
+            "input_fingerprint": str(payload.get("input_fingerprint") or ""),
         },
     )
 
@@ -747,14 +837,22 @@ def commit_setup_draft_fn(
             None,
         )
         if existing is not None:
-            graph.patch_object(existing.id, {
-                "kind": "synthesized",
-                "description": description,
-                "score_milli": max(800, int(existing.data.get("score_milli") or 0)),
-                "sources": list(dict.fromkeys(
-                    [*(existing.data.get("sources") or []), *refs]
-                )),
-            }, rationale="the setup draft refined this proposal")
+            merged_sources = list(dict.fromkeys(
+                [*(existing.data.get("sources") or []), *refs]
+            ))
+            # Same convergence rule as the recognition pass: patch only when
+            # the draft genuinely adds evidence or a first description —
+            # unconditional refreshes fed the recompose loop.
+            if (
+                merged_sources != list(existing.data.get("sources") or [])
+                or (description and not existing.data.get("description"))
+            ):
+                graph.patch_object(existing.id, {
+                    "kind": "synthesized",
+                    "description": description or existing.data.get("description"),
+                    "score_milli": max(800, int(existing.data.get("score_milli") or 0)),
+                    "sources": merged_sources,
+                }, rationale="the setup draft refined this proposal")
             candidate_ref = existing.id
         else:
             candidate = graph.add_object("project_candidate", {
@@ -805,6 +903,7 @@ def commit_setup_draft_fn(
         )
         counts["people"] += 1
 
+    dropped_low_quality = 0
     for row in (sections.get("access") or [])[:cap]:
         strategy, strategy_flags = _sanitize((row or {}).get("strategy") or "", 300)
         source, source_flags = _sanitize((row or {}).get("source") or "", 120)
@@ -816,6 +915,12 @@ def commit_setup_draft_fn(
             dropped_uncited += 1
             continue
         rationale, rationale_flags = _sanitize((row or {}).get("rationale") or "", 500)
+        if not _access_row_is_actionable(question_class, strategy, rationale):
+            # Raw source topology (a label inventory) is evidence, never a
+            # proposed owner preference — the live run's owner rightly
+            # rejected every one of these.
+            dropped_low_quality += 1
+            continue
         _mint_item(
             graph, view, draft=draft, section="access",
             proposed={
@@ -844,7 +949,8 @@ def commit_setup_draft_fn(
             "entities": len(payload.get("entities") or []),
             "packing": payload.get("packing") or {},
         },
-        "proposed": {**counts, "dropped_uncited": dropped_uncited},
+        "proposed": {**counts, "dropped_uncited": dropped_uncited,
+                     "dropped_low_quality": dropped_low_quality},
         "noise": [],
         "error": str(error)[:300] if error else None,
         "metadata": {
@@ -855,16 +961,57 @@ def commit_setup_draft_fn(
     })
     graph.patch_object(draft.id, {
         "run_id": run.id,
-        "counts": {"items": total, **counts, "dropped_uncited": dropped_uncited},
+        "counts": {"items": total, **counts, "dropped_uncited": dropped_uncited,
+                   "dropped_low_quality": dropped_low_quality},
     })
     graph.patch_object(request_id, {
         "status": "completed", "run_id": run.id,
         "metadata": {"kind": "setup_draft", "draft_id": draft.id},
     }, rationale="setup draft composed")
+    _charge_campaign_for_synthesis(graph, view, outcome)
     return {
         "ok": True, "draft_id": draft.id, "run_id": run.id,
         "items": total, "dropped_uncited": dropped_uncited,
+        "dropped_low_quality": dropped_low_quality,
     }
+
+
+def _access_row_is_actionable(
+    question_class: str, strategy: str, rationale: str,
+) -> bool:
+    """A 'where to look' proposal must be an actionable retrieval strategy:
+    a question/information class it serves, a bounded strategy, and a reason.
+    A bare label/folder inventory is source topology — evidence, not a
+    user-facing preference."""
+    import re
+
+    if not question_class.strip() or not rationale.strip():
+        return False
+    if re.match(r"^\s*labels?\s*[:—-]", strategy, re.IGNORECASE):
+        return False
+    return True
+
+
+def _charge_campaign_for_synthesis(graph, view, outcome: dict[str, Any]) -> None:
+    """Charge the host-measured usage of one synthesis pass to the current
+    campaign's spend ledger — model-proposed cost fields are never trusted."""
+    usage = dict(outcome.get("usage") or {})
+    if not usage:
+        return
+    try:
+        from .coordinator import charge_campaign_usage_fn, current_campaign_fn
+
+        campaign = current_campaign_fn(view)
+        if campaign is None:
+            return
+        charge_campaign_usage_fn(
+            graph, campaign.id,
+            tokens=float(usage.get("tokens") or 0),
+            cost_milli=float(usage.get("cost_milli") or 0),
+            seconds=float(usage.get("seconds") or 0),
+        )
+    except Exception:
+        pass  # budget accounting must never fail a committed synthesis
 
 
 # ---- understanding deltas (ADR 0048 §3) ----------------------------------------
@@ -962,11 +1109,14 @@ def _sanitized_rows_from_sections(
         refs = _refs_of(row or {})
         if not strategy or not source_name or not refs:
             continue
+        rationale = str((row or {}).get("rationale") or "")
+        if not _access_row_is_actionable(question_class, strategy, rationale):
+            continue  # same quality gate as the main commit path
         rows.append({
             "section": "access",
             "proposed": {"question_class": question_class,
                          "source": source_name, "strategy": strategy},
-            "rationale": str((row or {}).get("rationale") or ""),
+            "rationale": rationale,
             "evidence_refs": refs,
             "confidence": float((row or {}).get("confidence") or 0.6),
             "uncertainty": str((row or {}).get("uncertainty") or ""),
@@ -1021,24 +1171,52 @@ def _mint_understanding_delta(
     if not delta_items:
         return {"ok": True, "delta_id": None, "items": 0,
                 "note": "nothing new or changed against the snapshot"}
-    prior = len([
+    # ONE consolidated update per frozen snapshot: the cumulative diff
+    # supersedes every unresolved predecessor delta instead of stacking a
+    # banner per synthesis version (the live run stacked 23). A predecessor
+    # the owner deferred stays deferred UNLESS the new delta carries keys
+    # the owner has not yet seen — genuinely new information earns exactly
+    # one fresh notification.
+    all_deltas = [
         obj for obj in view.objects(type="understanding_delta")
         if obj.data.get("draft_id") == head.id
-    ])
+    ]
+    unresolved = [
+        obj for obj in all_deltas
+        if obj.data.get("status") in ("open", "deferred")
+    ]
+    seen_keys = {
+        str(item.get("semantic_key") or "")
+        for obj in unresolved
+        for item in obj.data.get("items") or []
+    }
+    new_keys = {str(row.get("semantic_key") or "") for row in delta_items}
+    all_deferred = bool(unresolved) and all(
+        obj.data.get("status") == "deferred" for obj in unresolved
+    )
+    status = "deferred" if (all_deferred and new_keys <= seen_keys) else "open"
     delta = graph.add_object("understanding_delta", {
-        "delta_identity": _stable("understanding_delta", head.id, prior + 1),
+        "delta_identity": _stable("understanding_delta", head.id, len(all_deltas) + 1),
         "subject_ref": str(head.data.get("subject_ref") or "owner"),
         "draft_id": head.id,
-        "version": prior + 1,
-        "status": "open",
+        "version": len(all_deltas) + 1,
+        "status": status,
         "source": source,
         "run_id": run_id,
         "items": delta_items[:60],
         "coverage": coverage,
         "resolved_by": "",
-        "metadata": {},
+        "metadata": {"cumulative": True,
+                     "supersedes": [obj.id for obj in unresolved]},
     })
-    return {"ok": True, "delta_id": delta.id, "items": len(delta_items)}
+    for obj in unresolved:
+        graph.patch_object(obj.id, {
+            "status": "superseded", "resolved_by": "system:cumulative",
+            "metadata": {**dict(obj.data.get("metadata") or {}),
+                         "superseded_by": delta.id},
+        }, rationale="a newer cumulative update subsumes this one")
+    return {"ok": True, "delta_id": delta.id, "items": len(delta_items),
+            "superseded": len(unresolved), "status": status}
 
 
 def _delta_by_ref(reader, delta_ref: str):
@@ -1098,7 +1276,7 @@ def apply_understanding_delta_fn(
     delta = _delta_by_ref(view, delta_ref)
     if delta is None:
         return {"ok": False, "reason": "delta_not_found"}
-    if delta.data.get("status") in ("applied", "dismissed"):
+    if delta.data.get("status") in ("applied", "dismissed", "superseded"):
         return {"ok": True, "already_resolved": True,
                 "status": delta.data.get("status")}
     head = _draft_by_ref(view, str(delta.data.get("draft_id") or ""))
@@ -1108,21 +1286,47 @@ def apply_understanding_delta_fn(
         return {"ok": False, "reason": "draft_already_resolved",
                 "status": head.data.get("status")}
     subject_ref = str(head.data.get("subject_ref") or "owner")
+    head_index = _open_head_items_by_key(view, head.id)
     minted = 0
+    superseded = 0
+    skipped_unchanged = 0
+    skipped_owner_edited = 0
+    applied_keys: set[str] = set()
     for row in delta.data.get("items") or []:
         section = str(row.get("section") or "")
         if section not in DRAFT_SECTIONS:
             continue
         proposed = dict(row.get("proposed") or {})
+        key = semantic_item_key(section, proposed)
+        if key in applied_keys:
+            continue  # one active item per semantic key, even within one apply
+        applied_keys.add(key)
+        predecessor = head_index.get(key)
+        pred_data = dict(predecessor.data or {}) if predecessor is not None else {}
+        if predecessor is not None:
+            head_presentation = _semantic_presentation(
+                section,
+                dict(pred_data.get("edited_value") or pred_data.get("proposed") or {}),
+            )
+            if _semantic_presentation(section, proposed) == head_presentation:
+                skipped_unchanged += 1
+                continue  # the standing verdict is the answer
+            if pred_data.get("status") == "edited":
+                # The owner rewrote this item; model content never overrides
+                # an owner declaration.
+                skipped_owner_edited += 1
+                continue
         candidate_ref = None
         if section == "projects":
-            candidate_ref = _ensure_project_candidate(
-                graph, view, subject_ref=subject_ref,
-                name=str(proposed.get("name") or ""),
-                description=str(proposed.get("description") or ""),
-                refs=list(row.get("evidence_refs") or []),
-                rationale=str(row.get("rationale") or ""),
-            )
+            candidate_ref = str(pred_data.get("candidate_ref") or "") or None
+            if candidate_ref is None:
+                candidate_ref = _ensure_project_candidate(
+                    graph, view, subject_ref=subject_ref,
+                    name=str(proposed.get("name") or ""),
+                    description=str(proposed.get("description") or ""),
+                    refs=list(row.get("evidence_refs") or []),
+                    rationale=str(row.get("rationale") or ""),
+                )
         item = _mint_item(
             graph, view, draft=head, section=section,
             proposed=proposed,
@@ -1132,20 +1336,42 @@ def apply_understanding_delta_fn(
             uncertainty=str(row.get("uncertainty") or ""),
             candidate_ref=candidate_ref, flags=[],
         )
-        graph.patch_object(item.id, {
+        patch: dict[str, Any] = {
             "metadata": {
                 **dict(item.data.get("metadata") or {}),
                 "delta_ref": delta.id,
                 "delta_change": str(row.get("change") or "new"),
-                **({"predecessor_item_id": row.get("predecessor_item_id")}
-                   if row.get("predecessor_item_id") else {}),
+                **({"predecessor_item_id": predecessor.id}
+                   if predecessor is not None else {}),
             },
-        })
+        }
+        if predecessor is not None:
+            # Changed content supersedes its predecessor and CARRIES the
+            # attached decision state — applying the update was the owner's
+            # explicit act, so an accepted/rejected verdict travels onto the
+            # refreshed content instead of duplicating the item.
+            if pred_data.get("status") in ("accepted", "rejected", "deferred"):
+                patch["status"] = pred_data.get("status")
+                patch["verdict"] = pred_data.get("verdict")
+                patch["verdict_actor"] = pred_data.get("verdict_actor")
+                if pred_data.get("correction"):
+                    patch["correction"] = pred_data.get("correction")
+            if pred_data.get("comments"):
+                patch["comments"] = list(pred_data.get("comments") or [])[-12:]
+            graph.patch_object(predecessor.id, {
+                "status": "superseded",
+                "metadata": {**dict(pred_data.get("metadata") or {}),
+                             "superseded_by": item.id},
+            }, rationale="an applied update refreshed this item")
+            superseded += 1
+        graph.patch_object(item.id, patch)
         minted += 1
     graph.patch_object(delta.id, {
         "status": "applied", "resolved_by": actor,
     }, rationale=f"understanding delta applied by {actor}")
-    return {"ok": True, "delta_id": delta.id, "items_minted": minted}
+    return {"ok": True, "delta_id": delta.id, "items_minted": minted,
+            "superseded": superseded, "skipped_unchanged": skipped_unchanged,
+            "skipped_owner_edited": skipped_owner_edited}
 
 
 def dismiss_understanding_delta_fn(
@@ -1159,7 +1385,7 @@ def dismiss_understanding_delta_fn(
         return {"ok": False, "reason": "delta_not_found"}
     if verdict not in ("dismiss", "defer"):
         raise ValueError("verdict must be dismiss | defer")
-    if delta.data.get("status") in ("applied", "dismissed"):
+    if delta.data.get("status") in ("applied", "dismissed", "superseded"):
         return {"ok": True, "already_resolved": True,
                 "status": delta.data.get("status")}
     status = "dismissed" if verdict == "dismiss" else "deferred"
@@ -1403,6 +1629,7 @@ def compose_deterministic_draft_fn(
     understanding delta (ADR 0048 §3), never a superseding version."""
     view = reader or graph
     rows = _deterministic_rows(view, subject_ref=subject_ref)
+    fingerprint = synthesis_input_fingerprint_fn(view, subject_ref=subject_ref)
 
     head = current_setup_draft_fn(view, subject_ref=subject_ref)
     if (
@@ -1417,6 +1644,12 @@ def compose_deterministic_draft_fn(
                 "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
             },
         )
+        graph.patch_object(head.id, {
+            "coverage": {
+                **dict(head.data.get("coverage") or {}),
+                "input_fingerprint": fingerprint,
+            },
+        }, rationale="frozen head consumed this compose input horizon")
         return {**delta, "draft_id": None, "frozen_head": head.id,
                 "source": "deterministic"}
 
@@ -1428,6 +1661,7 @@ def compose_deterministic_draft_fn(
             "composer": "deterministic_floor",
             "provenance": provenance,
             "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
+            "input_fingerprint": fingerprint,
             **({"fallback_from": failed_pass} if failed_pass else {}),
         },
     )
@@ -1645,7 +1879,175 @@ def merge_setup_project_items_fn(
     return {"ok": True, "item_id": primary.id, "merged": len(items) - 1}
 
 
+def review_setup_items_fn(
+    graph, item_refs: list[str], verdict: str, *,
+    actor: str = "owner", correction: Optional[str] = None, reader=None,
+) -> dict[str, Any]:
+    """One explicit batch verdict over N items — the category-level decision
+    (ADR 0048 §4 amendment). Atomic at the host-call level: every item
+    settles inside one engine call instead of a fragile chain of client
+    commands; per-item results are returned so a refused item is visible,
+    not silently skipped."""
+    results = []
+    settled = 0
+    for ref in item_refs[:120]:
+        result = review_setup_item_fn(
+            graph, str(ref), verdict, actor=actor, correction=correction,
+            reader=reader,
+        )
+        results.append({"item_ref": str(ref), **result})
+        if result.get("ok"):
+            settled += 1
+    return {"ok": settled == len(results), "settled": settled,
+            "total": len(results), "results": results}
+
+
+#: Tokens too generic to signal project-name overlap on their own.
+_OVERLAP_STOPWORDS = frozenset((
+    "the", "a", "an", "of", "and", "for", "with", "inc", "llc", "co",
+    "company", "fund", "i", "ii", "iii", "operations", "ops", "project",
+    "projects", "initiative", "venture", "ventures", "vc", "capital",
+    "management", "team", "work", "app", "ai",
+))
+
+
+def _overlap_signature(name: str) -> set[str]:
+    tokens = {
+        token for token in "".join(
+            ch if ch.isalnum() else " " for ch in name.casefold()
+        ).split()
+        if len(token) >= 3 and token not in _OVERLAP_STOPWORDS
+    }
+    return tokens
+
+
+def possible_overlap_clusters_fn(
+    reader, *, draft_id: str = "", subject_ref: str = "owner",
+) -> list[dict[str, Any]]:
+    """Deterministic possible-overlap clusters over the ACTIVE project items
+    of the head draft: naming variants that share a significant token (or a
+    name-prefix) may be one workstream or two — the owner decides. Never an
+    auto-merge; a dismissed cluster stays dismissed (draft metadata)."""
+    if draft_id:
+        head = _draft_by_ref(reader, draft_id)
+    else:
+        head = current_setup_draft_fn(reader, subject_ref=subject_ref)
+    if head is None:
+        return []
+    dismissed = set(
+        (head.data.get("metadata") or {}).get("overlap_dismissed") or []
+    )
+    items = [
+        item for item in _items_for_draft(reader, head.id)
+        if item.data.get("section") == "projects"
+        and item.data.get("status") not in ("superseded", "committed")
+    ]
+    rows = []
+    for item in items:
+        value = dict(item.data.get("edited_value") or item.data.get("proposed") or {})
+        name = str(value.get("name") or "")
+        rows.append({"item": item, "name": name,
+                     "signature": _overlap_signature(name),
+                     "normalized": " ".join(name.casefold().split())})
+    parent = list(range(len(rows)))
+
+    def _find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    shared: dict[tuple[int, int], set[str]] = {}
+    for i in range(len(rows)):
+        for j in range(i + 1, len(rows)):
+            tokens = rows[i]["signature"] & rows[j]["signature"]
+            prefix = (
+                rows[i]["normalized"] and rows[j]["normalized"]
+                and (rows[i]["normalized"].startswith(rows[j]["normalized"])
+                     or rows[j]["normalized"].startswith(rows[i]["normalized"]))
+            )
+            if tokens or prefix:
+                shared[(i, j)] = tokens
+                ri, rj = _find(i), _find(j)
+                if ri != rj:
+                    parent[rj] = ri
+    groups: dict[int, list[int]] = {}
+    for index in range(len(rows)):
+        groups.setdefault(_find(index), []).append(index)
+    clusters = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        member_ids = sorted(rows[index]["item"].id for index in members)
+        cluster_key = _stable("overlap", head.id, *member_ids)[:24]
+        if cluster_key in dismissed:
+            continue
+        tokens = sorted({
+            token
+            for (i, j), toks in shared.items()
+            if i in members and j in members
+            for token in toks
+        })
+        clusters.append({
+            "cluster_key": cluster_key,
+            "items": [
+                {
+                    "item_id": rows[index]["item"].id,
+                    "name": rows[index]["name"],
+                    "status": rows[index]["item"].data.get("status"),
+                }
+                for index in sorted(members)
+            ],
+            "shared_tokens": tokens,
+            "why": (
+                "these project names share "
+                + (f"the token(s) {', '.join(tokens)}" if tokens
+                   else "a common name prefix")
+                + " — they may be one workstream or genuinely distinct"
+            ),
+        })
+    clusters.sort(key=lambda row: row["cluster_key"])
+    return clusters
+
+
+def dismiss_overlap_cluster_fn(
+    graph, draft_ref: str, cluster_key: str, *, actor: str = "owner",
+    reader=None,
+) -> dict[str, Any]:
+    """'Keep separate' — durable: the cluster never re-flags for this
+    snapshot."""
+    view = reader or graph
+    draft = _draft_by_ref(view, draft_ref)
+    if draft is None:
+        return {"ok": False, "reason": "draft_not_found"}
+    metadata = dict(draft.data.get("metadata") or {})
+    dismissed = list(metadata.get("overlap_dismissed") or [])
+    if cluster_key not in dismissed:
+        dismissed.append(cluster_key)
+    metadata["overlap_dismissed"] = dismissed[-40:]
+    graph.patch_object(draft.id, {"metadata": metadata},
+                       rationale=f"overlap cluster kept separate by {actor}")
+    return {"ok": True, "draft_id": draft.id, "cluster_key": cluster_key}
+
+
 # ---- submission -------------------------------------------------------------
+
+def _settle_campaign_at_resolution(graph, view) -> None:
+    """A resolved review is the campaign's terminal moment (ADR 0047 §1):
+    any non-terminal campaign — open OR parked on a pause — settles
+    completed instead of lingering as an ownerless paused ledger."""
+    try:
+        from .coordinator import current_campaign_fn, settle_campaign_fn
+
+        campaign = current_campaign_fn(view)
+        if campaign is not None and campaign.data.get("status") in (
+            "open", "paused_owner",
+        ):
+            settle_campaign_fn(graph, campaign.id, status="completed",
+                               stop_reason="review_ready")
+    except Exception:
+        pass  # campaign settlement must never block a review resolution
+
 
 def defer_setup_draft_fn(
     graph, draft_ref: str, *, actor: str = "owner", reader=None
@@ -1661,6 +2063,7 @@ def defer_setup_draft_fn(
                 "status": draft.data.get("status")}
     graph.patch_object(draft.id, {"status": "deferred"},
                        rationale=f"setup draft deferred by {actor}")
+    _settle_campaign_at_resolution(graph, view)
     return {"ok": True, "draft_id": draft.id, "status": "deferred",
             "resolution": "deferred"}
 
@@ -1889,6 +2292,7 @@ def complete_setup_draft_submission_fn(
     draft_status = "partial" if failed else "submitted"
     graph.patch_object(draft.id, {"status": draft_status},
                        rationale="setup draft submission settled")
+    _settle_campaign_at_resolution(graph, view)
     return {
         "ok": failed == 0, "draft_id": draft.id, "status": draft_status,
         "committed": committed, "failed": failed,
@@ -1952,6 +2356,9 @@ def project_setup_draft_fn(reader, *, subject_ref: str = "owner") -> dict[str, A
             "commit_error": item.data.get("commit_error"),
         }
         for item in _items_for_draft(reader, draft.id)
+        # Superseded rows are history (merged away, refreshed by an applied
+        # update): the review renders one active item per semantic key.
+        if item.data.get("status") != "superseded"
     ]
     status = str(draft.data.get("status") or "proposed")
     return {
@@ -1983,12 +2390,15 @@ __all__ = [
     "comment_setup_item_fn",
     "commit_setup_draft_fn",
     "compose_deterministic_draft_fn",
+    "consumed_input_fingerprint_fn",
     "current_setup_draft_fn",
     "defer_setup_draft_fn",
+    "dismiss_overlap_cluster_fn",
     "dismiss_understanding_delta_fn",
     "draft_review_started_fn",
     "merge_setup_project_items_fn",
     "perform_setup_draft",
+    "possible_overlap_clusters_fn",
     "prepare_setup_draft_fn",
     "project_setup_draft_fn",
     "project_understanding_deltas_fn",
@@ -1996,6 +2406,8 @@ __all__ = [
     "request_setup_draft_fn",
     "resubmit_setup_draft_fn",
     "review_setup_item_fn",
+    "review_setup_items_fn",
     "semantic_item_key",
     "split_setup_project_item_fn",
+    "synthesis_input_fingerprint_fn",
 ]

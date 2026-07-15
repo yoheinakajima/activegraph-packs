@@ -542,9 +542,17 @@ def test_draft_provenance_distinguishes_fallback_from_normal_zero_key(runtime):
     assert sources["research"]["status"] == "available"
     assert sources["sent_mail"]["status"] == "unavailable"
 
-    # A failed keyed pass first: the SAME composer marks the degraded path
-    # and carries the original provider failure.
+    # New source material arrives (the convergence rule refuses a re-request
+    # over an unchanged input horizon), then a failed keyed pass: the SAME
+    # composer marks the degraded path and carries the original failure.
+    graph.add_object("project_candidate", {
+        "candidate_identity": "p-borealis", "name": "Borealis",
+        "kind": "fact_seeded", "score_milli": 850, "sources": [evidence.id],
+        "rationale": "a later fact names it", "status": "proposed",
+        "description": "", "project_id": None, "metadata": {},
+    })
     request = request_setup_draft_fn(graph)
+    assert request["request_id"], "new material re-opens the synthesis request"
     graph.patch_object(request["request_id"], {
         "status": "failed", "error": "empty_synthesis_response length=0",
     })

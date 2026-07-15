@@ -242,6 +242,7 @@ def _entry(
     confidence: float = 0.5,
     corroboration: int = 0,
     attributes: Optional[dict[str, Any]] = None,
+    origin: str = "source",
 ) -> dict[str, Any]:
     return {
         "entry_id": _stable("working_entry", kind, statement.casefold())[:48],
@@ -253,6 +254,13 @@ def _entry(
         "confidence": round(min(1.0, max(0.0, confidence)), 3),
         "corroboration": int(corroboration),
         "attributes": attributes or {},
+        # Where the entry ultimately came from: "source" (external evidence),
+        # "owner" (declarations/answers), or "synthesis" (model-authored
+        # artifacts such as synthesized candidates). Synthesis-origin entries
+        # NEVER schedule reinterpretation — a synthesis output that could
+        # re-trigger synthesis is the feedback loop the 2026-07-14 live run
+        # hit (28 recompositions of one draft).
+        "origin": origin if origin in ("source", "owner", "synthesis") else "source",
     }
 
 
@@ -314,6 +322,7 @@ def compose_working_understanding_fn(
                 "attribute": str(data.get("attribute") or ""),
                 "value": str(data.get("value") or ""),
             },
+            origin="owner",
         ))
 
     lenses = list(view.objects(type="source_lens"))
@@ -409,6 +418,7 @@ def compose_working_understanding_fn(
                         support=[{"source": "owner", "refs": [question.id]}],
                         confidence=1.0,
                         attributes={"question_kind": str(data.get("kind") or "")},
+                        origin="owner",
                     ))
 
     for candidate in view.objects(type="project_candidate"):
@@ -421,6 +431,10 @@ def compose_working_understanding_fn(
             support=[{"source": "projects", "refs": list(data.get("sources") or [])[:6]}],
             confidence=min(0.9, int(data.get("score_milli") or 0) / 1000),
             attributes={"candidate_ref": candidate.id},
+            # A synthesized candidate is the model's own output riding along
+            # for the coordinator's packet; extraction/label/presence
+            # candidates are source evidence.
+            origin="synthesis" if data.get("kind") == "synthesized" else "source",
         ))
 
     source_coverage: dict[str, Any] = {}
@@ -438,9 +452,18 @@ def compose_working_understanding_fn(
     unresolved.sort(key=lambda row: (row["kind"], str(row.get("statement") or "")))
     # Coverage changes (a lens settling, a gap closing) are material to the
     # packet the coordinator reads, so they version the snapshot — but only
-    # ENTRY-kind changes schedule reinterpretation below.
+    # ENTRY-kind changes from source/owner material schedule reinterpretation
+    # below. Synthesis-origin entries reduce to their stable identity in the
+    # hash: model naming/confidence variance on its own artifacts must not be
+    # able to move the hash indefinitely.
+    def _hash_view(row: dict[str, Any]) -> dict[str, Any]:
+        if row.get("origin") == "synthesis":
+            return {"entry_id": row["entry_id"], "kind": row["kind"]}
+        return {k: v for k, v in row.items() if k != "origin"}
+
     content_hash = hashlib.sha256(json.dumps(
-        {"entries": entries, "unresolved": unresolved,
+        {"entries": [_hash_view(row) for row in entries],
+         "unresolved": unresolved,
          "source_coverage": source_coverage},
         sort_keys=True, ensure_ascii=False,
     ).encode("utf-8")).hexdigest()
@@ -452,16 +475,26 @@ def compose_working_understanding_fn(
             "version": int(head.data.get("version") or 1),
         }
 
+    # Reinterpretation is scheduled from source/owner material ONLY: an
+    # entry the synthesis itself authored can never demand another
+    # synthesis (the convergence rule; missing origin on rows written by
+    # older code counts as source exactly once, then the input-fingerprint
+    # gate downstream refuses the re-run).
+    def _schedules(row: dict[str, Any]) -> bool:
+        return row.get("origin", "source") != "synthesis"
+
     prior_entries = {
         row.get("entry_id"): row for row in (head.data.get("entries") if head else []) or []
+        if _schedules(row)
     }
+    current_scheduling = [row for row in entries if _schedules(row)]
     changed_kinds = sorted({
-        row["kind"] for row in entries
+        row["kind"] for row in current_scheduling
         if row["entry_id"] not in prior_entries
         or prior_entries[row["entry_id"]] != row
     } | {
         row.get("kind") for eid, row in prior_entries.items()
-        if eid not in {r["entry_id"] for r in entries}
+        if eid not in {r["entry_id"] for r in current_scheduling}
     })
     version = 1 if head is None else int(head.data.get("version") or 0) + 1
     working = graph.add_object("working_understanding", {

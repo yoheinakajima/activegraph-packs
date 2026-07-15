@@ -2,6 +2,40 @@
 
 ## 0.3.0 — the governed agentic loop (2026-07-14)
 
+- Synthesis convergence + one-update review (2026-07-14 night, onboarding
+  product closure): the live keyed run recomposed one draft 28 times
+  because synthesis-authored candidates re-versioned the working
+  understanding, which re-scheduled synthesis. Cuts, each test-pinned in
+  `tests/test_synthesis_convergence.py`:
+  - working entries carry `origin` (source/owner/synthesis);
+    synthesis-origin entries never schedule reinterpretation and reduce to
+    stable identity in the content hash (naming/score variance cannot move
+    it);
+  - candidate refresh patches are conditional (no no-op "refreshed the
+    proposal" events);
+  - `synthesis_input_fingerprint_fn` digests every EXTERNAL input; drafts
+    stamp the fingerprint they consumed (`coverage.input_fingerprint`,
+    frozen heads too) and `request_setup_draft_fn` refuses a re-request
+    over an unchanged horizon — one pending synthesis per input horizon;
+  - ONE cumulative understanding delta per frozen snapshot: a new delta
+    supersedes unresolved predecessors and inherits `deferred` when it
+    carries nothing the owner hasn't seen;
+  - applying a delta supersedes same-key predecessors (owner verdicts and
+    comments travel onto refreshed content; owner edits always win) —
+    never a duplicate active item; the setup-draft projection now hides
+    superseded rows;
+  - deterministic `possible_overlap_clusters_fn` +
+    `dismiss_overlap_cluster_fn` (shared-token/name-prefix clusters;
+    flagging, never auto-merge); `review_setup_items_fn` batch verdict;
+  - budget pauses mint an answerable wrap-up/extend owner question; the
+    deterministic floor's synthesize/stop are budget-exempt (a campaign
+    can always end); review resolution settles any non-terminal campaign
+    `completed/review_ready`;
+  - host-MEASURED provider usage (`usage` on proposal/draft outcomes)
+    charges campaign budgets via `charge_campaign_usage_fn`;
+  - access proposals must be actionable strategies (question class +
+    strategy + reason; label inventories are dropped and counted as
+    `dropped_low_quality`).
 - Live-run hardening (2026-07-14 evening): a pausing `ask_owner` move now
   mints its owner question in the same commit (`record_coordinator_move_fn`),
   so a paused campaign always presents something answerable; the validator

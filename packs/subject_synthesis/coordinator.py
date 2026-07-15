@@ -173,7 +173,8 @@ def _plan_for_surface(reader, source_surface_id: str, *, purposes: tuple[str, ..
 
 
 def validate_coordinator_move_fn(
-    reader, campaign, move: dict[str, Any],
+    reader, campaign, move: dict[str, Any], *,
+    proposer: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """The deterministic gate every proposed move passes BEFORE execution.
 
@@ -185,6 +186,13 @@ def validate_coordinator_move_fn(
     reasons: list[str] = []
     data = campaign.data or {}
     kind = str(move.get("kind") or "")
+    # The deterministic floor's completion moves are exempt from the move
+    # budget: a campaign must always be able to end honestly, and the floor
+    # is bounded by the synthesis input-horizon rule, not by move count.
+    floor_completion = (
+        kind in ("synthesize", "stop")
+        and str((proposer or {}).get("kind") or "") == "deterministic"
+    )
 
     if data.get("status") == "paused_owner":
         return {"verdict": "reject", "reasons": ["campaign_paused_for_owner"]}
@@ -331,7 +339,7 @@ def validate_coordinator_move_fn(
 
     # Budgets are authoritative for every executing kind; stop and
     # owner-boundary moves stay legal so a campaign can always end honestly.
-    if kind not in ("stop", "ask_owner", "propose_amendment"):
+    if kind not in ("stop", "ask_owner", "propose_amendment") and not floor_completion:
         budgets = dict(data.get("budgets") or {})
         spent = dict(data.get("spent") or {})
         cost = dict(move.get("cost") or {})
@@ -385,7 +393,7 @@ def record_coordinator_move_fn(
                 "reasons": (existing.data.get("validation") or {}).get("reasons"),
                 "sequence": int(existing.data.get("sequence") or 0),
             }
-    verdict = validate_coordinator_move_fn(view, campaign, move)
+    verdict = validate_coordinator_move_fn(view, campaign, move, proposer=proposer)
     data = campaign.data or {}
     sequence = int(data.get("move_count") or 0) + 1
     # Model-authored strings are untrusted content whatever proposed them.
@@ -436,19 +444,40 @@ def record_coordinator_move_fn(
     if verdict["verdict"] == "pause_owner":
         patch["status"] = "paused_owner"
     graph.patch_object(campaign.id, patch, rationale="coordinator move recorded")
-    if verdict["verdict"] == "pause_owner" and record.data.get("kind") == "ask_owner":
-        # The question mints in the same commit as the pausing move — a
-        # paused campaign must always present something the owner can
-        # answer (the validator guaranteed non-empty question text above).
+    if verdict["verdict"] == "pause_owner":
+        # EVERY pause carries an owner-facing resolution surface, minted in
+        # the same commit as the pausing move: an ask_owner brings its own
+        # question (the validator guaranteed non-empty text above), and a
+        # budget pause asks the one decision a budget pause is — wrap up or
+        # extend. A pause with nothing to answer is a deadlock, not a state.
         move_params = dict(record.data.get("params") or {})
-        ask_owner_question_fn(
-            graph, campaign.id,
-            kind=str(move_params.get("question_kind") or "differentiating"),
-            prompt=str(move_params.get("question")
-                       or move_params.get("prompt") or ""),
-            options=list(move_params.get("options") or []),
-            move_ref=record.id,
-        )
+        budget_reasons = [
+            reason for reason in verdict["reasons"]
+            if reason == "move_budget_exhausted"
+            or str(reason).startswith("budget_exhausted")
+        ]
+        if record.data.get("kind") == "ask_owner":
+            ask_owner_question_fn(
+                graph, campaign.id,
+                kind=str(move_params.get("question_kind") or "differentiating"),
+                prompt=str(move_params.get("question")
+                           or move_params.get("prompt") or ""),
+                options=list(move_params.get("options") or []),
+                move_ref=record.id,
+            )
+        elif budget_reasons:
+            ask_owner_question_fn(
+                graph, campaign.id,
+                kind="scope",
+                prompt="I've reached this study's budget. Wrap up with what "
+                       "I have, or extend it and keep going?",
+                options=[
+                    {"id": "wrap_up", "label": "Wrap up with what you have"},
+                    {"id": "extend_budget",
+                     "label": "Extend the budget and continue"},
+                ],
+                move_ref=record.id,
+            )
     return {
         "ok": True, "move_id": record.id, "verdict": verdict["verdict"],
         "reasons": verdict["reasons"], "sequence": sequence,
@@ -483,6 +512,30 @@ def settle_coordinator_move_fn(
             graph.patch_object(campaign.id, {"spent": spent},
                                rationale="campaign budget charged")
     return {"ok": True, "move_id": move.id, "status": status}
+
+
+def charge_campaign_usage_fn(
+    graph, campaign_ref: str, *, tokens: float = 0, cost_milli: float = 0,
+    seconds: float = 0, moves: int = 0, reader=None,
+) -> dict[str, Any]:
+    """Charge HOST-MEASURED provider usage to the campaign's authoritative
+    spend ledger. Model-proposed cost fields are advisory at validation
+    time; actual spend lands here (the live run recorded 0 tokens across
+    28 real provider calls because nothing charged measured usage)."""
+    view = reader or graph
+    campaign = _campaign_by_ref(view, campaign_ref)
+    if campaign is None:
+        return {"ok": False, "reason": "campaign_not_found"}
+    spent = dict(campaign.data.get("spent") or {})
+    if moves:
+        spent["moves"] = int(spent.get("moves") or 0) + int(moves)
+    for field, add in (("tokens", tokens), ("cost_milli", cost_milli),
+                       ("seconds", seconds)):
+        if add:
+            spent[field] = round(float(spent.get(field) or 0) + float(add), 3)
+    graph.patch_object(campaign.id, {"spent": spent},
+                       rationale="measured provider usage charged")
+    return {"ok": True, "campaign_id": campaign.id, "spent": spent}
 
 
 def settle_campaign_fn(
@@ -920,6 +973,14 @@ def perform_coordinator_proposal(payload: dict[str, Any]) -> dict[str, Any]:
         "model_role": "reasoning",
         "provider_kind": resolved.provider,
         "response_sample": text[:400],
+        # Host-measured spend for the campaign ledger (never the model's
+        # own cost estimate).
+        "usage": {
+            "tokens": int(getattr(response, "input_tokens", 0) or 0)
+            + int(getattr(response, "output_tokens", 0) or 0),
+            "cost_milli": float(getattr(response, "cost_usd", 0) or 0) * 1000.0,
+            "seconds": float(getattr(response, "latency_seconds", 0) or 0),
+        },
         "error": None if move else "coordinator_response_unparseable",
     }
 
@@ -935,6 +996,17 @@ def commit_coordinator_proposal_fn(
     campaign = _campaign_by_ref(view, campaign_ref)
     if campaign is None:
         return {"ok": False, "reason": "campaign_not_found"}
+    usage = dict(outcome.get("usage") or {})
+    if usage:
+        # The provider call happened whatever the parse verdict — measured
+        # spend charges either way.
+        charge_campaign_usage_fn(
+            graph, campaign.id,
+            tokens=float(usage.get("tokens") or 0),
+            cost_milli=float(usage.get("cost_milli") or 0),
+            seconds=float(usage.get("seconds") or 0),
+            reader=reader,
+        )
     if not outcome.get("ok") or not isinstance(outcome.get("move"), dict):
         metadata = dict(campaign.data.get("metadata") or {})
         failures = list(metadata.get("proposal_failures") or [])
@@ -1311,6 +1383,7 @@ __all__ = [
     "STOP_REASONS",
     "answer_owner_question_fn",
     "ask_owner_question_fn",
+    "charge_campaign_usage_fn",
     "commit_coordinator_proposal_fn",
     "commit_drill_down_fn",
     "current_campaign_fn",

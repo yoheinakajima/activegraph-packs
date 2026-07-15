@@ -256,8 +256,11 @@ def test_split_produces_fresh_items_and_supersedes_the_original(runtime):
     ])
     assert result["ok"] and result["created"] == 2
     projected = project_setup_draft_fn(graph)
-    original = next(i for i in projected["items"] if i["id"] == item["id"])
-    assert original["status"] == "superseded"
+    # Superseded rows are history: the projection renders only active items,
+    # so the split original disappears from the review while its object
+    # keeps the superseded status durably.
+    assert all(i["id"] != item["id"] for i in projected["items"])
+    assert graph.get_object(item["id"]).data["status"] == "superseded"
     parts = [i for i in projected["items"]
              if i["proposed"].get("name") in ("Portfolio Support", "Advising")]
     assert len(parts) == 2

@@ -360,12 +360,23 @@ def commit_subject_synthesis_fn(
             merged_sources = list(dict.fromkeys(
                 [*((existing.data or {}).get("sources") or []), *refs]
             ))
-            graph.patch_object(existing.id, {
-                "kind": "synthesized",
-                "score_milli": max(800, int((existing.data or {}).get("score_milli") or 0)),
-                "sources": merged_sources,
-                "rationale": rationale or (existing.data or {}).get("rationale"),
-            }, rationale="synthesis refreshed the proposal")
+            # Refresh ONLY when the pass genuinely adds something: the
+            # unconditional "refreshed the proposal" patch per run was fuel
+            # for the 2026-07-14 recompose loop (every patch re-versioned
+            # the working understanding, which re-scheduled synthesis).
+            adds_sources = merged_sources != list(
+                (existing.data or {}).get("sources") or []
+            )
+            adds_rationale = bool(rationale) and not (
+                (existing.data or {}).get("rationale")
+            )
+            if adds_sources or adds_rationale:
+                graph.patch_object(existing.id, {
+                    "kind": "synthesized",
+                    "score_milli": max(800, int((existing.data or {}).get("score_milli") or 0)),
+                    "sources": merged_sources,
+                    "rationale": rationale or (existing.data or {}).get("rationale"),
+                }, rationale="synthesis refreshed the proposal")
             project_minted += 1
             continue
         graph.add_object("project_candidate", {

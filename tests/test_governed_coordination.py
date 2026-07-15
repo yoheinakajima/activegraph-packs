@@ -739,7 +739,10 @@ def test_model_proposal_rides_prepare_perform_commit(runtime):
     )
     campaign = current_campaign_fn(graph)
     assert campaign.data["spent"]["moves"] == 1
-    assert campaign.data["spent"]["tokens"] == 200
+    # 200 declared at settle + 20 HOST-MEASURED tokens from the proposal
+    # call itself (the scripted response reports 10 in + 10 out) — actual
+    # provider usage charges the ledger, never only the claimed cost.
+    assert campaign.data["spent"]["tokens"] == 220
 
 
 def test_model_proposing_forbidden_move_is_recorded_rejected(runtime):
