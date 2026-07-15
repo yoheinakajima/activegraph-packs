@@ -245,7 +245,11 @@ GMAIL_SENT_RECIPE: dict[str, Any] = {
     "budgets": {
         "max_items": DEFAULT_SENT_COUNT,
         "max_chars_per_item": 4_000,
-        "max_tokens_per_call": 2_000,
+        # 2,000 tokens truncated 3 of 5 live batches mid-JSON (a 10-row
+        # response runs ~1,900-2,000 tokens): the fenced payload arrived cut,
+        # parsed to zero rows, and 29 of 49 messages silently vanished into
+        # "model_skipped" coverage. Headroom, not a haircut.
+        "max_tokens_per_call": 4_000,
         "timeout_seconds_per_call": 120.0,
         "max_synthesis_input_tokens": 12_000,
         "max_aggregation_groups": 6,

@@ -2,6 +2,12 @@
 
 ## 0.6.0 — the sent-mail understanding affordance (2026-07-14)
 
+- Raise the sent-recipe `max_tokens_per_call` budget to 4,000: the owner's
+  live keyed run lost 3 of 5 leaf batches to response truncation at the
+  2,000-token ceiling (fenced JSON cut mid-stream parses to zero rows and
+  lands in coverage as "model_skipped"). Recording truncation explicitly
+  and retrying smaller batches remains a follow-up.
+
 - Declare `gmail_sent_understanding` (ADR 0047 §2): the typed affordance by
   which sent mail joins a governed comprehension campaign — teachable
   signals, `messages.fetch` capability with the `in:sent` scope, privacy and
