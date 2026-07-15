@@ -148,6 +148,15 @@ class SetupDraftItem(_StrictModel):
     verdict: Optional[Literal["accept", "reject", "edit", "defer"]] = None
     verdict_actor: Optional[str] = None
     edited_value: Optional[dict[str, Any]] = None
+    #: The typed correction the owner attached to a rejection (ADR 0048 §4):
+    #: a distinct teaching signal, never a bare binary no.
+    correction: Optional[Literal[
+        "not_me", "duplicate", "incorrect", "not_useful",
+        "wrong_type", "wrong_grouping",
+    ]] = None
+    #: Owner comments: durable owner evidence that supersedes nothing and
+    #: never counts as a correct system prediction.
+    comments: list[dict[str, Any]] = Field(default_factory=list)
     status: Literal[
         "proposed", "accepted", "rejected", "edited", "deferred",
         "superseded", "committed", "commit_failed",
@@ -155,6 +164,28 @@ class SetupDraftItem(_StrictModel):
     candidate_ref: Optional[str] = None
     commit_error: Optional[str] = None
     injection_flags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class UnderstandingDelta(_StrictModel):
+    """New or changed comprehension after a review snapshot froze
+    (ADR 0048 §3): an additive, evidence-linked diff the owner applies,
+    dismisses, or defers. It never replaces reviewed items, never re-keys
+    them, and never reopens resolved onboarding."""
+
+    delta_identity: str = Field(min_length=1)
+    subject_ref: str = "owner"
+    draft_id: str = Field(min_length=1)
+    version: int = Field(ge=1)
+    status: Literal["open", "applied", "dismissed", "deferred"] = "open"
+    source: Literal["synthesis", "deterministic"] = "deterministic"
+    run_id: Optional[str] = None
+    #: Each row: change (new|changed|conflicting), semantic_key, section,
+    #: proposed, rationale, evidence_refs, confidence, uncertainty,
+    #: predecessor_item_id (for changed/conflicting).
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    resolved_by: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -383,6 +414,11 @@ OBJECT_TYPES = [
         "An accepted information-access strategy for a class of questions.",
     ),
     ObjectType(
+        "understanding_delta",
+        UnderstandingDelta,
+        "An additive diff of new/changed comprehension after a review froze.",
+    ),
+    ObjectType(
         "source_lens",
         SourceLens,
         "One source's versioned lens into the shared working understanding.",
@@ -428,6 +464,7 @@ __all__ = [
     "SetupDraft",
     "SetupDraftItem",
     "InformationAccessHint",
+    "UnderstandingDelta",
     "SourceLens",
     "WorkingUnderstanding",
     "ReinterpretationRequest",

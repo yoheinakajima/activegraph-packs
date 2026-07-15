@@ -478,6 +478,56 @@ def settle_campaign_fn(
     return {"ok": True, "campaign_id": campaign.id, "status": status}
 
 
+def freeze_review_cohort_fn(
+    graph, campaign_ref: str, *, actor: str = "owner",
+    event_horizon: str = "", reader=None,
+) -> dict[str, Any]:
+    """“Review what I have now” (ADR 0048 §3): close the selected-source
+    cohort at the current event horizon. Sources still working keep
+    working; their later contributions arrive as understanding deltas, and
+    the synthesis floor no longer waits for them."""
+    view = reader or graph
+    campaign = _campaign_by_ref(view, campaign_ref)
+    if campaign is None:
+        return {"ok": False, "reason": "campaign_not_found"}
+    metadata = dict(campaign.data.get("metadata") or {})
+    cohort = dict(metadata.get("cohort") or {})
+    if cohort.get("frozen"):
+        return {"ok": True, "campaign_id": campaign.id, "already_frozen": True}
+    cohort.update({
+        "frozen": True,
+        "frozen_by": actor,
+        "frozen_horizon": event_horizon,
+        "selected_at_freeze": list(campaign.data.get("selected_affordances") or []),
+    })
+    metadata["cohort"] = cohort
+    graph.patch_object(campaign.id, {"metadata": metadata},
+                       rationale=f"review cohort frozen by {actor}")
+    return {"ok": True, "campaign_id": campaign.id, "frozen": True}
+
+
+def review_cohort_state_fn(reader, *, subject_ref: str = "owner") -> dict[str, Any]:
+    campaign = current_campaign_fn(reader, subject_ref=subject_ref)
+    if campaign is None:
+        return {"exists": False, "frozen": False, "selected": [], "settled": []}
+    cohort = dict((campaign.data.get("metadata") or {}).get("cohort") or {})
+    lenses = {
+        str(obj.data.get("affordance_id") or ""): str(obj.data.get("status") or "")
+        for obj in reader.objects(type="source_lens")
+    }
+    terminal = ("contributed", "failed", "declined", "unavailable")
+    selected = list(campaign.data.get("selected_affordances") or [])
+    return {
+        "exists": True,
+        "campaign_id": campaign.id,
+        "frozen": bool(cohort.get("frozen")),
+        "frozen_horizon": str(cohort.get("frozen_horizon") or ""),
+        "selected": selected,
+        "settled": [a for a in selected if lenses.get(a) in terminal],
+        "pending": [a for a in selected if lenses.get(a) not in terminal],
+    }
+
+
 def resume_campaign_fn(graph, campaign_ref: str, *, reader=None) -> dict[str, Any]:
     """Resume a campaign paused for an owner decision (after the decision)."""
     view = reader or graph
@@ -610,15 +660,22 @@ def propose_next_move_deterministic_fn(
     authority."""
     data = campaign.data or {}
     selected = list(data.get("selected_affordances") or [])
+    cohort_frozen = bool(
+        ((data.get("metadata") or {}).get("cohort") or {}).get("frozen")
+    )
     lenses = {
         str(obj.data.get("affordance_id") or ""): obj
         for obj in reader.objects(type="source_lens")
     }
     terminal = ("contributed", "failed", "declined", "unavailable")
-    for affordance_id in selected:
-        lens = lenses.get(affordance_id)
-        if lens is None or lens.data.get("status") not in terminal:
-            return None  # source work in flight: the pump owns it; no busy moves
+    if not cohort_frozen:
+        # The default recommendation waits for every selected source; the
+        # owner's "review what I have now" freeze lifts the wait and later
+        # results arrive as deltas (ADR 0048 §3).
+        for affordance_id in selected:
+            lens = lenses.get(affordance_id)
+            if lens is None or lens.data.get("status") not in terminal:
+                return None  # source work in flight: the pump owns it
     working = current_working_understanding_fn(reader, subject_ref=subject_ref)
     working_version = int(working.data.get("version") or 0) if working else 0
     drafts = [
@@ -1194,6 +1251,7 @@ __all__ = [
     "commit_drill_down_fn",
     "current_campaign_fn",
     "dismiss_owner_question_fn",
+    "freeze_review_cohort_fn",
     "open_comprehension_campaign_fn",
     "pending_drill_downs_fn",
     "perform_coordinator_proposal",
@@ -1205,6 +1263,7 @@ __all__ = [
     "record_coordinator_move_fn",
     "request_drill_down_fn",
     "resume_campaign_fn",
+    "review_cohort_state_fn",
     "settle_campaign_fn",
     "settle_coordinator_move_fn",
     "validate_coordinator_move_fn",

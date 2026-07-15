@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:65c03727c7ef6a1b86b1926f260896e4749baa9c8c91257c0d4a3f3ba53932f0"
+content_hash = "sha256:727f348ee30aeefce4b697def5635e5d7a94a9f305890aaea88cd6342341bc37"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"
@@ -33,7 +33,7 @@ connector_control = ">=0.1"
 llm_provider = ">=0.1"
 
 [surface]
-object_types = ["subject_synthesis_request", "subject_synthesis_run", "comprehension_request", "source_item_summary", "comprehension_aggregate", "setup_draft", "setup_draft_item", "information_access_hint", "source_lens", "working_understanding", "reinterpretation_request", "comprehension_campaign", "coordinator_move", "owner_question", "evidence_drill_down"]
+object_types = ["subject_synthesis_request", "subject_synthesis_run", "comprehension_request", "source_item_summary", "comprehension_aggregate", "setup_draft", "setup_draft_item", "information_access_hint", "understanding_delta", "source_lens", "working_understanding", "reinterpretation_request", "comprehension_campaign", "coordinator_move", "owner_question", "evidence_drill_down"]
 relation_types = []
 behaviors = []
 tools = []

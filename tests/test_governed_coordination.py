@@ -826,3 +826,31 @@ def test_campaign_projection_shape(runtime):
     assert projected["moves"][0]["validation"]["verdict"] == "execute"
     assert len(projected["open_questions"]) == 1
     assert projected["pins"]["model_roles"]["fast"] is not None
+
+
+def test_frozen_cohort_lifts_the_settled_wait(runtime):
+    """“Review what I have now” (ADR 0048 §3): a frozen cohort synthesizes
+    despite a still-working selected source; the late source's results
+    arrive as deltas, never as a moved snapshot."""
+    from packs.subject_synthesis.coordinator import (
+        freeze_review_cohort_fn, review_cohort_state_fn,
+    )
+
+    graph = runtime.graph
+    campaign = _open_campaign(graph, ("web_research_understanding",))
+    contribute_source_lens_fn(
+        graph, affordance_id="web_research_understanding",
+        source_surface_id="web_research:owner", contributions=[],
+    )
+    assert propose_next_move_deterministic_fn(graph, campaign) is None
+
+    frozen = freeze_review_cohort_fn(graph, campaign.id, event_horizon="evt_42")
+    assert frozen["ok"] and frozen["frozen"]
+    assert freeze_review_cohort_fn(graph, campaign.id)["already_frozen"]
+    state = review_cohort_state_fn(graph)
+    assert state["frozen"] and state["frozen_horizon"] == "evt_42"
+    assert state["pending"] == ["web_research_understanding"]
+
+    campaign = current_campaign_fn(graph)
+    move = propose_next_move_deterministic_fn(graph, campaign)
+    assert move is not None and move["kind"] == "synthesize"

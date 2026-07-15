@@ -49,6 +49,14 @@ SECTION_DESTINATIONS = {
 
 ITEM_VERDICTS = ("accept", "reject", "edit", "defer")
 
+#: The typed correction reasons a rejection may carry (ADR 0048 §4). Each is
+#: a distinct teaching signal for the prediction/routing loop — a binary
+#: "no" throws away exactly the information the system needs.
+CORRECTION_REASONS = (
+    "not_me", "duplicate", "incorrect", "not_useful",
+    "wrong_type", "wrong_grouping",
+)
+
 #: Sections whose acceptance promotes through the owner-declaration path
 #: (owner-scoped evidence minted at submit): the cited material is connector
 #: or research content, which can never mint an owner fact by itself.
@@ -97,6 +105,93 @@ def current_setup_draft_fn(reader, *, subject_ref: str = "owner"):
         return None
     rows.sort(key=lambda obj: int(obj.data.get("version") or 0))
     return rows[-1]
+
+
+# ---- stable semantic identity (ADR 0048 §3) -----------------------------------
+
+def semantic_item_key(section: str, proposed: dict[str, Any]) -> str:
+    """The content-derived identity a verdict may follow across versions.
+
+    Deliberately narrow: an edited identity value, a renamed project, or a
+    rewritten statement is a NEW semantic item — a verdict never carries
+    onto materially changed content merely because an index or generated id
+    matched. Only presentation-level fields (a project's description, an
+    access hint's question class) may change under a stable key.
+    """
+    proposed = proposed or {}
+
+    def _norm(value: Any) -> str:
+        return " ".join(str(value or "").split()).casefold()
+
+    if section == "projects":
+        material = ("name", _norm(proposed.get("name")))
+    elif section == "access":
+        material = (
+            "access", _norm(proposed.get("source")), _norm(proposed.get("strategy"))
+        )
+    elif section == "people":
+        material = ("person", _norm(proposed.get("value") or proposed.get("name")))
+    else:  # identity / narrative / instructions: the value IS the identity
+        material = (
+            _norm(proposed.get("attribute")), _norm(proposed.get("value")),
+        )
+    digest = hashlib.sha256(
+        "\x1f".join((section, *material)).encode("utf-8")
+    ).hexdigest()
+    return f"sem_{digest[:32]}"
+
+
+def _semantic_presentation(section: str, proposed: dict[str, Any]) -> str:
+    """The comparable presentation content under a stable key — what makes a
+    same-key item 'changed'."""
+    proposed = proposed or {}
+    if section == "projects":
+        fields = {k: proposed.get(k) for k in ("description", "status_note", "people")}
+    elif section == "access":
+        fields = {"question_class": proposed.get("question_class")}
+    elif section == "people":
+        fields = {"relationship": proposed.get("relationship")}
+    else:
+        return ""  # key == content: same key means unchanged
+    return json.dumps(fields, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def draft_review_started_fn(reader, draft) -> bool:
+    """Whether review began on this draft: an explicit begin receipt, any
+    verdict, or any owner comment. From that moment the snapshot is frozen
+    (ADR 0048 §3)."""
+    if (draft.data.get("metadata") or {}).get("review_started"):
+        return True
+    for item in _items_for_draft(reader, draft.id):
+        data = item.data or {}
+        if data.get("verdict") is not None:
+            return True
+        if data.get("comments"):
+            return True
+        if data.get("status") not in ("proposed",):
+            return True
+    return False
+
+
+def begin_setup_review_fn(
+    graph, draft_ref: str, *, actor: str = "owner", reader=None,
+) -> dict[str, Any]:
+    """Explicitly start review: pins the snapshot before any verdict lands
+    (the client calls this when the review surface opens). Idempotent."""
+    view = reader or graph
+    draft = _draft_by_ref(view, draft_ref)
+    if draft is None:
+        return {"ok": False, "reason": "draft_not_found"}
+    if draft.data.get("status") != "proposed":
+        return {"ok": True, "frozen": True,
+                "status": draft.data.get("status"), "already_resolved": True}
+    metadata = dict(draft.data.get("metadata") or {})
+    if metadata.get("review_started"):
+        return {"ok": True, "draft_id": draft.id, "frozen": True}
+    metadata["review_started"] = {"by": actor}
+    graph.patch_object(draft.id, {"metadata": metadata},
+                       rationale=f"review begun by {actor}; snapshot frozen")
+    return {"ok": True, "draft_id": draft.id, "frozen": True}
 
 
 def _items_for_draft(reader, draft_id: str):
@@ -501,6 +596,30 @@ def commit_setup_draft_fn(
     ):
         return _fail("synthesis_cited_nothing_packed")
 
+    # A frozen review snapshot never moves (ADR 0048 §3): once the owner
+    # started reviewing the head, later synthesis lands as an additive
+    # understanding delta — never a superseding version.
+    head = current_setup_draft_fn(view, subject_ref=subject_ref)
+    if (
+        head is not None
+        and head.data.get("status") == "proposed"
+        and draft_review_started_fn(view, head)
+    ):
+        delta_rows = _sanitized_rows_from_sections(sections, valid_refs, cap)
+        delta = _mint_understanding_delta(
+            graph, view, head=head, rows=delta_rows, source="synthesis",
+            run_id=None, coverage={
+                "packing": payload.get("packing") or {},
+                "provenance": "model_assisted",
+                "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
+            },
+        )
+        graph.patch_object(request_id, {
+            "status": "completed",
+            "metadata": {"kind": "setup_draft", "delta_id": delta.get("delta_id")},
+        }, rationale="late synthesis landed as an understanding delta")
+        return {**delta, "draft_id": None, "frozen_head": head.id}
+
     draft = _mint_draft(
         graph, subject_ref=subject_ref, source="synthesis", run_id=None,
         included_refs=list(payload.get("included_refs") or []),
@@ -748,6 +867,332 @@ def commit_setup_draft_fn(
     }
 
 
+# ---- understanding deltas (ADR 0048 §3) ----------------------------------------
+
+def _open_head_items_by_key(reader, draft_id: str) -> dict[str, Any]:
+    index: dict[str, Any] = {}
+    for item in _items_for_draft(reader, draft_id):
+        if item.data.get("status") == "superseded":
+            continue
+        key = semantic_item_key(
+            str(item.data.get("section") or ""),
+            dict(item.data.get("edited_value") or item.data.get("proposed") or {}),
+        )
+        index.setdefault(key, item)
+    return index
+
+
+def _sanitized_rows_from_sections(
+    sections: dict[str, Any], valid_refs: set[str], cap: int,
+) -> list[dict[str, Any]]:
+    """Normalize model sections into delta rows under the same sanitation
+    and cite-or-drop rules the main commit path applies."""
+    rows: list[dict[str, Any]] = []
+
+    def _refs_of(row: dict[str, Any]) -> list[str]:
+        return [str(ref) for ref in (row.get("refs") or []) if str(ref) in valid_refs]
+
+    for row in (sections.get("identity") or [])[:cap]:
+        attribute = str((row or {}).get("attribute") or "").strip().lower()
+        value, _ = _sanitize((row or {}).get("value") or "", 300)
+        refs = _refs_of(row or {})
+        if not attribute or not value or not refs:
+            continue
+        rows.append({
+            "section": "identity",
+            "proposed": {"attribute": attribute, "value": value},
+            "rationale": str((row or {}).get("rationale") or ""),
+            "evidence_refs": refs,
+            "confidence": float((row or {}).get("confidence") or 0.7),
+            "uncertainty": str((row or {}).get("uncertainty") or ""),
+        })
+    for section, value_key in (
+        ("narrative", "statement"), ("instructions", "instruction"),
+    ):
+        for row in (sections.get(section) or [])[:cap]:
+            value, _ = _sanitize((row or {}).get(value_key) or "", 600)
+            refs = _refs_of(row or {})
+            if not value or not refs:
+                continue
+            rows.append({
+                "section": section,
+                "proposed": {"attribute": _SECTION_ATTRIBUTES[section], "value": value},
+                "rationale": str((row or {}).get("rationale") or ""),
+                "evidence_refs": refs,
+                "confidence": float((row or {}).get("confidence") or 0.6),
+                "uncertainty": str((row or {}).get("uncertainty") or ""),
+            })
+    for row in (sections.get("projects") or [])[:cap]:
+        name = " ".join(str((row or {}).get("name") or "").split())
+        refs = _refs_of(row or {})
+        if not name or len(name) < 2 or not refs:
+            continue
+        description, _ = _sanitize((row or {}).get("description") or "", 800)
+        rows.append({
+            "section": "projects",
+            "proposed": {
+                "name": name, "description": description,
+                "status_note": str((row or {}).get("status_note") or "")[:200],
+                "people": [str(p)[:120] for p in ((row or {}).get("people") or [])[:8]],
+            },
+            "rationale": str((row or {}).get("rationale") or ""),
+            "evidence_refs": refs,
+            "confidence": float((row or {}).get("confidence") or 0.7),
+            "uncertainty": str((row or {}).get("uncertainty") or ""),
+        })
+    for row in (sections.get("people") or [])[:cap]:
+        name, _ = _sanitize((row or {}).get("name") or "", 120)
+        relationship, _ = _sanitize((row or {}).get("relationship") or "", 300)
+        refs = _refs_of(row or {})
+        if not name or not refs:
+            continue
+        rows.append({
+            "section": "people",
+            "proposed": {"attribute": "person", "value": name,
+                         "relationship": relationship},
+            "rationale": str((row or {}).get("rationale") or ""),
+            "evidence_refs": refs,
+            "confidence": float((row or {}).get("confidence") or 0.6),
+            "uncertainty": str((row or {}).get("uncertainty") or ""),
+        })
+    for row in (sections.get("access") or [])[:cap]:
+        strategy, _ = _sanitize((row or {}).get("strategy") or "", 300)
+        source_name, _ = _sanitize((row or {}).get("source") or "", 120)
+        question_class, _ = _sanitize((row or {}).get("question_class") or "", 200)
+        refs = _refs_of(row or {})
+        if not strategy or not source_name or not refs:
+            continue
+        rows.append({
+            "section": "access",
+            "proposed": {"question_class": question_class,
+                         "source": source_name, "strategy": strategy},
+            "rationale": str((row or {}).get("rationale") or ""),
+            "evidence_refs": refs,
+            "confidence": float((row or {}).get("confidence") or 0.6),
+            "uncertainty": str((row or {}).get("uncertainty") or ""),
+        })
+    return rows
+
+
+def _mint_understanding_delta(
+    graph, view, *, head, rows: list[dict[str, Any]], source: str,
+    run_id: Optional[str], coverage: dict[str, Any],
+) -> dict[str, Any]:
+    """Diff freshly-synthesized rows against the frozen head by semantic
+    key: new keys arrive as `new`, same-key presentation changes as
+    `changed` (or `conflicting` when the owner already accepted the head
+    item), and unchanged items are silently NOT in the delta — their
+    verdicts simply stand."""
+    head_index = _open_head_items_by_key(view, head.id)
+    delta_items: list[dict[str, Any]] = []
+    for row in rows:
+        section = str(row.get("section") or "")
+        proposed = dict(row.get("proposed") or {})
+        key = semantic_item_key(section, proposed)
+        predecessor = head_index.get(key)
+        if predecessor is None:
+            change = "new"
+            predecessor_id = None
+        else:
+            head_presentation = _semantic_presentation(
+                section,
+                dict(predecessor.data.get("edited_value")
+                     or predecessor.data.get("proposed") or {}),
+            )
+            if _semantic_presentation(section, proposed) == head_presentation:
+                continue  # unchanged: the standing verdict is the answer
+            predecessor_id = predecessor.id
+            change = (
+                "conflicting"
+                if predecessor.data.get("status") in ("accepted", "edited")
+                else "changed"
+            )
+        delta_items.append({
+            "change": change,
+            "semantic_key": key,
+            "section": section,
+            "proposed": proposed,
+            "rationale": str(row.get("rationale") or "")[:500],
+            "evidence_refs": list(row.get("evidence_refs") or [])[:10],
+            "confidence": min(1.0, max(0.0, float(row.get("confidence") or 0.6))),
+            "uncertainty": str(row.get("uncertainty") or "")[:300],
+            "predecessor_item_id": predecessor_id,
+        })
+    if not delta_items:
+        return {"ok": True, "delta_id": None, "items": 0,
+                "note": "nothing new or changed against the snapshot"}
+    prior = len([
+        obj for obj in view.objects(type="understanding_delta")
+        if obj.data.get("draft_id") == head.id
+    ])
+    delta = graph.add_object("understanding_delta", {
+        "delta_identity": _stable("understanding_delta", head.id, prior + 1),
+        "subject_ref": str(head.data.get("subject_ref") or "owner"),
+        "draft_id": head.id,
+        "version": prior + 1,
+        "status": "open",
+        "source": source,
+        "run_id": run_id,
+        "items": delta_items[:60],
+        "coverage": coverage,
+        "resolved_by": "",
+        "metadata": {},
+    })
+    return {"ok": True, "delta_id": delta.id, "items": len(delta_items)}
+
+
+def _delta_by_ref(reader, delta_ref: str):
+    getter = getattr(reader, "get_object", None)
+    if callable(getter):
+        try:
+            obj = getter(delta_ref)
+        except Exception:
+            obj = None
+        if obj is not None and getattr(obj, "type", None) == "understanding_delta":
+            return obj
+    return next(
+        (obj for obj in reader.objects(type="understanding_delta")
+         if obj.data.get("delta_identity") == delta_ref),
+        None,
+    )
+
+
+def _ensure_project_candidate(
+    graph, view, *, subject_ref: str, name: str, description: str,
+    refs: list[str], rationale: str,
+) -> str:
+    """Find-or-mint the project candidate behind a draft item so submission
+    can promote it through the canonical projects pipeline."""
+    key = " ".join(name.lower().split())
+    existing = next(
+        (obj for obj in view.objects(type="project_candidate")
+         if " ".join(str(obj.data.get("name") or "").lower().split()) == key
+         and obj.data.get("status") == "proposed"),
+        None,
+    )
+    if existing is not None:
+        return existing.id
+    candidate = graph.add_object("project_candidate", {
+        "candidate_identity": _stable("draft_project", subject_ref, key),
+        "name": name,
+        "kind": "synthesized",
+        "score_milli": 800,
+        "sources": refs[:10] or ["setup_draft"],
+        "rationale": rationale[:500] or "proposed during setup review",
+        "status": "proposed",
+        "description": description[:800],
+        "project_id": None,
+        "metadata": {"projector": DRAFT_COMPOSER},
+    })
+    return candidate.id
+
+
+def apply_understanding_delta_fn(
+    graph, delta_ref: str, *, actor: str = "owner", reader=None,
+) -> dict[str, Any]:
+    """Apply an open/deferred delta: its rows join the frozen draft as
+    FRESH proposed items (never pre-decided), each carrying its delta
+    provenance. Project rows mint/reuse their candidate so submission can
+    promote them."""
+    view = reader or graph
+    delta = _delta_by_ref(view, delta_ref)
+    if delta is None:
+        return {"ok": False, "reason": "delta_not_found"}
+    if delta.data.get("status") in ("applied", "dismissed"):
+        return {"ok": True, "already_resolved": True,
+                "status": delta.data.get("status")}
+    head = _draft_by_ref(view, str(delta.data.get("draft_id") or ""))
+    if head is None:
+        return {"ok": False, "reason": "draft_not_found"}
+    if head.data.get("status") in ("submitted", "superseded"):
+        return {"ok": False, "reason": "draft_already_resolved",
+                "status": head.data.get("status")}
+    subject_ref = str(head.data.get("subject_ref") or "owner")
+    minted = 0
+    for row in delta.data.get("items") or []:
+        section = str(row.get("section") or "")
+        if section not in DRAFT_SECTIONS:
+            continue
+        proposed = dict(row.get("proposed") or {})
+        candidate_ref = None
+        if section == "projects":
+            candidate_ref = _ensure_project_candidate(
+                graph, view, subject_ref=subject_ref,
+                name=str(proposed.get("name") or ""),
+                description=str(proposed.get("description") or ""),
+                refs=list(row.get("evidence_refs") or []),
+                rationale=str(row.get("rationale") or ""),
+            )
+        item = _mint_item(
+            graph, view, draft=head, section=section,
+            proposed=proposed,
+            rationale=str(row.get("rationale") or ""),
+            evidence_refs=list(row.get("evidence_refs") or []) or [delta.id],
+            confidence=float(row.get("confidence") or 0.6),
+            uncertainty=str(row.get("uncertainty") or ""),
+            candidate_ref=candidate_ref, flags=[],
+        )
+        graph.patch_object(item.id, {
+            "metadata": {
+                **dict(item.data.get("metadata") or {}),
+                "delta_ref": delta.id,
+                "delta_change": str(row.get("change") or "new"),
+                **({"predecessor_item_id": row.get("predecessor_item_id")}
+                   if row.get("predecessor_item_id") else {}),
+            },
+        })
+        minted += 1
+    graph.patch_object(delta.id, {
+        "status": "applied", "resolved_by": actor,
+    }, rationale=f"understanding delta applied by {actor}")
+    return {"ok": True, "delta_id": delta.id, "items_minted": minted}
+
+
+def dismiss_understanding_delta_fn(
+    graph, delta_ref: str, *, verdict: str = "dismiss", actor: str = "owner",
+    reader=None,
+) -> dict[str, Any]:
+    """Dismiss or defer a delta — durable, and never a reopened review."""
+    view = reader or graph
+    delta = _delta_by_ref(view, delta_ref)
+    if delta is None:
+        return {"ok": False, "reason": "delta_not_found"}
+    if verdict not in ("dismiss", "defer"):
+        raise ValueError("verdict must be dismiss | defer")
+    if delta.data.get("status") in ("applied", "dismissed"):
+        return {"ok": True, "already_resolved": True,
+                "status": delta.data.get("status")}
+    status = "dismissed" if verdict == "dismiss" else "deferred"
+    graph.patch_object(delta.id, {
+        "status": status, "resolved_by": actor,
+    }, rationale=f"understanding delta {status} by {actor}")
+    return {"ok": True, "delta_id": delta.id, "status": status}
+
+
+def project_understanding_deltas_fn(
+    reader, *, draft_id: str = "", subject_ref: str = "owner",
+) -> list[dict[str, Any]]:
+    rows = []
+    for obj in reader.objects(type="understanding_delta"):
+        data = obj.data or {}
+        if draft_id and data.get("draft_id") != draft_id:
+            continue
+        if data.get("subject_ref") != subject_ref:
+            continue
+        rows.append({
+            "id": obj.id,
+            "delta_identity": data.get("delta_identity"),
+            "draft_id": data.get("draft_id"),
+            "version": int(data.get("version") or 0),
+            "status": data.get("status"),
+            "source": data.get("source"),
+            "items": list(data.get("items") or []),
+            "coverage": dict(data.get("coverage") or {}),
+        })
+    rows.sort(key=lambda row: row["version"])
+    return rows
+
+
 # ---- the zero-key floor -----------------------------------------------------
 
 def draft_source_coverage_fn(reader, *, subject_ref: str = "owner") -> dict[str, Any]:
@@ -863,28 +1308,12 @@ def _failed_draft_pass(reader) -> Optional[dict[str, Any]]:
     }
 
 
-def compose_deterministic_draft_fn(
-    graph, *, subject_ref: str = "owner", reader=None
-) -> dict[str, Any]:
-    """The smaller deterministic draft (ADR 0046 §5): pending candidates and
-    connected-source hints composed without a model, through the identical
-    review path. Never a dead end — an empty draft is still resolvable."""
+def _deterministic_rows(view, *, subject_ref: str) -> list[dict[str, Any]]:
+    """The deterministic floor's rows: pending candidates and
+    connected-source hints, each carrying its candidate ref for reuse."""
     from packs.subject_profile.projection import classify_subject_attribute
 
-    view = reader or graph
-    failed_pass = _failed_draft_pass(view)
-    provenance = "deterministic_fallback" if failed_pass else "deterministic"
-    draft = _mint_draft(
-        graph, subject_ref=subject_ref, source="deterministic", run_id=None,
-        included_refs=[], coverage={
-            "composer": "deterministic_floor",
-            "provenance": provenance,
-            "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
-            **({"fallback_from": failed_pass} if failed_pass else {}),
-        },
-    )
-    counts = {section: 0 for section in DRAFT_SECTIONS}
-
+    rows: list[dict[str, Any]] = []
     class_to_section = {
         "identity": "identity", "narrative": "narrative",
         "instruction": "instructions",
@@ -908,35 +1337,34 @@ def compose_deterministic_draft_fn(
         value = str(data.get("value") or data.get("text") or "").strip()
         if not value:
             continue
-        _mint_item(
-            graph, view, draft=draft, section=section,
-            proposed={"attribute": attribute, "value": value},
-            rationale=str(data.get("text") or "pending from your review queue")[:500],
-            evidence_refs=[ref for ref in [data.get("evidence_id")] if ref] or [candidate.id],
-            confidence=float(data.get("confidence") or 0.6),
-            uncertainty="",
-            candidate_ref=candidate.id, flags=[],
-        )
-        counts[section] += 1
-
+        rows.append({
+            "section": section,
+            "proposed": {"attribute": attribute, "value": value},
+            "rationale": str(data.get("text") or "pending from your review queue"),
+            "evidence_refs": [ref for ref in [data.get("evidence_id")] if ref]
+            or [candidate.id],
+            "confidence": float(data.get("confidence") or 0.6),
+            "uncertainty": "",
+            "candidate_ref": candidate.id,
+        })
     for candidate in view.objects(type="project_candidate"):
         data = candidate.data or {}
         if data.get("status") != "proposed":
             continue
-        _mint_item(
-            graph, view, draft=draft, section="projects",
-            proposed={
+        rows.append({
+            "section": "projects",
+            "proposed": {
                 "name": str(data.get("name") or ""),
                 "description": str(data.get("description") or "")[:800],
                 "status_note": "", "people": [],
             },
-            rationale=str(data.get("rationale") or "derived from your confirmed material")[:500],
-            evidence_refs=list(data.get("sources") or [])[:10] or [candidate.id],
-            confidence=0.6, uncertainty="",
-            candidate_ref=candidate.id, flags=[],
-        )
-        counts["projects"] += 1
-
+            "rationale": str(data.get("rationale")
+                             or "derived from your confirmed material"),
+            "evidence_refs": list(data.get("sources") or [])[:10] or [candidate.id],
+            "confidence": 0.6,
+            "uncertainty": "",
+            "candidate_ref": candidate.id,
+        })
     for profile in view.objects(type="integration_profile"):
         data = profile.data or {}
         if data.get("status") != "active":
@@ -949,20 +1377,72 @@ def compose_deterministic_draft_fn(
         ][:2]
         if not surfaces:
             continue
-        _mint_item(
-            graph, view, draft=draft, section="access",
-            proposed={
+        rows.append({
+            "section": "access",
+            "proposed": {
                 "question_class": f"questions about your {service} activity",
                 "source": service,
                 "strategy": f"search {service} {', '.join(surfaces)}",
             },
-            rationale=f"{service} is connected and its surfaces carry signal",
-            evidence_refs=[profile.id],
-            confidence=0.6, uncertainty="",
-            candidate_ref=None, flags=[],
-        )
-        counts["access"] += 1
+            "rationale": f"{service} is connected and its surfaces carry signal",
+            "evidence_refs": [profile.id],
+            "confidence": 0.6,
+            "uncertainty": "",
+            "candidate_ref": None,
+        })
+    return rows
 
+
+def compose_deterministic_draft_fn(
+    graph, *, subject_ref: str = "owner", reader=None
+) -> dict[str, Any]:
+    """The smaller deterministic draft (ADR 0046 §5): pending candidates and
+    connected-source hints composed without a model, through the identical
+    review path. Never a dead end — an empty draft is still resolvable.
+    Against a frozen review snapshot, new material lands as an
+    understanding delta (ADR 0048 §3), never a superseding version."""
+    view = reader or graph
+    rows = _deterministic_rows(view, subject_ref=subject_ref)
+
+    head = current_setup_draft_fn(view, subject_ref=subject_ref)
+    if (
+        head is not None
+        and head.data.get("status") == "proposed"
+        and draft_review_started_fn(view, head)
+    ):
+        delta = _mint_understanding_delta(
+            graph, view, head=head, rows=rows, source="deterministic",
+            run_id=None, coverage={
+                "composer": "deterministic_floor",
+                "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
+            },
+        )
+        return {**delta, "draft_id": None, "frozen_head": head.id,
+                "source": "deterministic"}
+
+    failed_pass = _failed_draft_pass(view)
+    provenance = "deterministic_fallback" if failed_pass else "deterministic"
+    draft = _mint_draft(
+        graph, subject_ref=subject_ref, source="deterministic", run_id=None,
+        included_refs=[], coverage={
+            "composer": "deterministic_floor",
+            "provenance": provenance,
+            "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
+            **({"fallback_from": failed_pass} if failed_pass else {}),
+        },
+    )
+    counts = {section: 0 for section in DRAFT_SECTIONS}
+    for row in rows:
+        _mint_item(
+            graph, view, draft=draft, section=row["section"],
+            proposed=dict(row["proposed"]),
+            rationale=str(row["rationale"])[:500],
+            evidence_refs=list(row["evidence_refs"]),
+            confidence=float(row["confidence"]),
+            uncertainty=str(row["uncertainty"]),
+            candidate_ref=row.get("candidate_ref"), flags=[],
+        )
+        counts[row["section"]] += 1
     total = sum(counts.values())
     graph.patch_object(draft.id, {"counts": {"items": total, **counts}})
     return {"ok": True, "draft_id": draft.id, "items": total, "source": "deterministic"}
@@ -973,17 +1453,24 @@ def compose_deterministic_draft_fn(
 def review_setup_item_fn(
     graph, item_ref: str, verdict: str, *,
     actor: str = "owner", edited_value: Optional[dict[str, Any]] = None,
+    correction: Optional[str] = None,
     reader=None,
 ) -> dict[str, Any]:
     """Owner verdict on one item. Accept/reject settles the pre-recorded
     prediction; edit supersedes the proposal as an owner declaration and is
-    scored as its own verdict class — never as a correct 'accept'."""
+    scored as its own verdict class — never as a correct 'accept'. A
+    rejection may carry a typed correction reason (ADR 0048 §4) — the
+    distinct teaching signal a bare 'no' throws away."""
     view = reader or graph
     item = view.get_object(item_ref) if hasattr(view, "get_object") else None
     if item is None or getattr(item, "type", None) != "setup_draft_item":
         return {"ok": False, "reason": "item_not_found"}
     if verdict not in ("accept", "reject", "edit", "defer"):
         raise ValueError("verdict must be accept | reject | edit | defer")
+    if correction is not None and correction not in CORRECTION_REASONS:
+        raise ValueError(
+            f"correction must be one of {CORRECTION_REASONS}"
+        )
     status = item.data.get("status")
     if status not in ("proposed", "accepted", "rejected", "edited", "deferred"):
         return {"ok": False, "reason": "item_already_committed", "status": status}
@@ -992,6 +1479,8 @@ def review_setup_item_fn(
         "status": {"accept": "accepted", "reject": "rejected",
                    "edit": "edited", "defer": "deferred"}[verdict],
     }
+    if correction is not None:
+        patch["correction"] = correction
     if verdict == "edit":
         if not isinstance(edited_value, dict) or not edited_value:
             raise ValueError("edit requires edited_value")
@@ -999,6 +1488,87 @@ def review_setup_item_fn(
         patch["edited_value"] = merged
     graph.patch_object(item.id, patch, rationale=f"setup item {verdict} by {actor}")
     return {"ok": True, "item_id": item.id, "status": patch["status"]}
+
+
+def comment_setup_item_fn(
+    graph, item_ref: str, text: str, *, actor: str = "owner", reader=None,
+) -> dict[str, Any]:
+    """An owner comment on one item: durable owner evidence that starts the
+    review freeze like any decision, changes no verdict, and never counts
+    as a correct system prediction (ADR 0048 §4)."""
+    view = reader or graph
+    item = view.get_object(item_ref) if hasattr(view, "get_object") else None
+    if item is None or getattr(item, "type", None) != "setup_draft_item":
+        return {"ok": False, "reason": "item_not_found"}
+    cleaned, _ = _sanitize(text, 500)
+    if not cleaned.strip():
+        raise ValueError("a comment needs text")
+    comments = list(item.data.get("comments") or [])
+    comments.append({
+        "text": cleaned, "actor": actor, "sequence": len(comments) + 1,
+    })
+    graph.patch_object(item.id, {"comments": comments[-12:]},
+                       rationale=f"owner comment recorded by {actor}")
+    return {"ok": True, "item_id": item.id, "comments": len(comments)}
+
+
+def split_setup_project_item_fn(
+    graph, item_ref: str, parts: list[dict[str, Any]], *,
+    actor: str = "owner", reader=None,
+) -> dict[str, Any]:
+    """Split one project item into N fresh proposals (ADR 0048 §4): the
+    original is superseded, each part gets its own candidate and review —
+    no verdict carries onto content the owner just reshaped."""
+    view = reader or graph
+    item = view.get_object(item_ref) if hasattr(view, "get_object") else None
+    if item is None or getattr(item, "type", None) != "setup_draft_item":
+        return {"ok": False, "reason": "item_not_found"}
+    if item.data.get("section") != "projects":
+        return {"ok": False, "reason": "not_a_project_item"}
+    if item.data.get("status") in ("committed", "commit_failed", "superseded"):
+        return {"ok": False, "reason": "item_already_committed"}
+    cleaned_parts = []
+    for part in parts or []:
+        name = " ".join(str((part or {}).get("name") or "").split())
+        if name:
+            description, _ = _sanitize((part or {}).get("description") or "", 800)
+            cleaned_parts.append({"name": name, "description": description})
+    if len(cleaned_parts) < 2:
+        raise ValueError("splitting needs at least two named parts")
+    draft = _draft_by_ref(view, str(item.data.get("draft_id") or ""))
+    if draft is None:
+        return {"ok": False, "reason": "draft_not_found"}
+    subject_ref = str(draft.data.get("subject_ref") or "owner")
+    refs = list(item.data.get("evidence_refs") or [])
+    created = []
+    for part in cleaned_parts:
+        candidate_ref = _ensure_project_candidate(
+            graph, view, subject_ref=subject_ref,
+            name=part["name"], description=part["description"],
+            refs=refs, rationale=f"split from a broader proposal by {actor}",
+        )
+        minted = _mint_item(
+            graph, view, draft=draft, section="projects",
+            proposed={"name": part["name"], "description": part["description"],
+                      "status_note": "", "people": []},
+            rationale=f"split by {actor} from a broader proposal",
+            evidence_refs=refs or [item.id],
+            confidence=float(item.data.get("confidence") or 0.6),
+            uncertainty="",
+            candidate_ref=candidate_ref, flags=[],
+        )
+        graph.patch_object(minted.id, {
+            "metadata": {**dict(minted.data.get("metadata") or {}),
+                         "split_from": item.id},
+        })
+        created.append(minted.id)
+    graph.patch_object(item.id, {
+        "status": "superseded", "verdict": "edit", "verdict_actor": actor,
+        "metadata": {**dict(item.data.get("metadata") or {}),
+                     "split_into": created},
+    }, rationale=f"split into {len(created)} items by {actor}")
+    return {"ok": True, "item_id": item.id, "created": len(created),
+            "item_ids": created}
 
 
 def reclassify_setup_item_fn(
@@ -1351,7 +1921,8 @@ def project_setup_draft_fn(reader, *, subject_ref: str = "owner") -> dict[str, A
     section, and the resolution state the ceremony gates on."""
     draft = current_setup_draft_fn(reader, subject_ref=subject_ref)
     if draft is None:
-        return {"draft": None, "items": [], "resolved": False}
+        return {"draft": None, "items": [], "resolved": False,
+                "review_started": False, "deltas": []}
     items = [
         {
             "id": item.id,
@@ -1365,6 +1936,16 @@ def project_setup_draft_fn(reader, *, subject_ref: str = "owner") -> dict[str, A
             "uncertainty": item.data.get("uncertainty"),
             "status": item.data.get("status"),
             "verdict": item.data.get("verdict"),
+            "correction": item.data.get("correction"),
+            "comments": list(item.data.get("comments") or []),
+            "candidate_ref": item.data.get("candidate_ref"),
+            "semantic_key": semantic_item_key(
+                str(item.data.get("section") or ""),
+                dict(item.data.get("edited_value")
+                     or item.data.get("proposed") or {}),
+            ),
+            "delta_ref": (item.data.get("metadata") or {}).get("delta_ref"),
+            "split_from": (item.data.get("metadata") or {}).get("split_from"),
             "predicted_verdict": item.data.get("predicted_verdict"),
             "predicted_confidence_percent": item.data.get("predicted_confidence_percent"),
             "injection_flags": item.data.get("injection_flags") or [],
@@ -1385,23 +1966,36 @@ def project_setup_draft_fn(reader, *, subject_ref: str = "owner") -> dict[str, A
         },
         "items": items,
         "resolved": status in ("submitted", "deferred", "partial"),
+        "review_started": draft_review_started_fn(reader, draft),
+        "deltas": project_understanding_deltas_fn(
+            reader, draft_id=draft.id, subject_ref=subject_ref,
+        ),
     }
 
 
 __all__ = [
+    "CORRECTION_REASONS",
     "DRAFT_SECTIONS",
     "SECTION_DESTINATIONS",
+    "apply_understanding_delta_fn",
     "begin_setup_draft_submission_fn",
+    "begin_setup_review_fn",
+    "comment_setup_item_fn",
     "commit_setup_draft_fn",
     "compose_deterministic_draft_fn",
     "current_setup_draft_fn",
     "defer_setup_draft_fn",
+    "dismiss_understanding_delta_fn",
+    "draft_review_started_fn",
     "merge_setup_project_items_fn",
     "perform_setup_draft",
     "prepare_setup_draft_fn",
     "project_setup_draft_fn",
+    "project_understanding_deltas_fn",
     "reclassify_setup_item_fn",
     "request_setup_draft_fn",
     "resubmit_setup_draft_fn",
     "review_setup_item_fn",
+    "semantic_item_key",
+    "split_setup_project_item_fn",
 ]

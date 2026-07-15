@@ -23,6 +23,26 @@
   fully-recorded evidence drill-downs whose uncited findings are dropped.
 - Three logical model roles (ADR 0047 §6) recorded on every call:
   reasoning/coordinator, balanced (aggregation moved here from fast), fast.
+- Stable review snapshots (ADR 0048 §3): the first owner decision — a
+  verdict, a comment, or an explicit `begin_setup_review_fn` — freezes the
+  head draft. From then on new synthesis (keyed or deterministic) lands as
+  an `understanding_delta` diffed by stable semantic keys
+  (`semantic_item_key`): unchanged items silently keep their verdicts, new
+  keys arrive as `new`, same-key presentation changes as `changed`, and
+  changes against owner-accepted items as `conflicting` with predecessor
+  refs. Deltas apply (rows join review as FRESH proposals with candidate
+  reuse), dismiss, or defer — durable either way. An unreviewed head still
+  supersedes exactly as before.
+- The typed correction grammar (ADR 0048 §4): rejections carry a typed
+  `correction` (not_me / duplicate / incorrect / not_useful / wrong_type /
+  wrong_grouping); `comment_setup_item_fn` records durable owner comments
+  that freeze review and never count as correct predictions;
+  `split_setup_project_item_fn` splits one project item into fresh
+  candidate-backed proposals.
+- The review cohort (ADR 0048 §3): `freeze_review_cohort_fn` ("review what
+  I have now") closes the selected-source cohort at the current horizon;
+  the deterministic proposer then synthesizes without waiting and late
+  results arrive as deltas. `review_cohort_state_fn` projects it.
 
 ## 0.2.0 — staged comprehension and the setup draft (2026-07-13)
 
