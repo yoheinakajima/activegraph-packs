@@ -201,7 +201,7 @@ def commit_deferred_plan_execution_fn(
             reader=reader,
         )
     return {
-        "ok": True, "plan_id": plan.id,
+        "ok": bool(result.get("ok", True)), "plan_id": plan.id,
         "domain_run_id": domain_run_id, "service_result": result,
     }
 

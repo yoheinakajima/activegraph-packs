@@ -20,8 +20,13 @@ from packs.communication import pack as communication_pack
 from packs.connector_control import pack as connector_control_pack
 from packs.connector_control.plans import (
     approve_ingestion_plan_fn,
+    begin_deferred_plan_execution_fn,
+    commit_deferred_plan_execution_fn,
     current_plan_for_surface_fn,
     edit_ingestion_plan_fn,
+    pending_deferred_plan_executions_fn,
+    perform_deferred_plan_execution,
+    propose_ingestion_plan_fn,
 )
 from packs.connector_control.tools import (
     project_connector_control_plane_fn,
@@ -299,6 +304,107 @@ def test_fresh_connect_derives_the_plan_from_discovered_topology(tmp_path):
     assert run_obj.data["max_messages"] == 250
     assert run_obj.data["metadata"]["plan_identity"] == plan.data["plan_identity"]
     assert run_obj.data["metadata"]["plan_version"] == 1
+
+
+def test_approved_gmail_plan_drives_once_through_deferred_execution(tmp_path):
+    """Approval is the durable trigger; restart recovery can replay commit
+    without creating a second Gmail run or contacting the provider twice."""
+    fake = RichTopologyComposio()
+    rt = _runtime(tmp_path, fake)
+    request_gmail_exploration_fn(
+        rt.graph, user_id="agent:owner", connected_account_id="ca_1"
+    )
+    rt.run_until_idle()
+
+    [surface] = list(rt.graph.objects(type="connection_surface"))
+    plan = _approve_gmail_plan(rt.graph, surface.data["surface_id"])
+    assert pending_deferred_plan_executions_fn(rt.graph) == [{
+        "plan_identity": plan.data["plan_identity"],
+        "version": 1,
+        "service": "gmail",
+        "source_surface_id": surface.data["surface_id"],
+    }]
+
+    begun = begin_deferred_plan_execution_fn(
+        rt.graph, plan_ref=plan.data["plan_identity"]
+    )
+    assert begun["ok"] is True
+    assert begun["payload"]["user_id"] == "agent:owner"
+    outcome = perform_deferred_plan_execution("gmail", begun["payload"])
+    assert outcome == {"ok": True, "error": None}
+
+    committed = commit_deferred_plan_execution_fn(
+        rt.graph,
+        plan_ref=plan.data["plan_identity"],
+        payload=begun["payload"],
+        outcome=outcome,
+    )
+    assert committed["ok"] is True
+    assert committed["domain_run_id"]
+    assert rt.graph.get_object(plan.id).data["status"] == "executing"
+    assert len(list(rt.graph.objects(type="gmail_sync_run"))) == 1
+
+    # A persisted outcome committed again after restart is idempotent.
+    replayed = commit_deferred_plan_execution_fn(
+        rt.graph,
+        plan_ref=plan.data["plan_identity"],
+        payload=begun["payload"],
+        outcome=outcome,
+    )
+    assert replayed["already_executing"] is True
+    assert len(list(rt.graph.objects(type="gmail_sync_run"))) == 1
+
+
+def test_stale_approved_gmail_plan_abandons_visibly_instead_of_gating(tmp_path):
+    """A legacy plan without durable connection context settles to a visible
+    terminal state; the deferred queue cannot spin forever after restart."""
+    rt = _runtime(tmp_path, FakeComposio())
+    rt.run_until_idle()
+    plan = propose_ingestion_plan_fn(
+        rt.graph,
+        source_surface_id="gmail:missing-context",
+        service="gmail",
+        account_ref="owner@example.com",
+        family="conversation",
+        window={"kind": "recent_days", "days": 30, "estimated_items": 10},
+        derivation={
+            "basis": "service_default",
+            "summary": "legacy approved plan",
+            "measurements": {},
+            "provenance": ["fixture"],
+        },
+        surfaces=[{
+            "surface_ref": "sent",
+            "label": "sent",
+            "included": True,
+            "expectation": {"estimated_richness": "medium", "confidence": 0.5},
+        }],
+        caps={"max_items": 10, "max_pages": 1, "page_size": 10},
+        interpretation_stages=["gmail.conversation-mapper@0.1.0"],
+        proposed_by="fixture",
+    )["plan"]
+    approve_ingestion_plan_fn(
+        rt.graph, plan_ref=plan.data["plan_identity"], approved_by="owner"
+    )
+
+    begun = begin_deferred_plan_execution_fn(
+        rt.graph, plan_ref=plan.data["plan_identity"]
+    )
+    assert "no Gmail source_connection_request" in begun["payload"]["error"]
+    outcome = perform_deferred_plan_execution("gmail", begun["payload"])
+    committed = commit_deferred_plan_execution_fn(
+        rt.graph,
+        plan_ref=plan.data["plan_identity"],
+        payload=begun["payload"],
+        outcome=outcome,
+    )
+    assert committed["ok"] is False
+    settled = rt.graph.get_object(plan.id)
+    assert settled.data["status"] == "abandoned"
+    assert "reconnect" in str(
+        (settled.data.get("metadata") or {}).get("abandon_reason") or ""
+    )
+    assert pending_deferred_plan_executions_fn(rt.graph) == []
 
 
 def _approve_gmail_plan(

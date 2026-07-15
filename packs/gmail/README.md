@@ -99,3 +99,10 @@ qualifies; drafts, automated outbound, injection-held, and
 empty-after-normalization items are excluded with recorded exclusion counts
 and coverage; recipients appear as identity/domain only; originals stay local
 as replay artifacts and every summary row cites its message evidence.
+
+Approved Gmail plans are pump-recoverable. The plan-level durable attempt
+creates the bounded sync run and first gateway call exactly once; Gmail contact
+itself remains on the tool-gateway durable attempt, off the engine thread. A
+restart after provider perform commits the recorded outcome without calling
+Gmail again, while missing saved connection context visibly abandons the stale
+plan instead of gating onboarding indefinitely.

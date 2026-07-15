@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.1 — restart-safe approved-plan delivery (2026-07-15)
+
+- Register Gmail with connector-control's durable deferred-plan seam. Both
+  initial backfill and one-consent sent-comprehension approvals now survive a
+  host restart, create their bounded Gmail run exactly once, and delegate the
+  actual provider call to the existing tool-gateway attempt ledger off the
+  engine thread.
+- Settle an approved plan with missing recorded provider context as a visible
+  system abandonment instead of leaving onboarding gated by an inert
+  `approved` row forever.
+
 ## 0.6.0 — the sent-mail understanding affordance (2026-07-14)
 
 - Raise the sent-recipe `max_tokens_per_call` budget to 4,000: the owner's

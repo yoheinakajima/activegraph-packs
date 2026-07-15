@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:b19b5dba39331d0d10dea9b9f16242912cd7ff2e926a01d527995bffdaf5794f"
+content_hash = "sha256:ec8ab5d9cfb228ef59076dc53705c3dad929fba8cae3864ab7478bf87c400103"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

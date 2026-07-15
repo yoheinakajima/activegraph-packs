@@ -18,8 +18,10 @@
     frozen heads too) and `request_setup_draft_fn` refuses a re-request
     over an unchanged horizon — one pending synthesis per input horizon;
   - ONE cumulative understanding delta per frozen snapshot: a new delta
-    supersedes unresolved predecessors and inherits `deferred` when it
-    carries nothing the owner hasn't seen;
+    supersedes unresolved predecessors, carries every unresolved predecessor
+    item forward by semantic key (newest presentation wins), and inherits
+    `deferred` when it carries nothing the owner hasn't seen; this prevents a
+    later smaller source pass from making earlier research/projects disappear;
   - applying a delta supersedes same-key predecessors (owner verdicts and
     comments travel onto refreshed content; owner edits always win) —
     never a duplicate active item; the setup-draft projection now hides

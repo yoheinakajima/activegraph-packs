@@ -213,8 +213,36 @@ def test_new_delta_supersedes_prior_open_deltas(runtime):
         f"expected ONE open cumulative delta, saw {len(by_status.get('open', []))}"
     )
     assert by_status["open"][0]["id"] == second["delta_id"]
+    cumulative_values = {
+        item["proposed"]["value"] for item in by_status["open"][0]["items"]
+    }
+    assert cumulative_values == {"General Partner", "Founder"}
     superseded = by_status.get("superseded", [])
     assert [row["id"] for row in superseded] == [first["delta_id"]]
+
+
+def test_cumulative_delta_keeps_prior_keys_when_later_pass_is_disjoint(runtime):
+    graph = runtime.graph
+    head = _frozen_head_with_delta_rows(graph)
+    first = _mint_understanding_delta(
+        graph, graph, head=head, rows=_rows("BabyAGI", "Agent Fund"),
+        source="synthesis", run_id=None, coverage={"source": "research"},
+    )
+    second = _mint_understanding_delta(
+        graph, graph, head=head, rows=_rows("Gmail preference"),
+        source="deterministic", run_id=None, coverage={"source": "sent_mail"},
+    )
+
+    assert second["superseded"] == 1
+    assert second["items"] == 3
+    projected = project_understanding_deltas_fn(graph, draft_id=head.id)
+    open_delta = next(row for row in projected if row["status"] == "open")
+    assert {
+        item["proposed"]["value"] for item in open_delta["items"]
+    } == {"BabyAGI", "Agent Fund", "Gmail preference"}
+    assert next(row for row in projected if row["id"] == first["delta_id"])[
+        "status"
+    ] == "superseded"
 
 
 def test_deferred_delta_stays_deferred_unless_genuinely_new(runtime):

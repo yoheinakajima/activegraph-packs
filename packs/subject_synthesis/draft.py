@@ -1197,6 +1197,27 @@ def _mint_understanding_delta(
         obj.data.get("status") == "deferred" for obj in unresolved
     )
     status = "deferred" if (all_deferred and new_keys <= seen_keys) else "open"
+    # "Cumulative" is a data invariant, not merely a banner invariant. The
+    # live keyed incident first produced a rich research/project update, then
+    # a smaller sent-mail update. Superseding the first row with only the
+    # second pass's diff made the already-discovered projects disappear when
+    # the owner waited for background work to settle. Carry every unresolved
+    # predecessor item forward by semantic key; the newest presentation wins
+    # for a repeated key and genuinely new keys append once.
+    cumulative_by_key: dict[str, dict[str, Any]] = {}
+    for obj in sorted(
+        unresolved, key=lambda row: int((row.data or {}).get("version") or 0)
+    ):
+        for item in obj.data.get("items") or []:
+            key = str(item.get("semantic_key") or "")
+            if key:
+                cumulative_by_key[key] = dict(item)
+    for item in delta_items:
+        key = str(item.get("semantic_key") or "")
+        if key:
+            cumulative_by_key[key] = dict(item)
+    cumulative_items = list(cumulative_by_key.values())[:60]
+
     delta = graph.add_object("understanding_delta", {
         "delta_identity": _stable("understanding_delta", head.id, len(all_deltas) + 1),
         "subject_ref": str(head.data.get("subject_ref") or "owner"),
@@ -1205,7 +1226,7 @@ def _mint_understanding_delta(
         "status": status,
         "source": source,
         "run_id": run_id,
-        "items": delta_items[:60],
+        "items": cumulative_items,
         "coverage": coverage,
         "resolved_by": "",
         "metadata": {"cumulative": True,
@@ -1217,7 +1238,7 @@ def _mint_understanding_delta(
             "metadata": {**dict(obj.data.get("metadata") or {}),
                          "superseded_by": delta.id},
         }, rationale="a newer cumulative update subsumes this one")
-    return {"ok": True, "delta_id": delta.id, "items": len(delta_items),
+    return {"ok": True, "delta_id": delta.id, "items": len(cumulative_items),
             "superseded": len(unresolved), "status": status}
 
 

@@ -18,6 +18,7 @@ from packs.communication.hygiene import FILTER_VERSION
 from packs.connector_control.plans import (
     current_plan_for_surface_fn,
     propose_ingestion_plan_fn,
+    register_deferred_plan_execution,
     register_ingestion_plan_executor,
 )
 
@@ -312,8 +313,104 @@ def _gmail_plan_executor(graph, plan) -> dict[str, Any]:
     )
 
 
+def prepare_gmail_plan_execution(graph, plan) -> dict[str, Any]:
+    """Prepare Gmail run creation without contacting Gmail.
+
+    Gmail provider calls already ride the tool-gateway durable-attempt seam.
+    This plan-level deferred seam therefore prepares the provider context and
+    lets the commit phase create the bounded run plus its first capability
+    call.  The plan attempt and the later capability attempt are both durable:
+    a restart can neither forget an approved plan nor repeat a delivered
+    provider outcome.
+
+    Missing recorded provider context is returned as data, not raised out of
+    the host pump.  Commit turns it into a durable abandonment with the exact
+    reason so a stale approved plan can never gate onboarding forever.
+    """
+    data = plan.data or {}
+    surface_id = str(data.get("source_surface_id") or "")
+    request = next(
+        (
+            obj for obj in graph.objects(type="source_connection_request")
+            if obj.data.get("surface_id") == surface_id
+            and (obj.data.get("provider") or {}).get("service") == "gmail"
+        ),
+        None,
+    )
+    if request is None:
+        return {
+            "error": (
+                "no Gmail source_connection_request records provider context "
+                f"for surface {surface_id!r}; reconnect before retrying"
+            ),
+        }
+    provider = dict(request.data.get("provider") or {})
+    user_id = str((request.data.get("metadata") or {}).get("user_id") or "")
+    if not user_id:
+        return {
+            "error": (
+                "the recorded Gmail connection carries no user_id; reconnect "
+                "to refresh its provider context"
+            ),
+        }
+    return {
+        "source_surface_id": surface_id,
+        "account_ref": str(data.get("account_ref") or ""),
+        "user_id": user_id,
+        "connected_account_id": str(provider.get("connected_account_id") or ""),
+        "route": str(provider.get("route") or "composio"),
+        "plan_identity": str(data.get("plan_identity") or ""),
+    }
+
+
+def perform_prepared_gmail_plan(payload: dict[str, Any]) -> dict[str, Any]:
+    """Deferred phase 2: deliberately no graph and no provider contact.
+
+    The commit creates a gateway capability call; that capability's own
+    perform phase is where Gmail is contacted off the engine thread.  Keeping
+    one network seam avoids bypassing gateway authority or duplicating its
+    crash-recovery ledger.
+    """
+    return {"ok": not bool(payload.get("error")), "error": payload.get("error")}
+
+
+def commit_gmail_plan_execution(
+    graph, plan, payload: dict[str, Any], outcome: dict[str, Any]
+) -> dict[str, Any]:
+    """Create the bounded Gmail run or visibly settle stale approval."""
+    error = str(outcome.get("error") or payload.get("error") or "").strip()
+    if error:
+        from packs.connector_control.plans import abandon_ingestion_plan_fn
+
+        abandon_ingestion_plan_fn(
+            graph,
+            plan_ref=str((plan.data or {}).get("plan_identity") or plan.id),
+            actor="system:gmail.plan_execution",
+            reason=error,
+        )
+        return {"ok": False, "abandoned": True, "error": error}
+
+    from .tools import request_gmail_backfill_fn
+
+    return request_gmail_backfill_fn(
+        graph,
+        source_surface_id=str(payload.get("source_surface_id") or ""),
+        account_ref=str(payload.get("account_ref") or ""),
+        user_id=str(payload.get("user_id") or ""),
+        connected_account_id=str(payload.get("connected_account_id") or ""),
+        route=str(payload.get("route") or "composio"),
+        plan_ref=str(payload.get("plan_identity") or ""),
+    )
+
+
 def register_gmail_ingestion_plans() -> None:
     register_ingestion_plan_executor("gmail", _gmail_plan_executor)
+    register_deferred_plan_execution(
+        "gmail",
+        prepare=prepare_gmail_plan_execution,
+        perform=perform_prepared_gmail_plan,
+        commit=commit_gmail_plan_execution,
+    )
 
 
 def current_gmail_plan_fn(reader, source_surface_id: str):
@@ -326,6 +423,9 @@ __all__ = [
     "current_gmail_plan_fn",
     "derive_gmail_window",
     "plan_backfill_query",
+    "commit_gmail_plan_execution",
+    "perform_prepared_gmail_plan",
+    "prepare_gmail_plan_execution",
     "propose_gmail_ingestion_plan_fn",
     "register_gmail_ingestion_plans",
 ]
