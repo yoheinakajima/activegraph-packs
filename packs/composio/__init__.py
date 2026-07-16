@@ -10,7 +10,7 @@ from .tools import TOOLS
 # integrates_with=["secrets"]
 pack = Pack(
     name="composio",
-    version="0.1.0",
+    version="0.1.1",
     description=(
         "Optional thin Composio route: hosted Connect Links and per-service connection status. "
         "It never mirrors the Composio catalog or becomes a canonical service identity."

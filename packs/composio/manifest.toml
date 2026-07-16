@@ -3,7 +3,7 @@
 
 [pack]
 name = "composio"
-version = "0.1.0"
+version = "0.1.1"
 description = "Optional thin Composio route: hosted Connect Links and per-service connection status. It never mirrors the Composio catalog or becomes a canonical service identity."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:95ddc384291dc99e537f911e4147fcf633552862c0f98dc37c0c4eacd2c7825f"
+content_hash = "sha256:42f395c58ab24f5c7acfb6115678b4f48a51300a737779ab199c487b288fa655"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

@@ -237,6 +237,13 @@ def take_redirect(request_id: str) -> Optional[str]:
     return _redirects.pop(request_id, None)
 
 
+def peek_redirect(request_id: str) -> bool:
+    """Non-consuming claimability check for the one-shot redirect side
+    channel: read-only status polling must never consume (or extend) the
+    bearer-like link (ADR 0051 §6)."""
+    return request_id in _redirects
+
+
 def connection_summary(row: dict[str, Any]) -> dict[str, Any]:
     """Return only non-secret account identity/status fields."""
 
@@ -263,5 +270,6 @@ __all__ = [
     "composio_transport",
     "store_redirect",
     "take_redirect",
+    "peek_redirect",
     "connection_summary",
 ]
