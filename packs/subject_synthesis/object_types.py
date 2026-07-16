@@ -116,7 +116,9 @@ class SetupDraft(_StrictModel):
     status: Literal[
         "proposed", "submitting", "submitted", "partial", "deferred", "superseded"
     ] = "proposed"
-    source: Literal["synthesis", "deterministic"] = "synthesis"
+    #: "successor" marks a post-acceptance review batch promoted from an
+    #: understanding delta that targeted a submitted predecessor (ADR 0051 §3).
+    source: Literal["synthesis", "deterministic", "successor"] = "synthesis"
     run_id: Optional[str] = None
     supersedes: Optional[str] = None
     included_refs: list[str] = Field(default_factory=list)
@@ -177,7 +179,15 @@ class UnderstandingDelta(_StrictModel):
     subject_ref: str = "owner"
     draft_id: str = Field(min_length=1)
     version: int = Field(ge=1)
-    status: Literal["open", "applied", "dismissed", "deferred"] = "open"
+    #: The closed disposition vocabulary (ADR 0051 §1): open = unresolved
+    #: owner work (blocks pre-Hatch completion); applied = staged into the
+    #: active review as UNDECIDED proposals (staging is never acceptance);
+    #: dismissed = explicit "not needed"; deferred = explicit route to
+    #: Mission Control (stays visible, never counted reviewed); superseded =
+    #: replaced by a newer cumulative delta.
+    status: Literal[
+        "open", "applied", "dismissed", "deferred", "superseded"
+    ] = "open"
     source: Literal["synthesis", "deterministic"] = "deterministic"
     run_id: Optional[str] = None
     #: Each row: change (new|changed|conflicting), semantic_key, section,

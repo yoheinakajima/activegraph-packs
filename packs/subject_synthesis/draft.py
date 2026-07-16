@@ -74,6 +74,93 @@ def _stable(prefix: str, *parts: Any) -> str:
     return f"{prefix}_{hashlib.sha256(material).hexdigest()}"
 
 
+def _latest_event_id(graph) -> str:
+    """The current event horizon, when the graph exposes its log (hosts'
+    single-writer engine turn makes this the accepted-horizon anchor)."""
+    try:
+        events = getattr(graph, "events", None)
+        return str(events[-1].id) if events else ""
+    except Exception:
+        return ""
+
+
+#: Tool/source topology surfaces: they describe how a person uses a tool,
+#: never the map of their world. Topology corroborates; it cannot propose
+#: (ADR 0043 §2, ADR 0051 §5).
+_TOPOLOGY_EVIDENCE_TYPES = frozenset({"integration_profile"})
+
+
+def _qualifying_project_refs(
+    view, refs: list[str],
+) -> tuple[list[str], list[str]]:
+    """Split evidence refs into (qualifying, topology_only).
+
+    Qualifying evidence grounds a project in the owner's world: a promoted
+    fact, a cited public finding, a comprehension summary over authored
+    communication, a recurring entity — anything that is content, not tool
+    shape. An `integration_profile` (labels/folders/surfaces) is topology.
+    A prior synthesized project candidate qualifies only through its OWN
+    qualifying sources (one level; synthesis cannot launder its echo into
+    evidence)."""
+    qualifying: list[str] = []
+    topology: list[str] = []
+    getter = getattr(view, "get_object", None)
+    for ref in refs:
+        obj = None
+        if callable(getter):
+            try:
+                obj = getter(str(ref))
+            except Exception:
+                obj = None
+        if obj is None:
+            continue  # unresolvable refs prove nothing either way
+        obj_type = str(getattr(obj, "type", "") or "")
+        if obj_type in _TOPOLOGY_EVIDENCE_TYPES:
+            topology.append(str(ref))
+            continue
+        if obj_type == "project_candidate":
+            # One level only: a candidate qualifies through its own sources'
+            # types, never through another candidate (no laundering chain).
+            inner_qualifies = False
+            for source in (obj.data.get("sources") or [])[:10]:
+                inner_obj = None
+                if callable(getter):
+                    try:
+                        inner_obj = getter(str(source))
+                    except Exception:
+                        inner_obj = None
+                if inner_obj is None:
+                    continue
+                inner_type = str(getattr(inner_obj, "type", "") or "")
+                if inner_type not in _TOPOLOGY_EVIDENCE_TYPES and (
+                    inner_type != "project_candidate"
+                ):
+                    inner_qualifies = True
+                    break
+            if inner_qualifies:
+                qualifying.append(str(ref))
+            else:
+                topology.append(str(ref))
+            continue
+        qualifying.append(str(ref))
+    return qualifying, topology
+
+
+def open_understanding_deltas_fn(
+    reader, *, draft_id: str = "", subject_ref: str = "owner",
+) -> list[Any]:
+    """The unresolved (open) deltas for a draft — the owner work that blocks
+    pre-Hatch completion (ADR 0051 §1)."""
+    rows = [
+        obj for obj in reader.objects(type="understanding_delta")
+        if obj.data.get("status") == "open"
+        and obj.data.get("subject_ref", "owner") == subject_ref
+        and (not draft_id or obj.data.get("draft_id") == draft_id)
+    ]
+    rows.sort(key=lambda obj: int(obj.data.get("version") or 0))
+    return rows
+
+
 def _estimate_tokens(value: Any) -> int:
     return max(1, len(json.dumps(value, ensure_ascii=False, default=str)) // 4)
 
@@ -286,10 +373,22 @@ def synthesis_input_fingerprint_fn(reader, *, subject_ref: str = "owner") -> str
 
 def consumed_input_fingerprint_fn(reader, *, subject_ref: str = "owner") -> str:
     """The fingerprint the current head draft last consumed (stamped at
-    compose/delta time). Empty for pre-fingerprint stores."""
+    compose/delta time). An ACCEPTED head is immutable history, so its late
+    input horizons are stamped on its deltas instead — the newest delta's
+    fingerprint wins. Empty for pre-fingerprint stores."""
     head = current_setup_draft_fn(reader, subject_ref=subject_ref)
     if head is None:
         return ""
+    deltas = [
+        obj for obj in reader.objects(type="understanding_delta")
+        if obj.data.get("draft_id") == head.id
+        and str((obj.data.get("coverage") or {}).get("input_fingerprint") or "")
+    ]
+    if deltas:
+        deltas.sort(key=lambda obj: int(obj.data.get("version") or 0))
+        return str(
+            (deltas[-1].data.get("coverage") or {}).get("input_fingerprint")
+        )
     return str((head.data.get("coverage") or {}).get("input_fingerprint") or "")
 
 
@@ -467,8 +566,19 @@ def _draft_prompt(payload: dict[str, Any]) -> tuple[str, str]:
         "Every item cites the refs it reasons from; uncited items are "
         "discarded. Instructions about how an assistant should behave are "
         "never identity. Sent-mail summaries show what the person actually "
-        "works on; research findings show their public presence. Respond "
-        "with STRICT JSON only, no prose."
+        "works on; research findings show their public presence. "
+        "A PROJECT is a specific named project, product, fund, company "
+        "initiative, or body of work with evidence of activity — never a "
+        "generic business function, job responsibility, or department "
+        "(dealflow management, fund operations, LP relations, compliance "
+        "are responsibilities, not projects; describe those in narrative or "
+        "instructions instead). CONNECTED SOURCES entries describe tool "
+        "topology only: they may corroborate a project that other material "
+        "supports, but citing one alone never justifies a project. Prefer "
+        "richer named candidates over label-shaped functions, and keep "
+        "companies/organizations in people/orgs unless the evidence shows "
+        "the person operates them as their own work. Respond with STRICT "
+        "JSON only, no prose."
     )
     cap = payload.get("max_items_per_section") or 8
     shape = {
@@ -479,9 +589,10 @@ def _draft_prompt(payload: dict[str, Any]) -> tuple[str, str]:
                        "refs": ["…"], "rationale": "…"}],
         "instructions": [{"instruction": "how an assistant should work with this person",
                           "refs": ["…"], "rationale": "…"}],
-        "projects": [{"name": "…", "description": "2-3 evidence-backed sentences",
+        "projects": [{"name": "a specific named project/product/fund/initiative — never a generic business function",
+                      "description": "2-3 evidence-backed sentences (required)",
                       "status_note": "", "people": ["…"], "refs": ["…"],
-                      "rationale": "…"}],
+                      "rationale": "why this appears active/relevant (required)"}],
         "people": [{"name": "…", "relationship": "evidence-based context",
                     "refs": ["…"], "rationale": "…", "uncertainty": ""}],
         "access": [{"question_class": "the information class this serves, e.g. 'current LP conversations'",
@@ -675,33 +786,49 @@ def commit_setup_draft_fn(
     ):
         return _fail("synthesis_cited_nothing_packed")
 
-    # A frozen review snapshot never moves (ADR 0048 §3): once the owner
-    # started reviewing the head, later synthesis lands as an additive
-    # understanding delta — never a superseding version.
+    # A frozen review snapshot never moves (ADR 0048 §3), and an accepted
+    # one is immutable history (ADR 0051 §3): once the owner started
+    # reviewing the head — or already submitted it — later synthesis lands
+    # as an additive understanding delta, never a superseding version and
+    # never a spontaneous new draft. A resolved head's delta surfaces in
+    # Mission Control and applies as a successor review batch.
     head = current_setup_draft_fn(view, subject_ref=subject_ref)
-    if (
+    head_status = str((head.data.get("status") if head is not None else "") or "")
+    head_frozen = (
         head is not None
-        and head.data.get("status") == "proposed"
+        and head_status == "proposed"
         and draft_review_started_fn(view, head)
-    ):
-        delta_rows = _sanitized_rows_from_sections(sections, valid_refs, cap)
+    )
+    head_accepted = head is not None and head_status in (
+        "submitting", "submitted", "partial",
+    )
+    if head_frozen or head_accepted:
+        delta_rows = _sanitized_rows_from_sections(
+            sections, valid_refs, cap, view=view,
+        )
+        fingerprint = str(payload.get("input_fingerprint") or "")
         delta = _mint_understanding_delta(
             graph, view, head=head, rows=delta_rows, source="synthesis",
             run_id=None, coverage={
                 "packing": payload.get("packing") or {},
                 "provenance": "model_assisted",
+                "input_fingerprint": fingerprint,
                 "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
             },
         )
-        # The frozen head has now CONSUMED this input horizon: without the
-        # stamp, every progression tick re-runs the same synthesis into an
-        # endless delta chain (the live-run loop).
-        graph.patch_object(head.id, {
-            "coverage": {
-                **dict(head.data.get("coverage") or {}),
-                "input_fingerprint": str(payload.get("input_fingerprint") or ""),
-            },
-        }, rationale="frozen head consumed this synthesis input horizon")
+        if head_frozen:
+            # The frozen head has now CONSUMED this input horizon: without
+            # the stamp, every progression tick re-runs the same synthesis
+            # into an endless delta chain (the live-run loop).
+            graph.patch_object(head.id, {
+                "coverage": {
+                    **dict(head.data.get("coverage") or {}),
+                    "input_fingerprint": fingerprint,
+                },
+            }, rationale="frozen head consumed this synthesis input horizon")
+        # An accepted head is immutable history — the delta's own coverage
+        # fingerprint (read by consumed_input_fingerprint_fn) is the
+        # convergence receipt instead.
         graph.patch_object(request_id, {
             "status": "completed",
             "metadata": {"kind": "setup_draft", "delta_id": delta.get("delta_id")},
@@ -820,6 +947,8 @@ def commit_setup_draft_fn(
             )
             counts[section] += 1
 
+    dropped_topology_only = 0
+    dropped_low_quality_projects = 0
     for row in (sections.get("projects") or [])[:cap]:
         name = " ".join(str((row or {}).get("name") or "").split())
         refs = _refs_of(row or {})
@@ -828,7 +957,21 @@ def commit_setup_draft_fn(
         if not refs:
             dropped_uncited += 1
             continue
+        qualifying, topology = _qualifying_project_refs(view, refs)
+        if topology and not qualifying:
+            # Tool topology (an integration profile's labels/surfaces)
+            # corroborates a project; it can never propose one alone
+            # (ADR 0043 §2, ADR 0051 §5). The row stays inspectable on the
+            # run receipt's counters instead of becoming an empty shell.
+            dropped_topology_only += 1
+            continue
         description, desc_flags = _sanitize((row or {}).get("description") or "", 800)
+        if not description.strip() or not str((row or {}).get("rationale") or "").strip():
+            # A useful proposal names itself AND explains why it appears
+            # active; nameless shells were exactly the owner run's six
+            # generic functions.
+            dropped_low_quality_projects += 1
+            continue
         key = " ".join(name.lower().split())
         existing = next(
             (obj for obj in view.objects(type="project_candidate")
@@ -952,7 +1095,9 @@ def commit_setup_draft_fn(
             "packing": payload.get("packing") or {},
         },
         "proposed": {**counts, "dropped_uncited": dropped_uncited,
-                     "dropped_low_quality": dropped_low_quality},
+                     "dropped_low_quality": dropped_low_quality
+                     + dropped_low_quality_projects,
+                     "dropped_topology_only": dropped_topology_only},
         "noise": [],
         "error": str(error)[:300] if error else None,
         "metadata": {
@@ -964,7 +1109,9 @@ def commit_setup_draft_fn(
     graph.patch_object(draft.id, {
         "run_id": run.id,
         "counts": {"items": total, **counts, "dropped_uncited": dropped_uncited,
-                   "dropped_low_quality": dropped_low_quality},
+                   "dropped_low_quality": dropped_low_quality
+                   + dropped_low_quality_projects,
+                   "dropped_topology_only": dropped_topology_only},
     })
     graph.patch_object(request_id, {
         "status": "completed", "run_id": run.id,
@@ -1032,10 +1179,11 @@ def _open_head_items_by_key(reader, draft_id: str) -> dict[str, Any]:
 
 
 def _sanitized_rows_from_sections(
-    sections: dict[str, Any], valid_refs: set[str], cap: int,
+    sections: dict[str, Any], valid_refs: set[str], cap: int, *, view=None,
 ) -> list[dict[str, Any]]:
     """Normalize model sections into delta rows under the same sanitation
-    and cite-or-drop rules the main commit path applies."""
+    and cite-or-drop rules the main commit path applies — including the
+    project evidence-qualification gate when a graph view is available."""
     rows: list[dict[str, Any]] = []
 
     def _refs_of(row: dict[str, Any]) -> list[str]:
@@ -1077,6 +1225,13 @@ def _sanitized_rows_from_sections(
         if not name or len(name) < 2 or not refs:
             continue
         description, _ = _sanitize((row or {}).get("description") or "", 800)
+        rationale = str((row or {}).get("rationale") or "")
+        if view is not None:
+            qualifying, topology = _qualifying_project_refs(view, refs)
+            if topology and not qualifying:
+                continue  # topology corroborates, never proposes (ADR 0051 §5)
+        if not description.strip() or not rationale.strip():
+            continue  # a useful proposal explains itself, or it waits
         rows.append({
             "section": "projects",
             "proposed": {
@@ -1084,7 +1239,7 @@ def _sanitized_rows_from_sections(
                 "status_note": str((row or {}).get("status_note") or "")[:200],
                 "people": [str(p)[:120] for p in ((row or {}).get("people") or [])[:8]],
             },
-            "rationale": str((row or {}).get("rationale") or ""),
+            "rationale": rationale,
             "evidence_refs": refs,
             "confidence": float((row or {}).get("confidence") or 0.7),
             "uncertainty": str((row or {}).get("uncertainty") or ""),
@@ -1156,7 +1311,9 @@ def _mint_understanding_delta(
             predecessor_id = predecessor.id
             change = (
                 "conflicting"
-                if predecessor.data.get("status") in ("accepted", "edited")
+                if predecessor.data.get("status") in (
+                    "accepted", "edited", "committed",
+                )
                 else "changed"
             )
         delta_items.append({
@@ -1288,26 +1445,174 @@ def _ensure_project_candidate(
     return candidate.id
 
 
+def _promote_delta_to_successor_review(
+    graph, view, *, delta, head, actor: str,
+) -> dict[str, Any]:
+    """ADR 0051 §3 — the successor review batch.
+
+    Mint the next draft version (source "successor") from an unresolved
+    delta that targets an accepted predecessor. Only the delta's genuinely
+    new/changed rows become items, every one UNDECIDED; unchanged semantic
+    keys never re-ask (the predecessor verdict is the standing answer) and
+    owner-edited predecessors always win. The predecessor draft, its items,
+    and its receipts are never patched. The successor is frozen immediately
+    (review_started), so still-later material lands as ONE cumulative delta
+    against it instead of a superseding version — replaying this apply on
+    the same store reproduces the same successor state."""
+    subject_ref = str(head.data.get("subject_ref") or "owner")
+    existing_id = str(
+        (delta.data.get("metadata") or {}).get("successor_draft_id") or ""
+    )
+    if existing_id:
+        return {"ok": True, "already_resolved": True, "status": "applied",
+                "successor_draft_id": existing_id}
+    head_index = _open_head_items_by_key(view, head.id)
+    successor = _mint_draft(
+        graph, subject_ref=subject_ref, source="successor",
+        run_id=str(delta.data.get("run_id") or "") or None,
+        included_refs=[delta.id],
+        coverage={
+            "provenance": "successor_review",
+            "successor_of": head.id,
+            "delta_ref": delta.id,
+            "input_fingerprint": str(
+                (delta.data.get("coverage") or {}).get("input_fingerprint") or ""
+            ),
+            "sources": dict(
+                (delta.data.get("coverage") or {}).get("sources") or {}
+            ),
+        },
+    )
+    graph.patch_object(successor.id, {
+        "metadata": {
+            **dict(successor.data.get("metadata") or {}),
+            "successor_of": head.id,
+            "review_context": "workspace",
+            "review_started": {"by": actor, "via": "successor_review"},
+        },
+    }, rationale="successor review batch opened from an understanding update")
+    minted = 0
+    skipped_unchanged = 0
+    skipped_owner_edited = 0
+    counts = {section: 0 for section in DRAFT_SECTIONS}
+    applied_keys: set[str] = set()
+    for row in delta.data.get("items") or []:
+        section = str(row.get("section") or "")
+        if section not in DRAFT_SECTIONS:
+            continue
+        proposed = dict(row.get("proposed") or {})
+        key = semantic_item_key(section, proposed)
+        if key in applied_keys:
+            continue
+        applied_keys.add(key)
+        predecessor = head_index.get(key)
+        pred_data = dict(predecessor.data or {}) if predecessor is not None else {}
+        if predecessor is not None:
+            head_presentation = _semantic_presentation(
+                section,
+                dict(pred_data.get("edited_value") or pred_data.get("proposed") or {}),
+            )
+            if _semantic_presentation(section, proposed) == head_presentation:
+                skipped_unchanged += 1
+                continue  # the accepted verdict is the standing answer
+            if pred_data.get("status") in ("edited",):
+                skipped_owner_edited += 1
+                continue
+        uncertainty = str(row.get("uncertainty") or "")
+        refs = list(row.get("evidence_refs") or [])
+        candidate_ref = None
+        if section == "projects":
+            qualifying, topology = _qualifying_project_refs(view, refs)
+            if topology and not qualifying:
+                # A legacy delta minted before the evidence gate may carry
+                # topology-only rows: they stay visible but flagged for the
+                # owner's call — never bulk-approvable, never dropped from
+                # a batch the owner was already promised.
+                uncertainty = (uncertainty + " · " if uncertainty else "") + (
+                    "supported only by tool topology; needs corroboration"
+                )
+            candidate_ref = str(pred_data.get("candidate_ref") or "") or None
+            if candidate_ref is None:
+                candidate_ref = _ensure_project_candidate(
+                    graph, view, subject_ref=subject_ref,
+                    name=str(proposed.get("name") or ""),
+                    description=str(proposed.get("description") or ""),
+                    refs=refs,
+                    rationale=str(row.get("rationale") or ""),
+                )
+        item = _mint_item(
+            graph, view, draft=successor, section=section,
+            proposed=proposed,
+            rationale=str(row.get("rationale") or ""),
+            evidence_refs=refs or [delta.id],
+            confidence=float(row.get("confidence") or 0.6),
+            uncertainty=uncertainty,
+            candidate_ref=candidate_ref, flags=[],
+        )
+        graph.patch_object(item.id, {
+            "metadata": {
+                **dict(item.data.get("metadata") or {}),
+                "delta_ref": delta.id,
+                "delta_change": str(row.get("change") or "new"),
+                **({"predecessor_item_id": predecessor.id}
+                   if predecessor is not None else {}),
+            },
+        })
+        minted += 1
+        counts[section] += 1
+    graph.patch_object(successor.id, {
+        "counts": {"items": minted, **counts},
+    })
+    graph.patch_object(delta.id, {
+        "status": "applied", "resolved_by": actor,
+        "metadata": {**dict(delta.data.get("metadata") or {}),
+                     "successor_draft_id": successor.id},
+    }, rationale=f"understanding delta promoted to a successor review by {actor}")
+    return {
+        "ok": True, "delta_id": delta.id, "items_minted": minted,
+        "skipped_unchanged": skipped_unchanged,
+        "skipped_owner_edited": skipped_owner_edited,
+        "successor_draft_id": successor.id,
+        "review_context": "workspace",
+    }
+
+
 def apply_understanding_delta_fn(
     graph, delta_ref: str, *, actor: str = "owner", reader=None,
 ) -> dict[str, Any]:
     """Apply an open/deferred delta: its rows join the frozen draft as
     FRESH proposed items (never pre-decided), each carrying its delta
     provenance. Project rows mint/reuse their candidate so submission can
-    promote them."""
+    promote them.
+
+    Against an ACCEPTED head (submitted/partial), applying promotes the
+    delta into a SUCCESSOR review batch (ADR 0051 §3): the next draft
+    version, source "successor", holding only the delta's new/changed rows.
+    The predecessor and its verdicts stay immutable history; nothing
+    replays the hatch or reopens onboarding."""
     view = reader or graph
     delta = _delta_by_ref(view, delta_ref)
     if delta is None:
         return {"ok": False, "reason": "delta_not_found"}
     if delta.data.get("status") in ("applied", "dismissed", "superseded"):
-        return {"ok": True, "already_resolved": True,
-                "status": delta.data.get("status")}
+        result = {"ok": True, "already_resolved": True,
+                  "status": delta.data.get("status")}
+        successor_id = str(
+            (delta.data.get("metadata") or {}).get("successor_draft_id") or ""
+        )
+        if successor_id:
+            result["successor_draft_id"] = successor_id
+        return result
     head = _draft_by_ref(view, str(delta.data.get("draft_id") or ""))
     if head is None:
         return {"ok": False, "reason": "draft_not_found"}
-    if head.data.get("status") in ("submitted", "superseded"):
+    if head.data.get("status") == "superseded":
         return {"ok": False, "reason": "draft_already_resolved",
                 "status": head.data.get("status")}
+    if head.data.get("status") in ("submitting", "submitted", "partial"):
+        return _promote_delta_to_successor_review(
+            graph, view, delta=delta, head=head, actor=actor,
+        )
     subject_ref = str(head.data.get("subject_ref") or "owner")
     head_index = _open_head_items_by_key(view, head.id)
     minted = 0
@@ -1339,8 +1644,19 @@ def apply_understanding_delta_fn(
                 # an owner declaration.
                 skipped_owner_edited += 1
                 continue
+        uncertainty = str(row.get("uncertainty") or "")
         candidate_ref = None
         if section == "projects":
+            qualifying, topology = _qualifying_project_refs(
+                view, list(row.get("evidence_refs") or []),
+            )
+            if topology and not qualifying:
+                # Deltas minted before the evidence gate may carry
+                # topology-only project rows: keep them visible but flagged
+                # for the owner's call — never bulk-approvable.
+                uncertainty = (uncertainty + " · " if uncertainty else "") + (
+                    "supported only by tool topology; needs corroboration"
+                )
             candidate_ref = str(pred_data.get("candidate_ref") or "") or None
             if candidate_ref is None:
                 candidate_ref = _ensure_project_candidate(
@@ -1356,7 +1672,7 @@ def apply_understanding_delta_fn(
             rationale=str(row.get("rationale") or ""),
             evidence_refs=list(row.get("evidence_refs") or []) or [delta.id],
             confidence=float(row.get("confidence") or 0.6),
-            uncertainty=str(row.get("uncertainty") or ""),
+            uncertainty=uncertainty,
             candidate_ref=candidate_ref, flags=[],
         )
         patch: dict[str, Any] = {
@@ -1600,6 +1916,13 @@ def _deterministic_rows(view, *, subject_ref: str) -> list[dict[str, Any]]:
         data = candidate.data or {}
         if data.get("status") != "proposed":
             continue
+        sources = [str(ref) for ref in (data.get("sources") or [])[:10]]
+        qualifying, topology = _qualifying_project_refs(view, sources)
+        if topology and not qualifying:
+            # A label/topology-seeded candidate corroborates once a project
+            # exists through real evidence; the floor never proposes from
+            # tool shape alone (ADR 0043 §2, ADR 0051 §5).
+            continue
         rows.append({
             "section": "projects",
             "proposed": {
@@ -1609,7 +1932,7 @@ def _deterministic_rows(view, *, subject_ref: str) -> list[dict[str, Any]]:
             },
             "rationale": str(data.get("rationale")
                              or "derived from your confirmed material"),
-            "evidence_refs": list(data.get("sources") or [])[:10] or [candidate.id],
+            "evidence_refs": sources or [candidate.id],
             "confidence": 0.6,
             "uncertainty": "",
             "candidate_ref": candidate.id,
@@ -1655,24 +1978,31 @@ def compose_deterministic_draft_fn(
     fingerprint = synthesis_input_fingerprint_fn(view, subject_ref=subject_ref)
 
     head = current_setup_draft_fn(view, subject_ref=subject_ref)
-    if (
+    head_status = str((head.data.get("status") if head is not None else "") or "")
+    head_frozen = (
         head is not None
-        and head.data.get("status") == "proposed"
+        and head_status == "proposed"
         and draft_review_started_fn(view, head)
-    ):
+    )
+    head_accepted = head is not None and head_status in (
+        "submitting", "submitted", "partial",
+    )
+    if head_frozen or head_accepted:
         delta = _mint_understanding_delta(
             graph, view, head=head, rows=rows, source="deterministic",
             run_id=None, coverage={
                 "composer": "deterministic_floor",
+                "input_fingerprint": fingerprint,
                 "sources": draft_source_coverage_fn(view, subject_ref=subject_ref),
             },
         )
-        graph.patch_object(head.id, {
-            "coverage": {
-                **dict(head.data.get("coverage") or {}),
-                "input_fingerprint": fingerprint,
-            },
-        }, rationale="frozen head consumed this compose input horizon")
+        if head_frozen:
+            graph.patch_object(head.id, {
+                "coverage": {
+                    **dict(head.data.get("coverage") or {}),
+                    "input_fingerprint": fingerprint,
+                },
+            }, rationale="frozen head consumed this compose input horizon")
         return {**delta, "draft_id": None, "frozen_head": head.id,
                 "source": "deterministic"}
 
@@ -2092,12 +2422,20 @@ def defer_setup_draft_fn(
 
 
 def begin_setup_draft_submission_fn(
-    graph, draft_ref: str, *, actor: str = "owner", reader=None
+    graph, draft_ref: str, *, actor: str = "owner", reader=None,
+    defer_undecided: bool = False,
 ) -> dict[str, Any]:
-    """Submission stage 1: mark the draft submitting, defer unresolved items,
+    """Submission stage 1: accept the horizon, mark the draft submitting,
     reject the candidates behind rejected items, and stage owner-declaration
     evidence for accepted/edited declaration-path items. The host drains the
-    runtime between stages (packs own contracts; hosts own sequencing)."""
+    runtime between stages (packs own contracts; hosts own sequencing).
+
+    Submission is an explicit horizon acceptance (ADR 0051 §2): it re-checks
+    for open understanding deltas and undecided items in the same
+    single-writer turn, so a stale client can never submit around material
+    that won event ordering. Undecided items defer only when the caller
+    explicitly acknowledges them (``defer_undecided``); the acceptance
+    records the horizon and every known delta's disposition on the draft."""
     view = reader or graph
     draft = _draft_by_ref(view, draft_ref)
     if draft is None:
@@ -2105,8 +2443,51 @@ def begin_setup_draft_submission_fn(
     if draft.data.get("status") in ("submitted", "superseded"):
         return {"ok": False, "reason": "already_resolved",
                 "status": draft.data.get("status")}
-    graph.patch_object(draft.id, {"status": "submitting"},
-                       rationale=f"setup draft submitted by {actor}")
+    open_deltas = open_understanding_deltas_fn(
+        view, draft_id=draft.id,
+        subject_ref=str(draft.data.get("subject_ref") or "owner"),
+    )
+    if open_deltas:
+        newest = open_deltas[-1]
+        item_count = len(newest.data.get("items") or [])
+        noun = "item" if item_count == 1 else "items"
+        return {
+            "ok": False, "reason": "open_understanding_update",
+            "delta_id": newest.id, "items": item_count,
+            "route": "setup_review",
+            "conflict": (
+                f"{item_count} new {noun} arrived before setup was saved. "
+                "Review or defer them first."
+            ),
+        }
+    undecided = [
+        item for item in _items_for_draft(view, draft.id)
+        if (item.data or {}).get("status") == "proposed"
+    ]
+    if undecided and not defer_undecided:
+        noun = "item" if len(undecided) == 1 else "items"
+        return {
+            "ok": False, "reason": "undecided_items",
+            "count": len(undecided), "route": "setup_review",
+            "conflict": (
+                f"{len(undecided)} {noun} still need your decision. "
+                "Review or defer them first."
+            ),
+        }
+    dispositions = {
+        obj.id: str(obj.data.get("status") or "")
+        for obj in view.objects(type="understanding_delta")
+        if obj.data.get("draft_id") == draft.id
+    }
+    graph.patch_object(draft.id, {
+        "status": "submitting",
+        "metadata": {
+            **dict(draft.data.get("metadata") or {}),
+            "accepted_horizon": _latest_event_id(graph),
+            "accepted_by": actor,
+            "delta_dispositions": dispositions,
+        },
+    }, rationale=f"setup draft submitted by {actor}; horizon accepted")
     staged = 0
     for item in _items_for_draft(view, draft.id):
         data = item.data or {}
@@ -2114,7 +2495,7 @@ def begin_setup_draft_submission_fn(
         if status == "proposed":
             graph.patch_object(item.id, {
                 "status": "deferred", "verdict": "defer", "verdict_actor": actor,
-            }, rationale="unresolved at submission; explicitly deferred")
+            }, rationale="undecided at submission; deferred with explicit acknowledgment")
             continue
         if status not in ("accepted", "edited"):
             continue
@@ -2384,6 +2765,12 @@ def project_setup_draft_fn(reader, *, subject_ref: str = "owner") -> dict[str, A
         if item.data.get("status") != "superseded"
     ]
     status = str(draft.data.get("status") or "proposed")
+    metadata = dict(draft.data.get("metadata") or {})
+    deltas = project_understanding_deltas_fn(
+        reader, draft_id=draft.id, subject_ref=subject_ref,
+    )
+    open_updates = [row for row in deltas if row["status"] == "open"]
+    undecided = sum(1 for item in items if item["status"] == "proposed")
     return {
         "draft": {
             "id": draft.id,
@@ -2393,13 +2780,25 @@ def project_setup_draft_fn(reader, *, subject_ref: str = "owner") -> dict[str, A
             "source": draft.data.get("source"),
             "counts": draft.data.get("counts"),
             "coverage": draft.data.get("coverage"),
+            # Successor context (ADR 0051 §3): where this review batch came
+            # from and where it reviews — detail surfaces, never headlines.
+            "review_context": str(metadata.get("review_context") or "onboarding"),
+            "successor_of": metadata.get("successor_of"),
+            "accepted_horizon": metadata.get("accepted_horizon"),
         },
         "items": items,
         "resolved": status in ("submitted", "deferred", "partial"),
         "review_started": draft_review_started_fn(reader, draft),
-        "deltas": project_understanding_deltas_fn(
-            reader, draft_id=draft.id, subject_ref=subject_ref,
-        ),
+        "deltas": deltas,
+        # What still stands between this review and an accepted submission
+        # (ADR 0051 §2) — hosts and clients gate from ONE truth.
+        "submission_blockers": {
+            "open_updates": [row["id"] for row in open_updates],
+            "open_update_items": sum(
+                len(row["items"]) for row in open_updates
+            ),
+            "undecided_items": undecided,
+        },
     }
 
 
@@ -2420,6 +2819,7 @@ __all__ = [
     "dismiss_understanding_delta_fn",
     "draft_review_started_fn",
     "merge_setup_project_items_fn",
+    "open_understanding_deltas_fn",
     "perform_setup_draft",
     "possible_overlap_clusters_fn",
     "prepare_setup_draft_fn",

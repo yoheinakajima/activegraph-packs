@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.4.0 — review horizons are accepted explicitly (2026-07-16)
+
+ADR 0051 / D076 — the understanding-to-review closure round. The first
+fully-keyed owner run submitted a one-item setup while a 48-item cumulative
+update sat open; the update then targeted a submitted draft and became
+permanently unreviewable. This release closes the semantic gap:
+
+- Delta dispositions are a closed vocabulary (`open` / `applied` /
+  `dismissed` / `deferred` / `superseded`, now schema-complete); `open`
+  blocks acceptance, `applied` stages UNDECIDED rows (staging is never
+  acceptance), `deferred` stays visible and is never counted reviewed.
+- `begin_setup_draft_submission_fn` is an explicit horizon acceptance: it
+  atomically re-checks open deltas (owner-language conflict + Review route
+  on refusal — a stale client cannot submit around event ordering) and
+  undecided items (refused unless the caller explicitly acknowledges with
+  `defer_undecided=True`), then records `accepted_horizon`, `accepted_by`,
+  and every known delta's disposition on the draft.
+- Post-acceptance material lands as ONE cumulative delta against the
+  accepted head (never a spontaneous new draft version); the head stays
+  immutable — its late input horizons stamp the delta's coverage, and
+  `consumed_input_fingerprint_fn` reads the newest delta's fingerprint.
+- `apply_understanding_delta_fn` on an accepted head promotes the delta
+  into a SUCCESSOR review batch (`setup_draft` source `successor`,
+  `review_context: workspace`, frozen immediately): only new/changed rows,
+  every one undecided, unchanged keys never re-ask, owner edits win,
+  predecessor verdicts/receipts untouched, replay-idempotent (the same
+  delta always answers with the same successor). Legacy stores holding a
+  submitted draft plus an older open delta recover through this path with
+  zero history rewrite.
+- Project proposals require qualifying non-topology evidence: an
+  `integration_profile` (labels/surfaces) corroborates but never proposes
+  (drops counted as `dropped_topology_only`); synthesis project rows also
+  require a description and rationale (`dropped_low_quality`); the
+  deterministic floor skips topology-only candidates; legacy delta rows
+  that fail the gate stay visible but flagged "supported only by tool
+  topology; needs corroboration" (needs-your-call, never bulk-approved).
+  The draft prompt now distinguishes named projects/products/funds from
+  generic business functions, companies, topics, and access strategies.
+- `project_setup_draft_fn` exposes `submission_blockers` (open updates,
+  their item count, undecided items) plus the draft's `review_context`,
+  `successor_of`, and `accepted_horizon`; new `open_understanding_deltas_fn`
+  lists the unresolved owner work.
+- Conformance: `tests/test_review_horizon.py` (14 tests) pins the ADR 0051
+  §12.1/§12.2 matrix, including the preserved owner store's exact legacy
+  shape.
+
+
 ## 0.3.0 — the governed agentic loop (2026-07-14)
 
 - Synthesis convergence + one-update review (2026-07-14 night, onboarding

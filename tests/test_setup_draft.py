@@ -300,7 +300,16 @@ def test_rejected_items_reject_their_candidates_and_defer_is_durable(runtime):
     identity = next(i for i in projection["items"] if i["section"] == "identity")
     review_setup_item_fn(graph, identity["id"], "reject")
     draft_id = projection["draft"]["id"]
-    begun = begin_setup_draft_submission_fn(graph, draft_id)
+    # Undecided items refuse a bare submission (ADR 0051 §2): deferral is an
+    # explicit acknowledgment, never a silent side effect.
+    refused = begin_setup_draft_submission_fn(graph, draft_id)
+    assert refused["ok"] is False
+    assert refused["reason"] == "undecided_items"
+    assert refused["route"] == "setup_review"
+    begun = begin_setup_draft_submission_fn(
+        graph, draft_id, defer_undecided=True,
+    )
+    assert begun["ok"] is True
     runtime.run_until_idle()
     completed = complete_setup_draft_submission_fn(graph, draft_id)
     runtime.run_until_idle()
@@ -314,14 +323,20 @@ def test_rejected_items_reject_their_candidates_and_defer_is_durable(runtime):
     projection = project_setup_draft_fn(graph)
     deferred = [i for i in projection["items"] if i["status"] == "deferred"]
     assert deferred
+    # The acceptance recorded its horizon and the known delta dispositions.
+    head = current_setup_draft_fn(graph)
+    assert head.data["metadata"].get("accepted_horizon") is not None
+    assert "delta_dispositions" in head.data["metadata"]
 
-    # A brand-new draft supersedes nothing submitted: version 2 arrives via
-    # the deterministic composer and the submitted head stays immutable.
+    # An accepted head is immutable: later composition lands as ONE
+    # cumulative understanding delta against it (ADR 0051 §3), never a
+    # spontaneous superseding version.
     head_before = current_setup_draft_fn(graph)
     assert head_before.data["status"] == "submitted"
     second = compose_deterministic_draft_fn(graph)
+    assert second["frozen_head"] == head_before.id
     head_after = current_setup_draft_fn(graph)
-    assert head_after.data["version"] == 2
+    assert head_after.id == head_before.id
     assert graph.get_object(head_before.id).data["status"] == "submitted"
     assert second["ok"]
 
