@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 — accepted understanding work is projectable (2026-07-17)
+
+- New `accepted.accepted_understanding_work_fn(reader)`: synthesis
+  requests, staged comprehension reductions, and campaigns the owner's
+  decisions authorized but that have not reached a terminal outcome, in
+  the neutral accepted-work vocabulary (queued/executing/blocked/failed
+  with owner-readable reasons). Hosts render these rows next to
+  `packs.connector_control.accepted` rows instead of inferring progress
+  from incidental objects (Phase 5c closure: a proposed synthesis request
+  and an open campaign sat invisible forever on the 2026-07-16 owner run).
+
 ## 0.4.0 — review horizons are accepted explicitly (2026-07-16)
 
 ADR 0051 / D076 — the understanding-to-review closure round. The first

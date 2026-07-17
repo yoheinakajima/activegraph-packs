@@ -323,6 +323,8 @@ def test_approved_gmail_plan_drives_once_through_deferred_execution(tmp_path):
         "version": 1,
         "service": "gmail",
         "source_surface_id": surface.data["surface_id"],
+        "purpose": "initial_backfill",
+        "work_class": "foreground",
     }]
 
     begun = begin_deferred_plan_execution_fn(

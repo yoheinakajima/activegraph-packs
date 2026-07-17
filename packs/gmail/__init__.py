@@ -18,7 +18,7 @@ register_gmail_comprehension()
 # requires=["activity_normalizer", "semantic_extraction", "communication", "usage", "tool_gateway", "connector_control"]
 pack = Pack(
     name="gmail",
-    version="0.6.1",
+    version="0.7.0",
     description=(
         "Canonical Gmail service connector: budgeted exploration into a service/account profile, "
         "bounded replayable backfill, history-watermark polling, provider-neutral evidence, local "

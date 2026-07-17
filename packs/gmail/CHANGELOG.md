@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0 — duplicate provider routes never churn comprehension (2026-07-17)
+
+- The exploration projector completes a probe that resolves to an
+  already-comprehended mailbox (same `account_ref`, different provider
+  connection id) as a duplicate-route receipt (`metadata.duplicate_route_of`)
+  and mints nothing: no superseding profile version, no re-proposed
+  ingestion plan. The 2026-07-16 owner run minted five profile versions in
+  28 seconds from duplicate ACTIVE Composio ids for one mailbox. A refresh
+  of an id the active profile already routes still records fresh topology.
+- `register_gmail_ingestion_plans` declares the plan seam's scheduling
+  class `foreground` (connector_control 0.7.0): starting an approved
+  acquisition never queues behind model reasoning.
+
 ## 0.6.1 — restart-safe approved-plan delivery (2026-07-15)
 
 - Register Gmail with connector-control's durable deferred-plan seam. Both

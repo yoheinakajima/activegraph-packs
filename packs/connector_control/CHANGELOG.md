@@ -1,5 +1,24 @@
 # Connector Control Pack Changelog
 
+## v0.7.0 — plan purposes are independent contracts (2026-07-17)
+
+- `plan_series_id` gains a `purpose` parameter: non-default purposes
+  (`comprehension`, `extension`) hash into series identity so an initial
+  backfill and a consented comprehension study version, approve, and execute
+  independently on the same surface. The default purpose keeps the
+  historical four-part hash — every stored series id stays valid on replay.
+- Execution gates (`_executable_plan`, `pending_deferred_plan_executions_fn`,
+  `approve_ingestion_plan_fn`, `edit_ingestion_plan_fn`) anchor currentness
+  to the plan's OWN stored series head via the new
+  `current_plan_for_series_fn`, not the surface-wide head. Two approved
+  purposes are now both discoverable work; a backfill re-proposal can no
+  longer silently evaporate an approved study (the 2026-07-16 owner store
+  lost its consented sent-mail study to exactly that resolution rule).
+- `current_plan_for_surface_fn` keeps its historical widest-lens behavior
+  for display callers and gains an optional `purpose` filter.
+- `pending_deferred_plan_executions_fn` rows carry `purpose` so hosts can
+  classify scheduling priority without re-reading the plan.
+
 ## v0.6.0 — durable external work (2026-07-13)
 
 - Add the durable `external_work_attempt` ledger (ADR 0041 as amended by

@@ -410,6 +410,11 @@ def register_gmail_ingestion_plans() -> None:
         prepare=prepare_gmail_plan_execution,
         perform=perform_prepared_gmail_plan,
         commit=commit_gmail_plan_execution,
+        # The perform is a no-network no-op (Gmail is contacted through the
+        # gateway capability seam); starting an approved acquisition is
+        # owner-visible foreground work and must never queue behind model
+        # reasoning.
+        work_class="foreground",
     )
 
 

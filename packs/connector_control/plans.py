@@ -49,7 +49,7 @@ def unregister_ingestion_plan_executor(service: str) -> None:
 # contract — a deferred host must mirror them exactly. Approval stays the
 # only trigger either way; nothing here weakens ADR 0039's gates.
 
-_DEFERRED_EXECUTIONS: dict[str, dict[str, Callable[..., dict[str, Any]]]] = {}
+_DEFERRED_EXECUTIONS: dict[str, dict[str, Any]] = {}
 
 
 def register_deferred_plan_execution(
@@ -59,14 +59,28 @@ def register_deferred_plan_execution(
     perform: Callable[[dict[str, Any]], dict[str, Any]],
     commit: Callable[[Any, Any, dict[str, Any], dict[str, Any]], dict[str, Any]],
     replace: bool = True,
+    work_class: Optional[str] = None,
 ) -> None:
+    """Register the three-phase seam; the registering pack also declares the
+    scheduling class of its perform (it owns the cost knowledge): a service
+    whose perform is a quick provider hop declares ``foreground`` so hosts
+    can start accepted work promptly; model-reasoning performs stay on the
+    default ``background`` class."""
+    from packs.tool_gateway.gateway import DEFAULT_WORK_CLASS, WORK_CLASSES
+
     key = service.strip().lower()
     if not key:
         raise ValueError("service is required")
     if key in _DEFERRED_EXECUTIONS and not replace:
         raise ValueError(f"deferred plan execution already registered for {key!r}")
+    resolved_class = work_class or DEFAULT_WORK_CLASS
+    if resolved_class not in WORK_CLASSES:
+        raise ValueError(
+            f"work_class must be one of {WORK_CLASSES}, got {work_class!r}"
+        )
     _DEFERRED_EXECUTIONS[key] = {
         "prepare": prepare, "perform": perform, "commit": commit,
+        "work_class": resolved_class,
     }
 
 
@@ -80,7 +94,10 @@ def has_deferred_plan_execution(service: str) -> bool:
 
 def _executable_plan(view, plan_ref: str):
     """The one place the execution gates live (used by sync and deferred
-    paths alike): the plan exists, is approved, and is current."""
+    paths alike): the plan exists, is approved, and is the current head of
+    its OWN series. Anchoring currentness to the plan's stored series — not
+    the whole surface — lets independent purposes (backfill, comprehension)
+    coexist as approved work without one evaporating the other."""
     plan = resolve_plan_fn(view, plan_ref)
     if plan is None:
         raise ValueError(f"ingestion plan {plan_ref!r} does not exist")
@@ -93,7 +110,7 @@ def _executable_plan(view, plan_ref: str):
             f"plan {data.get('plan_identity')!r} is {status!r}; approve the "
             "current version before executing"
         )
-    head = current_plan_for_surface_fn(view, str(data.get("source_surface_id")))
+    head = current_plan_for_series_fn(view, str(data.get("plan_series")))
     if head is None or head.id != plan.id:
         raise ValueError(
             f"plan {data.get('plan_identity')!r} is not current; a superseded "
@@ -116,9 +133,7 @@ def pending_deferred_plan_executions_fn(reader) -> list[dict[str, Any]]:
         service = str(data.get("service") or "").lower()
         if service not in _DEFERRED_EXECUTIONS:
             continue
-        head = current_plan_for_surface_fn(
-            reader, str(data.get("source_surface_id"))
-        )
+        head = current_plan_for_series_fn(reader, str(data.get("plan_series")))
         if head is None or head.id != plan.id:
             continue
         rows.append({
@@ -126,6 +141,10 @@ def pending_deferred_plan_executions_fn(reader) -> list[dict[str, Any]]:
             "version": int(data.get("version") or 0),
             "service": service,
             "source_surface_id": str(data.get("source_surface_id") or ""),
+            "purpose": str(data.get("purpose") or "initial_backfill"),
+            "work_class": str(
+                _DEFERRED_EXECUTIONS[service].get("work_class") or "background"
+            ),
         })
     rows.sort(key=lambda row: (row["service"], row["plan_identity"]))
     return rows
@@ -212,10 +231,28 @@ def _stable_id(prefix: str, *parts: Any) -> str:
 
 
 def plan_series_id(
-    source_surface_id: str, service: str, account_ref: str, family: str
+    source_surface_id: str,
+    service: str,
+    account_ref: str,
+    family: str,
+    purpose: str = "initial_backfill",
 ) -> str:
+    """Series identity for one independent plan intent on a surface.
+
+    Purpose participates for non-default purposes so an initial backfill and
+    a consented comprehension study are separate contracts that version,
+    approve, and execute independently (Phase 5c closure — the 2026-07-16
+    owner store lost its approved sent study to the collision). The default
+    purpose keeps the historical four-part hash, so every stored series id
+    stays valid on replay.
+    """
+    if purpose in ("", "initial_backfill"):
+        return _stable_id(
+            "ingestion_plan_series", source_surface_id, service, account_ref, family
+        )
     return _stable_id(
-        "ingestion_plan_series", source_surface_id, service, account_ref, family
+        "ingestion_plan_series",
+        source_surface_id, service, account_ref, family, purpose,
     )
 
 
@@ -251,12 +288,43 @@ def resolve_plan_fn(reader, plan_ref: str):
     return _plan_by_identity(reader, plan_ref)
 
 
-def current_plan_for_surface_fn(reader, source_surface_id: str):
-    """The head (highest, non-superseded) plan version for a surface, or None."""
+def current_plan_for_series_fn(reader, plan_series: str):
+    """The head (highest, non-superseded) version of ONE series, or None.
+
+    This is the currentness execution gates use: versions supersede within a
+    series, never across series, so independent purposes on the same surface
+    stay independently current. Anchoring on the STORED series value keeps
+    legacy stores (where two purposes shared a series) resolving exactly as
+    they always did.
+    """
+    rows = [
+        obj for obj in reader.objects(type="connector_ingestion_plan")
+        if obj.data.get("plan_series") == plan_series
+        and obj.data.get("status") != "superseded"
+    ]
+    if not rows:
+        return None
+    rows.sort(key=lambda obj: int(obj.data.get("version") or 0))
+    return rows[-1]
+
+
+def current_plan_for_surface_fn(
+    reader, source_surface_id: str, purpose: Optional[str] = None
+):
+    """The head plan for a surface, optionally scoped to one purpose.
+
+    Without ``purpose`` this keeps its historical widest-lens behavior (the
+    newest non-superseded version across every series on the surface) for
+    display callers. Execution gates use ``current_plan_for_series_fn``.
+    """
     rows = [
         obj for obj in reader.objects(type="connector_ingestion_plan")
         if obj.data.get("source_surface_id") == source_surface_id
         and obj.data.get("status") != "superseded"
+        and (
+            purpose is None
+            or str(obj.data.get("purpose") or "initial_backfill") == purpose
+        )
     ]
     if not rows:
         return None
@@ -413,7 +481,9 @@ def propose_ingestion_plan_fn(
     }
     _validate_caps_against_policy(full_caps)
 
-    series = plan_series_id(source_surface_id, service, account_ref, family)
+    series = plan_series_id(
+        source_surface_id, service, account_ref, family, purpose=purpose
+    )
     existing = _series_plans(view, series)
     head = existing[-1] if existing else None
     body_hash = _body_hash(
@@ -508,7 +578,7 @@ def edit_ingestion_plan_fn(
             f"plan {data.get('plan_identity')!r} is {status}; only "
             f"{sorted(PLAN_EDITABLE_STATUSES)} plans can be edited"
         )
-    head = current_plan_for_surface_fn(view, str(data.get("source_surface_id")))
+    head = current_plan_for_series_fn(view, str(data.get("plan_series")))
     if head is None or head.id != plan.id:
         raise ValueError(
             f"plan {data.get('plan_identity')!r} is not the current version; "
@@ -593,7 +663,7 @@ def approve_ingestion_plan_fn(
             f"plan {data.get('plan_identity')!r} is {data.get('status')!r}; "
             "only a proposed plan can be approved"
         )
-    head = current_plan_for_surface_fn(view, str(data.get("source_surface_id")))
+    head = current_plan_for_series_fn(view, str(data.get("plan_series")))
     if head is None or head.id != plan.id:
         raise ValueError(
             f"plan {data.get('plan_identity')!r} was superseded; approve the "
@@ -795,6 +865,7 @@ __all__ = [
     "bind_plan_execution_fn",
     "ceiling_escalation_error",
     "commit_deferred_plan_execution_fn",
+    "current_plan_for_series_fn",
     "current_plan_for_surface_fn",
     "edit_ingestion_plan_fn",
     "execute_ingestion_plan_fn",

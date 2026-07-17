@@ -378,6 +378,37 @@ def gmail_exploration_projector(event, graph, ctx, *, settings: GmailSettings):
         graph.patch_object(receipt.id, {"status": "failed", "metadata": metadata})
         return
     account_id = str(gmail_meta.get("connected_account_id") or "")
+    # Providers retain several ACTIVE connection ids for one mailbox. When
+    # the probe reveals an account this graph already comprehends through a
+    # DIFFERENT id, the exploration completes as a duplicate-route receipt
+    # and mints nothing: superseding the active profile here re-proposed the
+    # exact ingestion plan the owner was reading (five profile versions in
+    # 28 seconds on the 2026-07-16 owner run). A refresh of an id the
+    # profile already routes still records fresh topology below.
+    duplicate_of = next(
+        (
+            obj for obj in ctx.view.objects(type="integration_profile")
+            if (obj.data or {}).get("service") == "gmail"
+            and (obj.data or {}).get("status") == "active"
+            and str((obj.data or {}).get("account_ref") or "") == email
+            and account_id not in {
+                str(route.get("connected_account_id") or "")
+                for route in (obj.data or {}).get("routes") or []
+            }
+        ),
+        None,
+    )
+    if duplicate_of is not None:
+        metadata["duplicate_route_of"] = duplicate_of.id
+        graph.patch_object(
+            receipt.id,
+            {"status": "completed", "metadata": metadata},
+            rationale=(
+                "probe resolved an already-comprehended mailbox; duplicate "
+                "provider route recorded without superseding the profile"
+            ),
+        )
+        return
     route = str(gmail_meta.get("route") or (receipt.data.get("metadata") or {}).get("route") or "composio")
     route_schema_version = str(
         results["profile"].get("route_schema_version")

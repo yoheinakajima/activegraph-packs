@@ -182,11 +182,34 @@ def decide_policy_detail(
 # unregisters ITS OWN registrations on stop, so one front stopping never
 # strips deferral from another live front in the same process.
 _DEFERRED_CAPABILITIES: dict[tuple[str, str], int] = {}
+_DEFERRED_WORK_CLASSES: dict[tuple[str, str], str] = {}
+
+# Neutral scheduling vocabulary for durable external work (Phase 5c closure).
+# The pack or host that OWNS a perform declares its cost class at seam
+# registration; scheduling policy (which lane runs which class, fairness)
+# stays a host decision. Classes, strongest claim first:
+#   interactive — an owner is actively waiting on the result (connection
+#                 preflight, link minting, claims). Sub-second performs only.
+#   foreground  — owner-accepted work becoming visibly running (starting an
+#                 approved acquisition, page fetches of a watched import).
+#   background  — model reasoning and other long performs (synthesis,
+#                 comprehension, research). May take minutes; must never
+#                 block the classes above.
+#   maintenance — cleanup and low-priority reconciliation.
+WORK_CLASSES = ("interactive", "foreground", "background", "maintenance")
+DEFAULT_WORK_CLASS = "background"
 
 
-def register_deferred_capability(provider_name: str, capability_name: str) -> None:
+def register_deferred_capability(
+    provider_name: str, capability_name: str, work_class: str = DEFAULT_WORK_CLASS
+) -> None:
+    if work_class not in WORK_CLASSES:
+        raise ValueError(
+            f"work_class must be one of {WORK_CLASSES}, got {work_class!r}"
+        )
     key = (str(provider_name), str(capability_name))
     _DEFERRED_CAPABILITIES[key] = _DEFERRED_CAPABILITIES.get(key, 0) + 1
+    _DEFERRED_WORK_CLASSES[key] = work_class
 
 
 def unregister_deferred_capability(provider_name: str, capability_name: str) -> None:
@@ -196,11 +219,13 @@ def unregister_deferred_capability(provider_name: str, capability_name: str) -> 
         _DEFERRED_CAPABILITIES[key] = count
     else:
         _DEFERRED_CAPABILITIES.pop(key, None)
+        _DEFERRED_WORK_CLASSES.pop(key, None)
 
 
 def clear_deferred_capabilities() -> None:
     """Test hygiene only — production hosts unregister what they registered."""
     _DEFERRED_CAPABILITIES.clear()
+    _DEFERRED_WORK_CLASSES.clear()
 
 
 def capability_execution_deferred(provider_name: str, capability_name: str) -> bool:
@@ -209,8 +234,19 @@ def capability_execution_deferred(provider_name: str, capability_name: str) -> b
     ) > 0
 
 
+def capability_work_class(provider_name: str, capability_name: str) -> str:
+    """The registered scheduling class for a deferred capability."""
+    return _DEFERRED_WORK_CLASSES.get(
+        (str(provider_name), str(capability_name)), DEFAULT_WORK_CLASS
+    )
+
+
 def pending_deferred_capability_calls_fn(reader) -> list[dict[str, str]]:
-    """Approved calls whose execution the host deferred — pump work items."""
+    """Approved calls whose execution the host deferred — pump work items.
+
+    Each row carries the registered ``work_class`` so a host can partition
+    lanes without re-deriving cost knowledge it does not own.
+    """
     rows: list[dict[str, str]] = []
     for obj in reader.objects(type="capability_call"):
         data = obj.data or {}
@@ -224,6 +260,7 @@ def pending_deferred_capability_calls_fn(reader) -> list[dict[str, str]]:
             "call_id": obj.id,
             "provider_name": provider,
             "capability_name": capability,
+            "work_class": capability_work_class(provider, capability),
         })
     rows.sort(key=lambda row: row["call_id"])
     return rows

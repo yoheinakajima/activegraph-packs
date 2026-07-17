@@ -3,7 +3,7 @@
 
 [pack]
 name = "subject_synthesis"
-version = "0.4.0"
+version = "0.5.0"
 description = "Bounded, provider-gated comprehension synthesis: structured identity candidates lifted from confirmed prose and a curated, evidence-cited project slate — verdict-gated, receipted, with the deterministic derivation left untouched as the zero-key floor. ADR 0047 adds understanding affordances, source lenses over one versioned working understanding with support-vs-context lineage, and a governed dynamic coordinator with bounded drill-downs."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:f8aabccf710c50a28cda63bf8aaf5dcd3e2757bf51377c66dddbb7562d9862e6"
+content_hash = "sha256:25c7fd47a8df9e5c263d812346007773a1545f454f149773d54987187997dd8a"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

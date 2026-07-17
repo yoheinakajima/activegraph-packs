@@ -65,7 +65,7 @@ from .working import (
 # integrates_with=["entity", "connector_control", "llm_provider"]
 pack = Pack(
     name="subject_synthesis",
-    version="0.4.0",
+    version="0.5.0",
     description=(
         "Bounded, provider-gated comprehension synthesis: structured "
         "identity candidates lifted from confirmed prose and a curated, "
