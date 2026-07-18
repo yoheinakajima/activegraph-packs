@@ -274,6 +274,76 @@ def rename_project_fn(graph, project_id: str, name: str, *, actor: str = "owner"
     return {"ok": True, "project_id": replacement.id, "superseded": project_id}
 
 
+def create_workstream_fn(
+    graph, name: str, *, description: str = "", goal: str = "",
+    status: str = "active", start_date: Optional[str] = None,
+    target_date: Optional[str] = None, owner_ref: Optional[str] = None,
+    actor: str = "owner",
+) -> dict[str, Any]:
+    """Owner-authored workstream creation — the direct door beside the
+    evidence-derived candidate flow. The record says so honestly:
+    ``derivation_kind: owner_authored``, no candidate, no pretended
+    evidence. Idempotent per normalized name while an active project of
+    that name exists."""
+    name = " ".join(str(name).split())
+    if not name:
+        raise ValueError("a workstream needs a name")
+    if status not in ("active", "archived"):
+        raise ValueError("status must be active | archived")
+    existing = next(
+        (obj for obj in graph.objects(type="project")
+         if _norm(obj.data.get("name") or "") == _norm(name)
+         and obj.data.get("status") == "active"),
+        None,
+    )
+    if existing is not None:
+        return {"ok": True, "project_id": existing.id, "already_exists": True}
+    ops = {
+        key: value for key, value in (
+            ("goal", str(goal)[:400] or None),
+            ("owner_ref", owner_ref),
+            ("start_date", start_date),
+            ("target_date", target_date),
+        ) if value
+    }
+    project = graph.add_object("project", {
+        "project_identity": _stable("project", _norm(name), actor),
+        "name": name,
+        "description": str(description)[:1_000],
+        "status": status,
+        "seeded_from_candidate_id": None,
+        "confirmed_by": actor,
+        "supersedes": None,
+        "superseded_by": None,
+        "metadata": {
+            "derivation_kind": "owner_authored",
+            "sources": [],
+            **({"ops": ops} if ops else {}),
+        },
+    })
+    return {"ok": True, "project_id": project.id, "created": True}
+
+
+def archive_project_fn(
+    graph, project_id: str, *, actor: str = "owner", reason: str = "",
+) -> dict[str, Any]:
+    """Archive keeps history reachable: a status transition with the
+    owner's reason in the receipt, never a deletion. Routed items and
+    relations stay attached for the record."""
+    project = graph.get_object(project_id)
+    if project is None or project.type != "project":
+        raise ValueError(f"unknown project {project_id!r}")
+    if project.data.get("status") != "active":
+        return {"ok": False, "reason": "not_active",
+                "status": project.data.get("status")}
+    graph.patch_object(
+        project_id, {"status": "archived"},
+        rationale=f"archived by {actor}: {reason}"[:200] if reason
+        else f"archived by {actor}",
+    )
+    return {"ok": True, "project_id": project_id, "status": "archived"}
+
+
 def describe_project_fn(
     graph, project_id: str, description: str, *, actor: str = "owner"
 ) -> dict[str, Any]:
@@ -326,17 +396,38 @@ def rename_project(graph, project_id: str = "", name: str = "", actor: str = "ow
     return rename_project_fn(graph, project_id, name, actor=actor)
 
 
+@tool(name="create_workstream", description="Owner-authored workstream: create a canonical project directly, recorded as owner_authored.")
+def create_workstream(graph, name: str = "", description: str = "", goal: str = "", actor: str = "owner"):
+    return create_workstream_fn(graph, name, description=description, goal=goal, actor=actor)
+
+
+@tool(name="describe_project", description="Edit an active project's description (a patch with rationale).")
+def describe_project(graph, project_id: str = "", description: str = "", actor: str = "owner"):
+    return describe_project_fn(graph, project_id, description, actor=actor)
+
+
+@tool(name="archive_project", description="Archive an active project; history and routes stay reachable.")
+def archive_project(graph, project_id: str = "", reason: str = "", actor: str = "owner"):
+    return archive_project_fn(graph, project_id, actor=actor, reason=reason)
+
+
 @tool(name="project_projects", description="Project every project candidate and confirmed project.")
 def project_projects(graph, _ctx=None):
     return project_projects_fn(graph)
 
 
-TOOLS = [derive_project_candidates, review_project_candidate, rename_project, project_projects]
+TOOLS = [
+    derive_project_candidates, review_project_candidate, rename_project,
+    create_workstream, describe_project, archive_project, project_projects,
+]
 
 __all__ = [
     "PROJECTS_CONTRACT_VERSION",
     "TOOLS",
+    "archive_project_fn",
+    "create_workstream_fn",
     "derive_project_candidates_fn",
+    "describe_project_fn",
     "project_projects_fn",
     "rename_project_fn",
     "review_project_candidate_fn",

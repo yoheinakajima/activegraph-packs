@@ -1,5 +1,25 @@
 # Team/Ops Pack Changelog
 
+## v0.3.0 — the task seam for product hosts (2026-07-17, Mission Control vertical)
+
+### Added
+- `create_task_fn` / `@tool create_task` — owner-authored canonical Core
+  task, born `active`, deadline on `due_at`, scoped to its workstream via
+  `part_of_project`.
+- `accept_task_candidate_fn` / `@tool accept_task_candidate` — the missing
+  seam between the evidence-backed `task_candidate` stream
+  (activity_normalizer) and team_ops triage: accepting a candidate mints a
+  canonical task carrying the candidate + its evidence as provenance.
+  Idempotent per candidate; the candidate object's own lifecycle is left
+  to its owning pack.
+- `project_tasks_fn` — neutral task listing with the `part_of_project`
+  join (title/status/priority/due/project), deterministic ordering.
+
+### Changed
+- `create_project_fn` now delegates to the projects pack's
+  `create_workstream_fn` (declared stable API): one canonical mint site
+  for `project` rows (D062). Signature and return type unchanged.
+
 ## v0.1.2 — activegraph 1.3 compatibility (2026-07-08)
 
 ### Fixed

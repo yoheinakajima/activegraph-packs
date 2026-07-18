@@ -40,7 +40,7 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 # requires=["core"], composes_with=["identity_auth", "codebase", "meeting"]
 pack = Pack(
     name="team_ops",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Team project management: task triage, assignment, milestone tracking, "
         "workload estimation, and completion verification. "

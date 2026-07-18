@@ -24,16 +24,28 @@ from .graph import (
     unlink_workstreams_fn,
 )
 from .object_types import OBJECT_TYPES, RELATION_TYPES
-from .tools import TOOLS
+from .router import (
+    bootstrap_associations_fn,
+    derive_route_fn,
+    route_pending_fn,
+    unrouted_items_fn,
+)
+from .tools import (
+    TOOLS,
+    archive_project_fn,
+    create_workstream_fn,
+    describe_project_fn,
+)
 
 # requires=["subject_profile"], integrates_with=["entity", "communication", "attention", "tool_gateway"]
 pack = Pack(
     name="projects",
-    version="0.4.0",
+    version="0.5.0",
     description=(
         "Evidence-derived project candidates with explainable sources and "
         "owner-verdict promotion; deterministic derivation, supersession "
-        "lifecycles, and a neutral projection."
+        "lifecycles, owner-authored workstreams, the evidence router with "
+        "honest unfiled state, and a neutral projection."
     ),
     object_types=tuple(OBJECT_TYPES),
     relation_types=tuple(RELATION_TYPES),
@@ -45,9 +57,14 @@ pack = Pack(
 
 __all__ = [
     "pack",
+    "archive_project_fn",
     "associate_workstream_fn",
+    "bootstrap_associations_fn",
     "correct_routing_fn",
+    "create_workstream_fn",
+    "derive_route_fn",
     "descendants_fn",
+    "describe_project_fn",
     "link_workstreams_fn",
     "project_context_packet_fn",
     "project_organizational_views_fn",
@@ -55,5 +72,7 @@ __all__ = [
     "propose_organizational_view_fn",
     "review_organizational_view_fn",
     "route_item_fn",
+    "route_pending_fn",
     "unlink_workstreams_fn",
+    "unrouted_items_fn",
 ]

@@ -156,10 +156,13 @@ def associate_workstream_fn(
 
 def route_item_fn(
     graph, item_ref: str, project_id: str, *, actor: str = "system",
-    provenance: str = "", evidence_refs: Optional[list[str]] = None, reader=None,
+    provenance: str = "", evidence_refs: Optional[list[str]] = None,
+    confidence_milli: Optional[int] = None, reader=None,
 ) -> dict[str, Any]:
     """Route an item to a workstream with recorded provenance — the receipt
-    the owner can always ask 'why did this land here?' against."""
+    the owner can always ask 'why did this land here?' against. A derived
+    route may record the confidence its signals earned; an owner route
+    needs none."""
     view = reader or graph
     if _active_project(view, project_id) is None:
         return {"ok": False, "reason": "unknown_project"}
@@ -174,12 +177,13 @@ def route_item_fn(
     ]
     if existing:
         return {"ok": True, "already_routed": True, "relation_id": existing[0].id}
-    relation = graph.add_relation(
-        item_ref, project_id, "routed_to",
-        {"routed_by": actor, "routing_provenance": str(provenance)[:200],
-         "evidence_refs": [str(r) for r in (evidence_refs or [])][:6]},
-        actor=actor,
-    )
+    data: dict[str, Any] = {
+        "routed_by": actor, "routing_provenance": str(provenance)[:200],
+        "evidence_refs": [str(r) for r in (evidence_refs or [])][:6],
+    }
+    if confidence_milli is not None:
+        data["confidence_milli"] = max(0, min(1000, int(confidence_milli)))
+    relation = graph.add_relation(item_ref, project_id, "routed_to", data, actor=actor)
     return {"ok": True, "relation_id": relation.id}
 
 
