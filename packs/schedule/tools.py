@@ -9,10 +9,12 @@ times. Nothing in this pack ever reads the wall clock on its own.
 
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Union
 
 from activegraph.packs import tool
+
+from .recurrence import CalendarRule
 
 TimeLike = Union[str, datetime]
 
@@ -35,6 +37,9 @@ def compute_next_due(
     at_time: Optional[str],
     at: Optional[str],
     after: TimeLike,
+    timezone: str = "UTC",
+    weekdays: Optional[list[str]] = None,
+    day_of_month: Union[int, str, None] = None,
 ) -> Optional[str]:
     """Next due moment strictly after *after*, per the schedule spec.
 
@@ -47,16 +52,17 @@ def compute_next_due(
         if not every_seconds:
             return None
         return _iso(ref + timedelta(seconds=int(every_seconds)))
-    if kind == "daily":
-        if not at_time:
-            return None
-        hh, mm = (int(p) for p in at_time.split(":", 1))
-        candidate = ref.astimezone(timezone.utc).replace(
-            hour=hh, minute=mm, second=0, microsecond=0
-        )
-        if candidate <= ref:
-            candidate += timedelta(days=1)
-        return _iso(candidate)
+    if kind == "daily" and not at_time and timezone == "UTC" and weekdays is None and day_of_month is None:
+        return None  # legacy incomplete daily schedules remained disabled
+    if kind == "daily" and at_time:
+        # Existing daily records accepted unpadded integer hour/minute parts.
+        # Preserve their meaning; new weekly/monthly rules use exact HH:MM.
+        hh, mm = (int(part) for part in at_time.split(":", 1))
+        at_time = f"{hh:02d}:{mm:02d}"
+    if kind in {"daily", "weekly", "monthly"}:
+        rule = CalendarRule(kind=kind, at_time=at_time, timezone=timezone,
+                            weekdays=weekdays, day_of_month=day_of_month)
+        return _iso(rule.next_after(ref))
     if kind == "once":
         if not at:
             return None
@@ -79,6 +85,9 @@ def create_schedule_fn(
     at_time: Optional[str] = None,
     at: Optional[str] = None,
     now: TimeLike,
+    timezone: str = "UTC",
+    weekdays: Optional[list[str]] = None,
+    day_of_month: Union[int, str, None] = None,
     enabled: bool = True,
     created_by: Optional[str] = None,
     frame_id: Optional[str] = None,
@@ -95,6 +104,7 @@ def create_schedule_fn(
     else:
         next_due = compute_next_due(
             kind, every_seconds=every_seconds, at_time=at_time, at=at, after=now,
+            timezone=timezone, weekdays=weekdays, day_of_month=day_of_month,
         )
     return graph.add_object("schedule", {
         "name": name,
@@ -102,6 +112,9 @@ def create_schedule_fn(
         "every_seconds": every_seconds,
         "at_time": at_time,
         "at": at,
+        "timezone": timezone,
+        "weekdays": weekdays,
+        "day_of_month": day_of_month,
         "payload_emit_type": payload_emit_type,
         "payload_data": payload_data or {},
         "enabled": enabled and next_due is not None,
@@ -189,7 +202,7 @@ def set_schedule_enabled_fn(graph, schedule_id: str, enabled: bool) -> dict[str,
 @tool(
     name="create_schedule",
     description=(
-        "Create a schedule (interval | daily | once) that emits a declared "
+        "Create a schedule (interval | daily | weekly | monthly | once) that emits a declared "
         "object on each firing. next_due_at is computed from the supplied "
         "'now' — the caller owns the clock."
     ),
@@ -204,12 +217,16 @@ def create_schedule(
     every_seconds: Optional[int] = None,
     at_time: Optional[str] = None,
     at: Optional[str] = None,
+    timezone: str = "UTC",
+    weekdays: Optional[list[str]] = None,
+    day_of_month: Union[int, str, None] = None,
 ):
     """Registered tool wrapper — delegates to create_schedule_fn."""
     return create_schedule_fn(
         graph, name=name, kind=kind, payload_emit_type=payload_emit_type,
         payload_data=payload_data, every_seconds=every_seconds,
         at_time=at_time, at=at, now=now,
+        timezone=timezone, weekdays=weekdays, day_of_month=day_of_month,
     )
 
 

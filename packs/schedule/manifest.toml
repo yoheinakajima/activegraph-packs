@@ -3,7 +3,7 @@
 
 [pack]
 name = "schedule"
-version = "0.2.0"
+version = "0.3.0"
 description = "Graph-native scheduling: schedules declare when to fire and what to emit; ticks are event-first records of due moments; a host driver injects timestamps at the edge. No clock, no thread, no loop in the pack — proactive behavior without an orchestrator."
 license = "Apache-2.0"
 
@@ -15,7 +15,7 @@ source_url = "https://github.com/yoheinakajima/activegraph-packs"
 created_at = "2026-07-08T00:00:00Z"
 
 [pack.integrity]
-content_hash = "sha256:a46b66210d8f67a3da7ddf500ce3eb8e16e36a5ce49e80677144f5df69d850da"
+content_hash = "sha256:67a70ec767f5be01316a51278169f3cd655fe188022212feee9b509062341f74"
 
 [dependencies]
 activegraph = ">=1.9,<2.0"

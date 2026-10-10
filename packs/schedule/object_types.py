@@ -18,10 +18,12 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from activegraph.packs import ObjectType, RelationType
 
+
+from .recurrence import CalendarRule, CalendarTimezone, MonthDay, Weekday
 
 # ================================================================ Schemas
 
@@ -31,7 +33,9 @@ class Schedule(BaseModel):
 
     spec kinds:
       interval — every ``every_seconds`` seconds
-      daily    — once a day at ``at_time`` ("HH:MM", UTC)
+      daily    — once a day at ``at_time`` ("HH:MM", selected timezone)
+      weekly   — selected weekdays at ``at_time``
+      monthly  — declared day (clamped to month end) or "last" at ``at_time``
       once     — a single firing at ``at`` (ISO 8601); auto-disables after
 
     payload:
@@ -45,8 +49,8 @@ class Schedule(BaseModel):
     """
 
     name: str = Field(description="Human-readable schedule name.")
-    kind: Literal["interval", "daily", "once"] = Field(
-        description="Recurrence kind: interval | daily | once."
+    kind: Literal["interval", "daily", "weekly", "monthly", "once"] = Field(
+        description="Recurrence kind: interval | daily | weekly | monthly | once."
     )
     every_seconds: Optional[int] = Field(
         default=None,
@@ -55,12 +59,25 @@ class Schedule(BaseModel):
     )
     at_time: Optional[str] = Field(
         default=None,
-        description="Time of day 'HH:MM' (UTC) for kind='daily'.",
+        description="Time of day HH:MM for daily, weekly, monthly (UTC by default).",
     )
     at: Optional[str] = Field(
         default=None,
         description="ISO 8601 datetime for kind='once'.",
     )
+    timezone: CalendarTimezone = "UTC"
+    weekdays: Optional[list[Weekday]] = Field(default=None, min_length=1, max_length=7)
+    day_of_month: Optional[MonthDay] = None
+
+    @model_validator(mode="after")
+    def validate_calendar_fields(self):
+        if self.kind in {"weekly", "monthly"} or self.weekdays is not None or self.day_of_month is not None:
+            CalendarRule(kind=self.kind, at_time=self.at_time, timezone=self.timezone,
+                         weekdays=self.weekdays, day_of_month=self.day_of_month)
+        if self.kind in {"interval", "once"} and self.timezone != "UTC":
+            raise ValueError("timezone applies only to calendar schedules")
+        return self
+
     payload_emit_type: str = Field(
         description="Object type to create on each tick.",
     )
@@ -128,7 +145,7 @@ OBJECT_TYPES = [
         name="schedule",
         schema=Schedule,
         description=(
-            "A declared recurrence: when to fire (interval/daily/once) and what "
+            "A declared recurrence: when to fire (interval/daily/weekly/monthly/once) and what "
             "object to emit on each firing. State (next_due_at, fire_count) is "
             "advanced by behaviors, never by the host driver."
         ),

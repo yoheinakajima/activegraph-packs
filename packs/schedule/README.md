@@ -1,4 +1,4 @@
-# Schedule Pack v0.1
+# Schedule Pack v0.3.0
 
 > Time, made graph-native. Proactive behavior without an orchestrator.
 
@@ -35,7 +35,7 @@ the graph coordinates.
 
 | Type | Description | Key Fields |
 |------|-------------|------------|
-| `schedule` | A declared recurrence + payload | `kind` (interval/daily/once), `every_seconds`, `at_time`, `at`, `payload_emit_type`, `payload_data`, `enabled`, `next_due_at`, `fire_count` |
+| `schedule` | A declared recurrence + payload | `kind` (interval/daily/weekly/monthly/once), `every_seconds`, `at_time`, `at`, `payload_emit_type`, `payload_data`, `enabled`, `next_due_at`, `fire_count` |
 | `schedule_tick` | Event-first record of a due moment | `schedule_id`, `fired_at`, `due_at`, `dedup_key` |
 | `heartbeat` | A pulse for housekeeping behaviors to subscribe to | `fired_at`, `sequence`, `schedule_id` |
 
@@ -128,3 +128,36 @@ daily advance; catch-up + disable; reminder → dispatched candidate.
 ## CHANGELOG
 
 See [`CHANGELOG.md`](CHANGELOG.md).
+
+## Calendar recurrence
+
+`daily`, `weekly`, and `monthly` use local `at_time` (`HH:MM`). The optional
+`timezone` defaults to `UTC`; only `UTC` and `Asia/Seoul` are accepted. Unknown
+zones are rejected, never silently converted. `ZoneInfo` uses the host timezone
+database. These zones have no DST in current rules; general IANA/DST gap/fold
+semantics, cron and RRULE are outside this version's supported recurrence scope.
+A future zone expansion must specify and test those semantics first.
+
+- `weekly`: `weekdays` contains 1–7 unique lowercase names, `mon` through `sun`.
+- `monthly`: `day_of_month` is an integer 1–31 or `"last"`. A missing date clamps
+  to that month's last day. The declared day stays unchanged: January 31 →
+  February 28 (29 in leap years) → March 31. `last` always chooses month end.
+- Initial and subsequent due instants are strictly after the supplied timestamp.
+  `next_due_at`, `due_at`, and `fired_at` remain UTC instants. Local calendar day
+  and weekday selection happens before conversion to UTC.
+
+```python
+create_schedule_fn(rt.graph, name="weekly pulse", kind="weekly",
+                   weekdays=["mon", "sat"], at_time="06:00", timezone="Asia/Seoul",
+                   payload_emit_type="heartbeat", now="2026-10-01T00:00:00Z")
+create_schedule_fn(rt.graph, name="month end", kind="monthly",
+                   day_of_month="last", at_time="18:00", timezone="UTC",
+                   payload_emit_type="heartbeat", now="2026-10-01T00:00:00Z")
+```
+
+Existing daily records without timezone retain UTC meaning. Interval and once
+semantics are unchanged. Catch-up still emits one overdue tick, then advances
+from `fired_at` to the first future occurrence; it does not replay each missed
+calendar slot. Tick keys and payload authority are unchanged. Loading historical
+records requires no rewrite, but a reader older than 0.3.0 cannot interpret newly
+created weekly/monthly records.

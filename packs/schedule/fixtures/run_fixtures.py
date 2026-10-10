@@ -203,6 +203,27 @@ def run_reminder_payload_fixture() -> dict:
     return {"reminder_status": cands[0].data["status"]}
 
 
+def run_calendar_fixture() -> dict:
+    """KST weekday selection and month-end clamp through real bookkeeping."""
+    g, rt = _runtime()
+    weekly = create_schedule_fn(g, name="weekly", kind="weekly", weekdays=["sat"],
+                                at_time="00:00", timezone="Asia/Seoul",
+                                payload_emit_type="heartbeat", now="2026-01-01T00:00:00Z")
+    monthly = create_schedule_fn(g, name="monthly", kind="monthly", day_of_month=31,
+                                 at_time="00:00", payload_emit_type="heartbeat",
+                                 now="2026-01-01T00:00:00Z")
+    rt.run_until_idle()
+    assert g.get_object(weekly.id).data["next_due_at"] == "2026-01-02T15:00:00+00:00"
+    assert len(emit_due_ticks_fn(g, "2026-02-28T00:00:00Z")) == 2
+    rt.run_until_idle()
+    assert g.get_object(monthly.id).data["next_due_at"] == "2026-03-31T00:00:00+00:00"
+    assert g.get_object(monthly.id).data["day_of_month"] == 31
+    assert g.get_object(weekly.id).data["next_due_at"] == "2026-03-06T15:00:00+00:00"
+    assert emit_due_ticks_fn(g, "2026-02-28T00:00:00Z") == []
+    assert len(list(g.objects(type="heartbeat"))) == 2
+    return {"calendar_ticks": 2}
+
+
 def run_all() -> bool:
     print("=" * 60)
     print("Schedule Pack Fixtures")
@@ -227,6 +248,9 @@ def run_all() -> bool:
     print("\n[5] reminder payload (tick → approved candidate → dispatched)")
     r = run_reminder_payload_fixture()
     print(f"  PASS: reminder_status={r['reminder_status']}")
+
+    print("\n[6] calendar recurrence (KST weekday / month end / catch-up)")
+    print(f"  PASS: {run_calendar_fixture()}")
 
     print("\nALL PASS")
     return True

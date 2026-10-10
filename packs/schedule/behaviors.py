@@ -153,6 +153,9 @@ def schedule_bookkeeper(event, graph, ctx, *, settings: ScheduleSettings):
             at_time=sdata.get("at_time"),
             at=sdata.get("at"),
             after=fired_at,
+            timezone=sdata.get("timezone", "UTC"),
+            weekdays=sdata.get("weekdays"),
+            day_of_month=sdata.get("day_of_month"),
         )
     try:
         graph.patch_object(schedule_id, patch)

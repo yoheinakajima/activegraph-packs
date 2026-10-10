@@ -1,5 +1,14 @@
 # Schedule Pack Changelog
 
+## v0.3.0 — Calendar recurrence (2026-10-10)
+
+- Add weekly weekday sets and monthly integer-day/last rules with month-end clamp.
+- Add optional UTC/Asia/Seoul timezone to daily, weekly and monthly schedules.
+- Share validated calendar calculation between initial creation and bookkeeping.
+- Preserve UTC output, legacy UTC defaults, interval/once, tick deduplication and
+  one-overdue-tick catch-up. No host clock, new loop or payload authority added.
+- Add deterministic boundary, rejection, legacy and real-runtime tests and fixtures.
+
 ## v0.2.0 — create_reminder classified R3 (2026-07-10)
 
 ### Changed
